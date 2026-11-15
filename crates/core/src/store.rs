@@ -1,0 +1,371 @@
+use crate::model::*;
+use anyhow::{Context, Result, ensure};
+use std::{
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+};
+
+pub struct Store {
+    pub root: PathBuf,
+    pub state: State,
+}
+
+impl Store {
+    pub fn open(root: PathBuf) -> Result<Self> {
+        fs::create_dir_all(root.join("books"))?;
+        fs::create_dir_all(root.join("themes"))?;
+        let path = root.join("state.json");
+        let state: State = if path.exists() {
+            serde_json::from_slice(&fs::read(&path)?)
+                .context("本地数据无法读取；原文件已保留，请先备份后修复。")?
+        } else {
+            State::default()
+        };
+        ensure!(state.version == 1, "不支持的本地数据版本");
+        ensure!(
+            state
+                .reader_font_size
+                .is_none_or(|value| (14.0..=36.0).contains(&value))
+                && state
+                    .reader_line_height
+                    .is_none_or(|value| (1.3..=2.6).contains(&value))
+                && state
+                    .reader_width
+                    .is_none_or(|value| (400..=1100).contains(&value)),
+            "阅读排版设置损坏"
+        );
+        crate::theme::validate(&state.theme)?;
+        for theme in &state.custom_themes {
+            crate::theme::validate(theme)?;
+        }
+        for book in &state.books {
+            ensure!(
+                book.id.len() == 64 && book.id.chars().all(|c| c.is_ascii_hexdigit()),
+                "书籍标识损坏"
+            );
+            if let Some(cover) = &book.cover {
+                ensure!(crate::library::safe_path(cover), "封面路径损坏");
+            }
+            ensure!(
+                book.progress
+                    .is_none_or(|value| (0.0..=1.0).contains(&value)),
+                "阅读进度损坏"
+            );
+            ensure!(
+                book.chapter
+                    .as_ref()
+                    .is_none_or(|chapter| chapter.len() <= 300),
+                "阅读章节损坏"
+            );
+            for highlight in &book.highlights {
+                ensure!(
+                    !highlight.id.is_empty()
+                        && highlight.id.len() <= 80
+                        && !highlight.text.trim().is_empty()
+                        && highlight.text.len() <= 16_384
+                        && crate::model::valid_cfi(&highlight.cfi),
+                    "划线数据损坏"
+                );
+            }
+        }
+        Ok(Self { root, state })
+    }
+
+    pub fn default_root() -> Result<PathBuf> {
+        if let Some(path) = std::env::var_os("GLOW_DATA_DIR") {
+            return Ok(path.into());
+        }
+        Ok(
+            directories::ProjectDirs::from("studio", "GlowReading", "GlowReading")
+                .context("无法获取本地应用数据目录")?
+                .data_local_dir()
+                .to_owned(),
+        )
+    }
+
+    pub fn save(&self) -> Result<()> {
+        atomic_write(
+            &self.root.join("state.json"),
+            &serde_json::to_vec_pretty(&self.state)?,
+        )
+    }
+
+    pub fn record(
+        &mut self,
+        kind: &str,
+        input: String,
+        mood: Option<String>,
+        echo: EchoResult,
+        location: Option<Location>,
+    ) -> Result<()> {
+        self.state.journal.insert(
+            0,
+            JournalEntry {
+                id: uuid::Uuid::new_v4().to_string(),
+                created_at: now(),
+                kind: kind.into(),
+                input,
+                mood,
+                echo,
+                location,
+                favorite: false,
+            },
+        );
+        if let Err(error) = self.save() {
+            self.state.journal.remove(0);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn remove_book(&mut self, id: &str) -> Result<()> {
+        let cached = (id.len() == 64 && id.chars().all(|c| c.is_ascii_hexdigit()))
+            .then(|| self.root.join("books").join(id));
+        let previous_books = self.state.books.clone();
+        let previous_last_book = self.state.last_book.clone();
+        let removed = self.state.books.iter().any(|book| book.id == id);
+        self.state.books.retain(|b| b.id != id);
+        if self.state.last_book.as_deref() == Some(id) {
+            self.state.last_book = None;
+        }
+        if let Err(error) = self.save() {
+            self.state.books = previous_books;
+            self.state.last_book = previous_last_book;
+            return Err(error);
+        }
+        if removed
+            && let Some(cached) = cached
+            && cached.exists()
+        {
+            fs::remove_dir_all(&cached)
+                .with_context(|| "书籍已移出书架，但本地缓存未能清理".to_string())?;
+        }
+        Ok(())
+    }
+
+    pub fn edit_journal(&mut self, edit: impl FnOnce(&mut Vec<JournalEntry>)) -> Result<()> {
+        let previous = self.state.journal.clone();
+        edit(&mut self.state.journal);
+        if let Err(error) = self.save() {
+            self.state.journal = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn add_highlight(
+        &mut self,
+        book_id: &str,
+        text: String,
+        cfi: String,
+    ) -> Result<(crate::model::Highlight, bool)> {
+        let text = text.trim().to_owned();
+        ensure!(!text.is_empty(), "请先选择要划线的文字");
+        ensure!(text.chars().count() <= 4000, "划线文字过长");
+        ensure!(crate::model::valid_cfi(&cfi), "阅读位置无效");
+        let highlight = {
+            let book = self
+                .state
+                .books
+                .iter_mut()
+                .find(|book| book.id == book_id)
+                .context("书籍已不在书架中")?;
+            if let Some(existing) = book
+                .highlights
+                .iter()
+                .find(|highlight| highlight.cfi == cfi)
+            {
+                return Ok((existing.clone(), false));
+            }
+            let highlight = crate::model::Highlight {
+                id: uuid::Uuid::new_v4().to_string(),
+                text,
+                cfi,
+                created_at: now(),
+            };
+            book.highlights.push(highlight.clone());
+            highlight
+        };
+        let inserted_id = highlight.id.clone();
+        if let Err(error) = self.save() {
+            if let Some(book) = self.state.books.iter_mut().find(|book| book.id == book_id) {
+                book.highlights
+                    .retain(|highlight| highlight.id != inserted_id);
+            }
+            return Err(error);
+        }
+        Ok((highlight, true))
+    }
+
+    pub fn remove_highlight(
+        &mut self,
+        book_id: &str,
+        highlight_id: &str,
+    ) -> Result<Option<crate::model::Highlight>> {
+        let (index, removed) = {
+            let Some(book) = self.state.books.iter_mut().find(|book| book.id == book_id) else {
+                return Ok(None);
+            };
+            let Some(index) = book
+                .highlights
+                .iter()
+                .position(|highlight| highlight.id == highlight_id)
+            else {
+                return Ok(None);
+            };
+            (index, book.highlights.remove(index))
+        };
+        if let Err(error) = self.save() {
+            if let Some(book) = self.state.books.iter_mut().find(|book| book.id == book_id) {
+                book.highlights.insert(index, removed);
+            }
+            return Err(error);
+        }
+        Ok(Some(removed))
+    }
+}
+
+pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path.parent().context("缺少父目录")?;
+    fs::create_dir_all(parent)?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    temp.write_all(bytes)?;
+    temp.as_file().sync_all()?;
+    temp.persist(path).map_err(|e| e.error)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn failed_journal_write_does_not_leave_an_unsaved_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().into()).unwrap();
+        store.save().unwrap();
+        fs::remove_file(dir.path().join("state.json")).unwrap();
+        fs::create_dir(dir.path().join("state.json")).unwrap();
+        assert!(
+            store
+                .record(
+                    "mood",
+                    "我的文字".into(),
+                    None,
+                    crate::echo::respond("", Some("疲惫")),
+                    None
+                )
+                .is_err()
+        );
+        assert!(store.state.journal.is_empty());
+    }
+    #[test]
+    fn failed_delete_retains_journal_and_library() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().into()).unwrap();
+        store.install_sample().unwrap();
+        let book_id = store.state.books[0].id.clone();
+        store.state.last_book = Some(book_id.clone());
+        store
+            .record(
+                "mood",
+                "保留我的日记".into(),
+                None,
+                crate::echo::respond("", Some("希望")),
+                None,
+            )
+            .unwrap();
+        fs::remove_file(dir.path().join("state.json")).unwrap();
+        fs::create_dir(dir.path().join("state.json")).unwrap();
+        assert!(store.edit_journal(Vec::clear).is_err());
+        assert_eq!(store.state.journal[0].input, "保留我的日记");
+        assert!(store.remove_book(&book_id).is_err());
+        assert_eq!(store.state.books[0].id, book_id);
+        assert_eq!(store.state.last_book.as_deref(), Some(book_id.as_str()));
+    }
+    #[test]
+    fn overwrite_restart_and_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().into()).unwrap();
+        store.save().unwrap();
+        store.state.privacy_seen = true;
+        store
+            .record(
+                "mood",
+                "今天".into(),
+                Some("疲惫".into()),
+                EchoResult {
+                    quotes: vec![],
+                    reply: "慢慢来".into(),
+                    demo: true,
+                },
+                None,
+            )
+            .unwrap();
+        let mut reopened = Store::open(dir.path().into()).unwrap();
+        assert!(reopened.state.privacy_seen);
+        assert_eq!(reopened.state.journal.len(), 1);
+        reopened.state.journal.clear();
+        reopened.save().unwrap();
+        assert!(
+            Store::open(dir.path().into())
+                .unwrap()
+                .state
+                .journal
+                .is_empty()
+        );
+    }
+    #[test]
+    fn corrupt_state_is_not_silently_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("state.json"), b"invalid").unwrap();
+        assert!(Store::open(dir.path().into()).is_err());
+        assert_eq!(fs::read(dir.path().join("state.json")).unwrap(), b"invalid");
+    }
+
+    #[test]
+    fn removing_a_book_clears_cached_files_but_keeps_the_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("我的书.txt");
+        fs::write(&source, "第一章\n这是只应留在原处的文字。").unwrap();
+        let mut store = Store::open(dir.path().join("data")).unwrap();
+        let id = store.import_book(&source, None).unwrap();
+        let cached = store.root.join("books").join(&id);
+        assert!(cached.join("book.epub").exists());
+        assert!(cached.join("original.txt").exists());
+        store.remove_book(&id).unwrap();
+        assert!(store.state.books.is_empty());
+        assert!(!cached.exists());
+        assert!(source.exists());
+    }
+
+    #[test]
+    fn highlights_are_deduplicated_persisted_and_removable() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("data");
+        let mut store = Store::open(root.clone()).unwrap();
+        store.install_sample().unwrap();
+        let book_id = store.state.books[0].id.clone();
+        let cfi = "epubcfi(/6/4!/4/2,/1:0,/1:8)";
+        let (highlight, inserted) = store
+            .add_highlight(&book_id, "  留住的文字  ".into(), cfi.into())
+            .unwrap();
+        assert!(inserted);
+        assert_eq!(highlight.text, "留住的文字");
+        let (same, inserted) = store
+            .add_highlight(&book_id, "重复".into(), cfi.into())
+            .unwrap();
+        assert!(!inserted);
+        assert_eq!(same.id, highlight.id);
+        assert_eq!(store.state.books[0].highlights.len(), 1);
+
+        let reopened = Store::open(root).unwrap();
+        assert_eq!(reopened.state.books[0].highlights[0].text, "留住的文字");
+        let removed = store
+            .remove_highlight(&book_id, &highlight.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(removed.cfi, cfi);
+        assert!(store.state.books[0].highlights.is_empty());
+    }
+}

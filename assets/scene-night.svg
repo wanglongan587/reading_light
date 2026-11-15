@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="620" viewBox="0 0 1000 620">
+<defs><linearGradient id="sky" x2="0" y2="1"><stop stop-color="#172936"/><stop offset=".7" stop-color="#405b62"/><stop offset="1" stop-color="#84927c"/></linearGradient><filter id="wobble"><feTurbulence type="fractalNoise" baseFrequency=".018" numOctaves="2" seed="8" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="2"/></filter><filter id="grain"><feTurbulence type="fractalNoise" baseFrequency=".7" numOctaves="3"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="table" tableValues="0 .04"/></feComponentTransfer></filter></defs>
+<rect width="1000" height="620" fill="url(#sky)"/><circle cx="750" cy="142" r="49" fill="#f7e8b6"/><circle cx="770" cy="126" r="49" fill="#213541"/>
+<g fill="#f7e8b6" opacity=".8"><circle cx="160" cy="120" r="2"/><circle cx="247" cy="190" r="2"/><circle cx="410" cy="105" r="2"/><circle cx="545" cy="153" r="2"/><circle cx="622" cy="77" r="2"/><circle cx="874" cy="195" r="2"/><circle cx="329" cy="72" r="1.5"/><circle cx="493" cy="211" r="1.5"/></g>
+<path d="M0 353 Q177 246 342 331 T650 315 T1000 293 V620 H0Z" fill="#536e68"/>
+<path d="M0 455 Q175 358 373 421 Q599 354 797 421 Q905 377 1000 401 V620 H0Z" fill="#304f4a"/>
+<path d="M508 620 C520 553 596 535 639 493 C679 453 656 437 655 414" fill="none" stroke="#9b9d77" stroke-width="42" opacity=".7"/>
+<g filter="url(#wobble)" stroke="#263e3b" stroke-width="3" stroke-linejoin="round"><path d="M583 333 V469 H750 V333" fill="#a0a47d"/><path d="M563 340 L665 244 L771 340Z" fill="#4e5148"/><path d="M705 277 V223 H724 V297" fill="#69715e"/><path d="M625 384 H660 V469 H625Z" fill="#5e7059"/><path d="M686 371 H726 V409 H686Z" fill="#f5d181"/><path d="M706 371 V409 M686 390 H726" stroke="#a28b60" stroke-width="2"/><path d="M596 367 H616 V394 H596Z" fill="#f5d181"/></g>
+<g fill="#233f3b" stroke="#1e3533" stroke-width="3" filter="url(#wobble)"><path d="M111 115 Q42 235 55 304 Q106 332 182 294 Q185 228 111 115Z"/><path d="M873 119 Q799 236 808 298 Q871 328 938 289 Q939 222 873 119Z"/></g>
+<g stroke="#263f3b" stroke-width="9" stroke-linecap="round"><path d="M112 515 V254 M873 489 V245"/></g>
+<g fill="#f4db8d"><circle cx="286" cy="491" r="3"/><circle cx="305" cy="508" r="2"/><circle cx="811" cy="483" r="3"/><circle cx="832" cy="508" r="2"/><circle cx="454" cy="538" r="2"/></g>
+<rect width="1000" height="620" filter="url(#grain)"/>
+</svg>

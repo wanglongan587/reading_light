@@ -1,0 +1,314 @@
+[
+  {
+    "id": "q01",
+    "text": "花间一壶酒，独酌无相亲。",
+    "author": "李白",
+    "work": "月下独酌四首",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "其一",
+    "source": "https://zh.wikisource.org/wiki/月下獨酌_(花間一壺酒)",
+    "tags": [
+      "孤独"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q02",
+    "text": "举杯邀明月，对影成三人。",
+    "author": "李白",
+    "work": "月下独酌四首",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "其一",
+    "source": "https://zh.wikisource.org/wiki/月下獨酌_(花間一壺酒)",
+    "tags": [
+      "孤独"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q03",
+    "text": "月既不解饮，影徒随我身。",
+    "author": "李白",
+    "work": "月下独酌四首",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "其一",
+    "source": "https://zh.wikisource.org/wiki/月下獨酌_(花間一壺酒)",
+    "tags": [
+      "孤独"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q04",
+    "text": "暂伴月将影，行乐须及春。",
+    "author": "李白",
+    "work": "月下独酌四首",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "其一",
+    "source": "https://zh.wikisource.org/wiki/月下獨酌_(花間一壺酒)",
+    "tags": [
+      "孤独"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q05",
+    "text": "结庐在人境，而无车马喧。",
+    "author": "陶渊明",
+    "work": "饮酒二十首",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "其五",
+    "source": "https://zh.wikisource.org/wiki/飲酒二十首",
+    "tags": [
+      "疲惫"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q06",
+    "text": "问君何能尔？心远地自偏。",
+    "author": "陶渊明",
+    "work": "饮酒二十首",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "其五",
+    "source": "https://zh.wikisource.org/wiki/飲酒二十首",
+    "tags": [
+      "疲惫"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q07",
+    "text": "采菊东篱下，悠然见南山。",
+    "author": "陶渊明",
+    "work": "饮酒二十首",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "其五",
+    "source": "https://zh.wikisource.org/wiki/飲酒二十首",
+    "tags": [
+      "疲惫"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q08",
+    "text": "山气日夕佳，飞鸟相与还。",
+    "author": "陶渊明",
+    "work": "饮酒二十首",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "其五",
+    "source": "https://zh.wikisource.org/wiki/飲酒二十首",
+    "tags": [
+      "疲惫"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q09",
+    "text": "莫笑农家腊酒浑，丰年留客足鸡豚。",
+    "author": "陆游",
+    "work": "游山西村",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/遊山西村",
+    "tags": [
+      "迷茫"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q10",
+    "text": "山重水复疑无路，柳暗花明又一村。",
+    "author": "陆游",
+    "work": "游山西村",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/遊山西村",
+    "tags": [
+      "迷茫"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q11",
+    "text": "箫鼓追随春社近，衣冠简朴古风存。",
+    "author": "陆游",
+    "work": "游山西村",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/遊山西村",
+    "tags": [
+      "迷茫"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q12",
+    "text": "从今若许闲乘月，拄杖无时夜叩门。",
+    "author": "陆游",
+    "work": "游山西村",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/遊山西村",
+    "tags": [
+      "迷茫"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q13",
+    "text": "莫听穿林打叶声，何妨吟啸且徐行。",
+    "author": "苏轼",
+    "work": "定风波·莫听穿林打叶声",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "词正文",
+    "source": "https://zh.wikisource.org/wiki/定風波_(莫聽穿林打葉聲)",
+    "tags": [
+      "失落"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q14",
+    "text": "竹杖芒鞵轻胜马，谁怕？一蓑烟雨任平生。",
+    "author": "苏轼",
+    "work": "定风波·莫听穿林打叶声",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "词正文",
+    "source": "https://zh.wikisource.org/wiki/定風波_(莫聽穿林打葉聲)",
+    "tags": [
+      "失落"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q15",
+    "text": "料峭春风吹酒醒，微冷，山头斜照却相迎。",
+    "author": "苏轼",
+    "work": "定风波·莫听穿林打叶声",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "词正文",
+    "source": "https://zh.wikisource.org/wiki/定風波_(莫聽穿林打葉聲)",
+    "tags": [
+      "失落"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q16",
+    "text": "回首向来萧瑟处，归去，也无风雨也无晴。",
+    "author": "苏轼",
+    "work": "定风波·莫听穿林打叶声",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "词正文",
+    "source": "https://zh.wikisource.org/wiki/定風波_(莫聽穿林打葉聲)",
+    "tags": [
+      "失落"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q17",
+    "text": "停杯投箸不能食，拔剑四顾心茫然。",
+    "author": "李白",
+    "work": "行路难三首",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "其一",
+    "source": "https://zh.wikisource.org/wiki/行路難_(李白)",
+    "tags": [
+      "成长"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q18",
+    "text": "欲渡黄河冰塞川，将登太行雪满山。",
+    "author": "李白",
+    "work": "行路难三首",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "其一",
+    "source": "https://zh.wikisource.org/wiki/行路難_(李白)",
+    "tags": [
+      "成长"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q19",
+    "text": "闲来垂钓碧溪上，忽复乘舟梦日边。",
+    "author": "李白",
+    "work": "行路难三首",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "其一",
+    "source": "https://zh.wikisource.org/wiki/行路難_(李白)",
+    "tags": [
+      "成长"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q20",
+    "text": "长风破浪会有时，直挂云帆济沧海。",
+    "author": "李白",
+    "work": "行路难三首",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "其一",
+    "source": "https://zh.wikisource.org/wiki/行路難_(李白)",
+    "tags": [
+      "成长"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q21",
+    "text": "客路青山外，行舟绿水前。",
+    "author": "王湾",
+    "work": "次北固山下",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/次北固山下",
+    "tags": [
+      "希望"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q22",
+    "text": "潮平两岸阔，风正一帆悬。",
+    "author": "王湾",
+    "work": "次北固山下",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/次北固山下",
+    "tags": [
+      "希望"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q23",
+    "text": "海日生残夜，江春入旧年。",
+    "author": "王湾",
+    "work": "次北固山下",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/次北固山下",
+    "tags": [
+      "希望"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q24",
+    "text": "乡书何处达？归雁洛阳边。",
+    "author": "王湾",
+    "work": "次北固山下",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/次北固山下",
+    "tags": [
+      "希望"
+    ],
+    "spoiler": false
+  }
+]

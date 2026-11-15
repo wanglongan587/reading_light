@@ -1,0 +1,23 @@
+{
+  "name": "glow-reader-surface",
+  "private": true,
+  "version": "0.1.5",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && node build.mjs",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "epubjs": "0.3.93",
+    "jszip": "3.10.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "@types/node": "22.19.0",
+    "esbuild": "0.25.12",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "0.9.12"
+  }
+}

@@ -1,0 +1,28 @@
+[package]
+name = "glow-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+encoding_rs = "0.8"
+roxmltree = "0.20"
+ttf-parser = "0.25"
+html5ever = "0.40"
+markup5ever_rcdom = "0.40"
+percent-encoding = "2"
+directories = "6"
+uuid = { version = "1", features = ["v4", "serde"] }
+time = { version = "0.3", features = ["formatting"] }
+
+tempfile = "3"
+
+[dev-dependencies]
+tempfile = "3"
+
+

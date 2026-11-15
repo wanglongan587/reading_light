@@ -1,0 +1,11 @@
+/target/
+/tools/svg_render/target/
+/dist/
+/web/node_modules/
+/web/test-results/
+/web/playwright-report/
+*.log
+.env
+.env.local
+.env.*.local
+
