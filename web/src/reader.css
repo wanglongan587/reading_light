@@ -1,12 +1,14 @@
 :root{--paper:#faf6ea;--ink:#353e35;--accent:#536a49;--font:serif;--size:20px;--leading:1.9}
-*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--paper);color:var(--ink)}
-#reader{width:100%;height:100%;position:relative}#reader iframe{border:0!important}
-#status{position:absolute;top:45%;width:100%;padding:24px;text-align:center;font:14px/1.8 "Microsoft YaHei UI","PingFang SC",sans-serif;color:color-mix(in srgb,var(--ink) 72%,transparent);pointer-events:none}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--paper);color:var(--ink);-webkit-font-smoothing:antialiased}
+#reader{width:100%;height:100%;position:relative}
+#reader iframe{border:0!important}
+#status{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);padding:12px 24px;border-radius:999px;border:1px solid color-mix(in srgb,var(--accent) 28%,transparent);background:color-mix(in srgb,var(--paper) 88%,var(--accent) 8%);backdrop-filter:blur(12px);box-shadow:0 14px 36px color-mix(in srgb,var(--ink) 10%,transparent);text-align:center;font:500 13px/1.6 "Microsoft YaHei UI","PingFang SC",sans-serif;letter-spacing:.04em;color:color-mix(in srgb,var(--ink) 78%,transparent);pointer-events:none}
 #status:empty{display:none}
-#echo{position:fixed;z-index:50;display:flex;align-items:center;gap:7px;border:1px solid color-mix(in srgb,var(--accent) 58%,transparent);border-radius:999px;background:color-mix(in srgb,var(--paper) 94%,var(--accent));color:var(--ink);padding:9px 16px 9px 13px;box-shadow:0 10px 30px #24312626,0 2px 7px #24312614;cursor:pointer;font:500 13px/1 "Microsoft YaHei UI","PingFang SC",sans-serif;letter-spacing:.04em;transition:background-color 140ms ease,border-color 140ms ease,box-shadow 140ms ease,transform 90ms ease}
-#echo svg{width:17px;height:17px;color:var(--accent);flex:none}
-#echo:hover{background:color-mix(in srgb,var(--paper) 86%,var(--accent));border-color:var(--accent);box-shadow:0 12px 34px #24312630,0 2px 8px #24312618}
-#echo:active{transform:translateY(1px) scale(.985);box-shadow:0 6px 18px #24312620}
+#echo{position:fixed;z-index:50;display:flex;align-items:center;gap:8px;border:1px solid color-mix(in srgb,var(--accent) 52%,transparent);border-radius:999px;background:color-mix(in srgb,var(--paper) 88%,var(--accent) 12%);backdrop-filter:blur(16px);color:var(--ink);padding:9px 18px 9px 14px;box-shadow:0 14px 34px color-mix(in srgb,var(--ink) 18%,transparent),0 2px 8px color-mix(in srgb,var(--accent) 16%,transparent),inset 0 1px 0 color-mix(in srgb,#ffffff 45%,transparent);cursor:pointer;font:600 13px/1 "Microsoft YaHei UI","PingFang SC",sans-serif;letter-spacing:.06em;transition:background-color 150ms ease,border-color 150ms ease,box-shadow 150ms ease,transform 100ms ease}
+#echo svg{width:16px;height:16px;color:var(--accent);flex:none;filter:drop-shadow(0 0 6px color-mix(in srgb,var(--accent) 35%,transparent))}
+#echo:hover{background:color-mix(in srgb,var(--paper) 80%,var(--accent) 20%);border-color:var(--accent);transform:translateY(-1px);box-shadow:0 16px 38px color-mix(in srgb,var(--ink) 22%,transparent),0 4px 12px color-mix(in srgb,var(--accent) 24%,transparent),inset 0 1px 0 color-mix(in srgb,#ffffff 55%,transparent)}
+#echo:active{transform:translateY(1px) scale(.985);box-shadow:0 6px 18px color-mix(in srgb,var(--ink) 16%,transparent)}
 #echo:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 42%,transparent);outline-offset:3px}
 [hidden]{display:none!important}
 @media (prefers-reduced-motion:reduce){#echo{transition:none}}

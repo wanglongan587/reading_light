@@ -1,46 +1,268 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="620" viewBox="0 0 1000 620">
-<!-- Original hand-drawn landscape; no film characters or screenshots. -->
-<defs>
- <linearGradient id="sky" x2="0" y2="1"><stop stop-color="#d7e7e2"/><stop offset=".58" stop-color="#f5e7be"/><stop offset="1" stop-color="#d6dcae"/></linearGradient>
- <linearGradient id="meadow" x2="0" y2="1"><stop stop-color="#b5c88f"/><stop offset="1" stop-color="#668465"/></linearGradient>
- <linearGradient id="roof" x2=".2" y2="1"><stop stop-color="#a77b59"/><stop offset="1" stop-color="#6e5849"/></linearGradient>
- <filter id="wobble"><feTurbulence type="fractalNoise" baseFrequency=".018" numOctaves="2" seed="7" result="noise"/><feDisplacementMap in="SourceGraphic" in2="noise" scale="2.2"/></filter>
- <filter id="paper"><feTurbulence type="fractalNoise" baseFrequency=".7" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="table" tableValues="0 .055"/></feComponentTransfer></filter>
- <radialGradient id="sun"><stop stop-color="#fff3bc" stop-opacity=".95"/><stop offset="1" stop-color="#fff3bc" stop-opacity="0"/></radialGradient>
-</defs>
-<rect width="1000" height="620" fill="url(#sky)"/>
-<circle cx="735" cy="160" r="135" fill="url(#sun)"/><circle cx="735" cy="160" r="44" fill="#fff0b4" opacity=".85"/>
-<g fill="#fffaf0" opacity=".67" filter="url(#wobble)"><path d="M110 150 Q155 115 205 143 Q238 100 288 137 Q334 129 358 157 Q310 177 242 166 Q172 180 110 150Z"/><path d="M620 91 Q664 62 706 86 Q747 52 788 82 Q831 80 850 106 Q800 121 738 111 Q676 123 620 91Z"/></g>
-<g fill="none" stroke="#6d8272" stroke-width="2.4" stroke-linecap="round" opacity=".65"><path d="M425 155 q13 -13 26 0 q13 -13 26 0"/><path d="M483 128 q10 -10 20 0 q10 -10 20 0"/><path d="M534 176 q9 -9 18 0 q9 -9 18 0"/></g>
-<path d="M0 330 Q120 239 248 290 T477 268 T707 289 T1000 248 V620 H0Z" fill="#a9bc9d" opacity=".74"/>
-<path d="M0 396 Q127 308 270 364 T523 336 T782 356 T1000 325 V620 H0Z" fill="#8fa984" opacity=".85"/>
-<path d="M0 482 Q146 381 331 438 Q533 363 739 438 Q886 386 1000 419 V620 H0Z" fill="url(#meadow)"/>
-<path d="M511 620 C509 557 573 529 625 503 C677 477 663 451 652 423" fill="none" stroke="#ded0a4" stroke-width="52" stroke-linecap="round" opacity=".9"/>
-<path d="M511 620 C509 557 573 529 625 503 C677 477 663 451 652 423" fill="none" stroke="#f0dfb3" stroke-width="3" stroke-dasharray="11 15" opacity=".8"/>
-<g filter="url(#wobble)" stroke="#655e4b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
- <path d="M585 333 L585 469 L749 469 L749 333" fill="#e8d6a6"/>
- <path d="M563 340 L665 244 L771 340Z" fill="url(#roof)"/>
- <path d="M576 331 L665 257 L758 331" fill="none" stroke="#c09b6d" stroke-width="5"/>
- <path d="M704 275 V224 H724 V297" fill="#ac9170"/>
- <path d="M624 384 H660 V469 H624Z" fill="#9b8662"/><circle cx="653" cy="427" r="3" fill="#f7e2a2" stroke="none"/>
- <path d="M686 371 H726 V409 H686Z" fill="#f8d78c"/><path d="M706 371 V409 M686 390 H726" stroke="#a28b60" stroke-width="2"/>
- <path d="M596 367 H616 V394 H596Z" fill="#f9d88c"/><path d="M606 367 V394 M596 380 H616" stroke="#a28b60" stroke-width="2"/>
- <path d="M584 469 Q666 481 750 469" fill="none"/>
-</g>
-<g fill="none" stroke="#f9f1d9" stroke-width="7" opacity=".55" stroke-linecap="round" filter="url(#wobble)"><path d="M716 207 Q688 182 720 160 Q748 141 725 116"/><path d="M738 197 Q718 179 740 164" stroke-width="4"/></g>
-<g filter="url(#wobble)">
- <path d="M112 515 L112 254" stroke="#5d7055" stroke-width="10" stroke-linecap="round"/>
- <path d="M111 114 Q41 235 55 304 Q106 332 182 294 Q185 228 111 114Z" fill="#63835f" stroke="#536d52" stroke-width="3"/>
- <path d="M110 157 L110 300 M110 218 L76 193 M110 257 L150 224" fill="none" stroke="#a0b38a" stroke-width="3" stroke-linecap="round"/>
- <path d="M873 489 L873 245" stroke="#5d7055" stroke-width="10" stroke-linecap="round"/>
- <path d="M873 119 Q799 236 808 298 Q871 328 938 289 Q939 222 873 119Z" fill="#708e62" stroke="#5b7957" stroke-width="3"/>
- <path d="M873 166 L873 294 M873 223 L908 196 M873 254 L841 230" fill="none" stroke="#a6b98b" stroke-width="3" stroke-linecap="round"/>
- <path d="M268 462 L268 314" stroke="#657653" stroke-width="7"/>
- <path d="M267 227 Q211 312 221 355 Q268 376 316 348 Q315 301 267 227Z" fill="#7e996b" stroke="#607e59" stroke-width="2"/>
- <path d="M267 263 V352 M267 306 L293 283" fill="none" stroke="#b0bf91" stroke-width="2"/>
-</g>
-<g fill="none" stroke="#506f52" stroke-width="2" stroke-linecap="round" opacity=".8"><path d="M35 581 l9 -33 l6 25 M65 604 l8 -28 l8 22 M164 565 l9 -25 l7 21 M892 578 l8 -34 l8 25 M946 605 l7 -29 l9 24 M337 588 l6 -26 l8 22 M807 594 l8 -28 l7 24"/></g>
-<g fill="#e5d99a"><ellipse cx="210" cy="534" rx="4" ry="9" transform="rotate(-18 210 534)"/><ellipse cx="232" cy="553" rx="4" ry="9" transform="rotate(24 232 553)"/><ellipse cx="374" cy="499" rx="4" ry="8"/><ellipse cx="786" cy="516" rx="4" ry="9" transform="rotate(-20 786 516)"/><ellipse cx="838" cy="551" rx="4" ry="8"/></g>
-<g fill="#f6ebc3" opacity=".9"><circle cx="450" cy="480" r="4"/><circle cx="469" cy="469" r="3"/><circle cx="454" cy="459" r="3"/><circle cx="469" cy="490" r="3"/></g>
-<rect width="1000" height="620" filter="url(#paper)" opacity=".65"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="744" viewBox="0 0 1200 744">
+  <defs>
+    <!-- Deep warm twilight & forest-amber sky -->
+    <linearGradient id="sky" x1="0" y1="0" x2="0.15" y2="1">
+      <stop offset="0%" stop-color="#1E312B"/>
+      <stop offset="32%" stop-color="#355247"/>
+      <stop offset="64%" stop-color="#7D8E73"/>
+      <stop offset="86%" stop-color="#D7C79E"/>
+      <stop offset="100%" stop-color="#EFE2BE"/>
+    </linearGradient>
+
+    <!-- Warm golden sun / ambient radio core -->
+    <radialGradient id="sunGlow" cx="0.74" cy="0.34" r="0.48">
+      <stop offset="0%" stop-color="#FFF4CC" stop-opacity="0.96"/>
+      <stop offset="22%" stop-color="#F7D98C" stop-opacity="0.68"/>
+      <stop offset="55%" stop-color="#D8A968" stop-opacity="0.24"/>
+      <stop offset="100%" stop-color="#D8A968" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="sunCore" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#FFFDF5"/>
+      <stop offset="65%" stop-color="#FCE8B2" stop-opacity="0.92"/>
+      <stop offset="100%" stop-color="#F3C878" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Volumetric light rays -->
+    <linearGradient id="beam" x1="0.8" y1="0.1" x2="0.1" y2="0.95">
+      <stop offset="0%" stop-color="#FFF3C4" stop-opacity="0.28"/>
+      <stop offset="50%" stop-color="#F5DF9E" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#F5DF9E" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Layered mountain & forest gradients -->
+    <linearGradient id="ridgeFar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4A6658" stop-opacity="0.82"/>
+      <stop offset="100%" stop-color="#2D443A" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="ridgeMid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#385346"/>
+      <stop offset="100%" stop-color="#21352B"/>
+    </linearGradient>
+    <linearGradient id="ridgeNear" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#294035"/>
+      <stop offset="100%" stop-color="#16251E"/>
+    </linearGradient>
+
+    <!-- Tranquil mirror lake -->
+    <linearGradient id="lake" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2B4238"/>
+      <stop offset="38%" stop-color="#1E3129"/>
+      <stop offset="100%" stop-color="#121F1A"/>
+    </linearGradient>
+
+    <!-- Warm amber interior lamp light -->
+    <radialGradient id="lampGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#FFE8A3" stop-opacity="0.95"/>
+      <stop offset="40%" stop-color="#F5B952" stop-opacity="0.52"/>
+      <stop offset="100%" stop-color="#E08A3C" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="windowPane" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFE6A3" stop-opacity="0.92"/>
+      <stop offset="100%" stop-color="#E6A149" stop-opacity="0.86"/>
+    </linearGradient>
+
+    <linearGradient id="waterReflect" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F9D587" stop-opacity="0.55"/>
+      <stop offset="60%" stop-color="#E09F50" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#E09F50" stop-opacity="0"/>
+    </linearGradient>
+
+    <linearGradient id="mist" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F7E8C6" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#F7E8C6" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#F7E8C6" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Sky Canvas -->
+  <rect width="1200" height="744" fill="url(#sky)"/>
+
+  <!-- Ambient Sun & Sonic Orbit Rings (MineRadio aesthetic) -->
+  <circle cx="888" cy="248" r="360" fill="url(#sunGlow)"/>
+  <circle cx="888" cy="248" r="68" fill="url(#sunCore)"/>
+
+  <!-- Subtle acoustic / radio wave concentric arcs around the sun -->
+  <g fill="none" stroke="#FFF6D6" stroke-linecap="round">
+    <circle cx="888" cy="248" r="108" stroke-width="1.2" stroke-opacity="0.26" stroke-dasharray="6 14"/>
+    <circle cx="888" cy="248" r="158" stroke-width="1" stroke-opacity="0.18"/>
+    <circle cx="888" cy="248" r="218" stroke-width="1" stroke-opacity="0.12" stroke-dasharray="2 10"/>
+    <circle cx="888" cy="248" r="286" stroke-width="0.8" stroke-opacity="0.09"/>
+  </g>
+
+  <!-- Diagonal volumetric light beams -->
+  <polygon points="888,248 180,744 460,744" fill="url(#beam)"/>
+  <polygon points="888,248 520,744 820,744" fill="url(#beam)"/>
+  <polygon points="888,248 40,560 180,744" fill="url(#beam)" opacity="0.65"/>
+
+  <!-- High altitude atmospheric clouds -->
+  <g fill="#FFF8E6" opacity="0.16">
+    <rect x="140" y="118" width="240" height="6" rx="3"/>
+    <rect x="210" y="132" width="140" height="4" rx="2"/>
+    <rect x="610" y="96" width="190" height="5" rx="2.5"/>
+    <rect x="960" y="142" width="160" height="4" rx="2"/>
+  </g>
+
+  <!-- Far Mountain Range -->
+  <path d="M0,418 C110,362 215,328 335,368 C448,405 540,302 678,334 C792,360 885,310 1015,332 C1095,346 1152,320 1200,308 L1200,560 L0,560 Z" fill="url(#ridgeFar)"/>
+
+  <!-- Atmospheric Mist Band 1 -->
+  <rect x="0" y="370" width="1200" height="90" fill="url(#mist)"/>
+
+  <!-- Mid Forest Ridge -->
+  <path d="M0,456 C145,412 260,446 396,418 C525,392 612,434 736,412 C868,388 972,354 1094,386 C1142,398 1175,392 1200,384 L1200,580 L0,580 Z" fill="url(#ridgeMid)"/>
+
+  <!-- Distant Pine Silhouette Array on Mid Ridge -->
+  <g fill="#23382E" opacity="0.85">
+    <polygon points="118,395 104,442 132,442"/>
+    <polygon points="142,382 125,442 159,442"/>
+    <polygon points="165,402 153,442 177,442"/>
+    <polygon points="412,386 396,432 428,432"/>
+    <polygon points="436,374 418,432 454,432"/>
+    <polygon points="1038,344 1018,402 1058,402"/>
+    <polygon points="1068,330 1045,402 1091,402"/>
+    <polygon points="1096,352 1078,402 1114,402"/>
+  </g>
+
+  <!-- Near Sanctuary Peninsula & Shore -->
+  <path d="M0,502 C180,478 330,492 490,512 C645,530 755,472 935,468 C1048,465 1130,478 1200,488 L1200,560 L0,560 Z" fill="url(#ridgeNear)"/>
+
+  <!-- Mirror Lake Surface -->
+  <rect x="0" y="518" width="1200" height="226" fill="url(#lake)"/>
+
+  <!-- Sun & Cabin Warm Reflections on Lake -->
+  <ellipse cx="835" cy="596" rx="145" ry="68" fill="url(#waterReflect)"/>
+  <g fill="#FCE3A6">
+    <rect x="765" y="534" width="136" height="3" rx="1.5" opacity="0.52"/>
+    <rect x="748" y="546" width="168" height="2.5" rx="1.25" opacity="0.42"/>
+    <rect x="772" y="558" width="122" height="2.5" rx="1.25" opacity="0.36"/>
+    <rect x="758" y="572" width="144" height="2" rx="1" opacity="0.28"/>
+    <rect x="786" y="586" width="96" height="2" rx="1" opacity="0.22"/>
+    <rect x="802" y="602" width="68" height="1.5" rx="0.75" opacity="0.18"/>
+  </g>
+
+  <!-- Architectural Nordic-Japanese Glass Reading Pavilion (Right-Center Stage) -->
+  <g transform="translate(690, 352)">
+    <!-- Ambient warm glow behind the pavilion -->
+    <circle cx="138" cy="96" r="145" fill="url(#lampGlow)"/>
+
+    <!-- Stone / Timber Deck Pier over Lake -->
+    <rect x="18" y="156" width="244" height="10" rx="2" fill="#1A2A23"/>
+    <rect x="30" y="164" width="220" height="5" rx="1" fill="#3D5245"/>
+    <!-- Deck Support Pillars -->
+    <rect x="46" y="166" width="6" height="18" fill="#14201B"/>
+    <rect x="112" y="166" width="6" height="18" fill="#14201B"/>
+    <rect x="178" y="166" width="6" height="18" fill="#14201B"/>
+    <rect x="228" y="166" width="6" height="18" fill="#14201B"/>
+
+    <!-- Main Pavilion Structure -->
+    <rect x="42" y="62" width="196" height="94" rx="3" fill="#1E2F27" stroke="#496052" stroke-width="1.5"/>
+
+    <!-- Panoramic Illuminated Glass Window -->
+    <rect x="56" y="74" width="132" height="70" rx="2" fill="url(#windowPane)"/>
+
+    <!-- Side Louvered Timber Wall -->
+    <rect x="194" y="74" width="32" height="70" rx="1" fill="#2A3D33"/>
+    <g stroke="#435A4C" stroke-width="1.2">
+      <line x1="198" y1="82" x2="222" y2="82"/>
+      <line x1="198" y1="90" x2="222" y2="90"/>
+      <line x1="198" y1="98" x2="222" y2="98"/>
+      <line x1="198" y1="106" x2="222" y2="106"/>
+      <line x1="198" y1="114" x2="222" y2="114"/>
+      <line x1="198" y1="122" x2="222" y2="122"/>
+      <line x1="198" y1="130" x2="222" y2="130"/>
+    </g>
+
+    <!-- Interior Silhouettes: Bookshelf, Warm Pendant Lamp, Reading Desk & Vinyl Player -->
+    <!-- Interior Bookshelf (Left side of window) -->
+    <g fill="#5C3D28" opacity="0.55">
+      <rect x="62" y="80" width="26" height="58"/>
+      <rect x="65" y="84" width="4" height="11" fill="#2E2018"/>
+      <rect x="70" y="83" width="5" height="12" fill="#3D2B1F"/>
+      <rect x="76" y="85" width="4" height="10" fill="#2E2018"/>
+      <rect x="65" y="101" width="5" height="12" fill="#3D2B1F"/>
+      <rect x="71" y="100" width="4" height="13" fill="#2E2018"/>
+      <rect x="77" y="102" width="6" height="11" fill="#3D2B1F"/>
+    </g>
+
+    <!-- Hanging Warm Studio Lamp -->
+    <line x1="138" y1="74" x2="138" y2="94" stroke="#4A321F" stroke-width="1.5"/>
+    <path d="M127,98 C127,91 149,91 149,98 Z" fill="#3A2618"/>
+    <circle cx="138" cy="100" r="5" fill="#FFFDF2"/>
+    <circle cx="138" cy="102" r="22" fill="#FFF6C9" opacity="0.45"/>
+
+    <!-- Reading Desk & Open Book Silhouette -->
+    <rect x="104" y="126" width="68" height="4" rx="1" fill="#3A2618"/>
+    <path d="M124,126 L136,121 L136,126 Z" fill="#FFF8E1"/>
+    <path d="M148,126 L136,121 L136,126 Z" fill="#F2DEC0"/>
+    <!-- Warm Tea Cup / Vinyl Turntable Accent -->
+    <rect x="154" y="121" width="12" height="5" rx="1" fill="#2A1B12"/>
+
+    <!-- Window Mullions (Architectural Grid) -->
+    <line x1="100" y1="74" x2="100" y2="144" stroke="#1E2F27" stroke-width="3"/>
+    <line x1="146" y1="74" x2="146" y2="144" stroke="#1E2F27" stroke-width="3"/>
+    <line x1="56" y1="118" x2="188" y2="118" stroke="#1E2F27" stroke-width="2.5"/>
+
+    <!-- Cantilevered Modern Sloped Roof -->
+    <polygon points="22,64 146,36 258,56 248,65 30,68" fill="#17251F" stroke="#57705E" stroke-width="1"/>
+    <!-- Warm Roof Eave Accent Strip -->
+    <line x1="34" y1="65" x2="246" y2="59" stroke="#F3C77B" stroke-width="2" stroke-opacity="0.72"/>
+  </g>
+
+  <!-- Foreground Tall Cedar & Pine Silhouettes (Framing Left & Far Right) -->
+  <g fill="#12201A">
+    <!-- Left Foreground Pine Cluster -->
+    <rect x="86" y="340" width="6" height="190" rx="2"/>
+    <path d="M89,198 L48,292 L72,292 L40,362 L68,362 L34,428 L144,428 L110,362 L138,362 L106,292 L130,292 Z" opacity="0.94"/>
+    <rect x="148" y="390" width="4" height="135" rx="1.5"/>
+    <path d="M150,286 L120,356 L138,356 L112,412 L134,412 L108,462 L192,462 L166,412 L188,412 L162,356 L180,356 Z" fill="#192B23" opacity="0.9"/>
+
+    <!-- Right Foreground Framing Tree -->
+    <rect x="1116" y="330" width="6" height="190" rx="2"/>
+    <path d="M1119,204 L1082,292 L1104,292 L1074,358 L1098,358 L1068,422 L1170,422 L1140,358 L1164,358 L1134,292 L1156,292 Z" opacity="0.92"/>
+  </g>
+
+  <!-- MineRadio-Inspired Acoustic Waveform & Floating Light Bokeh Particles -->
+  <!-- Subtle Ambient Waveform Across Lower Lake Horizon -->
+  <g stroke="#FCE5A8" stroke-linecap="round" opacity="0.28">
+    <line x1="180" y1="538" x2="180" y2="546" stroke-width="2"/>
+    <line x1="192" y1="533" x2="192" y2="551" stroke-width="2"/>
+    <line x1="204" y1="528" x2="204" y2="556" stroke-width="2"/>
+    <line x1="216" y1="535" x2="216" y2="549" stroke-width="2"/>
+    <line x1="228" y1="531" x2="228" y2="553" stroke-width="2"/>
+    <line x1="240" y1="524" x2="240" y2="560" stroke-width="2"/>
+    <line x1="252" y1="530" x2="252" y2="554" stroke-width="2"/>
+    <line x1="264" y1="536" x2="264" y2="548" stroke-width="2"/>
+    <line x1="276" y1="533" x2="276" y2="551" stroke-width="2"/>
+    <line x1="288" y1="539" x2="288" y2="545" stroke-width="2"/>
+  </g>
+
+  <!-- Floating Golden Light Particles / Bokeh Orbs -->
+  <g fill="#FFF4C8">
+    <circle cx="620" cy="284" r="3.5" opacity="0.75"/>
+    <circle cx="620" cy="284" r="10" opacity="0.18"/>
+    <circle cx="548" cy="346" r="2.5" opacity="0.65"/>
+    <circle cx="482" cy="262" r="4" opacity="0.5"/>
+    <circle cx="482" cy="262" r="12" opacity="0.14"/>
+    <circle cx="742" cy="212" r="3" opacity="0.7"/>
+    <circle cx="812" cy="316" r="2.5" opacity="0.8"/>
+    <circle cx="964" cy="296" r="3.5" opacity="0.72"/>
+    <circle cx="964" cy="296" r="9" opacity="0.18"/>
+    <circle cx="1028" cy="226" r="2.2" opacity="0.6"/>
+    <circle cx="668" cy="462" r="3" opacity="0.82"/>
+    <circle cx="668" cy="462" r="8" opacity="0.22"/>
+    <circle cx="590" cy="494" r="2.2" opacity="0.68"/>
+    <circle cx="992" cy="476" r="2.8" opacity="0.74"/>
+    <circle cx="352" cy="448" r="3" opacity="0.55"/>
+    <circle cx="290" cy="378" r="2" opacity="0.48"/>
+  </g>
+
+  <!-- Subtle Ripples on Forefront Water -->
+  <g fill="none" stroke="#9AB3A1" stroke-width="1" opacity="0.22">
+    <line x1="120" y1="612" x2="260" y2="612"/>
+    <line x1="340" y1="648" x2="520" y2="648"/>
+    <line x1="680" y1="664" x2="910" y2="664"/>
+    <line x1="480" y1="696" x2="690" y2="696"/>
+  </g>
 </svg>

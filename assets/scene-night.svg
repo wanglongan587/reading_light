@@ -1,13 +1,207 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="620" viewBox="0 0 1000 620">
-<defs><linearGradient id="sky" x2="0" y2="1"><stop stop-color="#172936"/><stop offset=".7" stop-color="#405b62"/><stop offset="1" stop-color="#84927c"/></linearGradient><filter id="wobble"><feTurbulence type="fractalNoise" baseFrequency=".018" numOctaves="2" seed="8" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="2"/></filter><filter id="grain"><feTurbulence type="fractalNoise" baseFrequency=".7" numOctaves="3"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="table" tableValues="0 .04"/></feComponentTransfer></filter></defs>
-<rect width="1000" height="620" fill="url(#sky)"/><circle cx="750" cy="142" r="49" fill="#f7e8b6"/><circle cx="770" cy="126" r="49" fill="#213541"/>
-<g fill="#f7e8b6" opacity=".8"><circle cx="160" cy="120" r="2"/><circle cx="247" cy="190" r="2"/><circle cx="410" cy="105" r="2"/><circle cx="545" cy="153" r="2"/><circle cx="622" cy="77" r="2"/><circle cx="874" cy="195" r="2"/><circle cx="329" cy="72" r="1.5"/><circle cx="493" cy="211" r="1.5"/></g>
-<path d="M0 353 Q177 246 342 331 T650 315 T1000 293 V620 H0Z" fill="#536e68"/>
-<path d="M0 455 Q175 358 373 421 Q599 354 797 421 Q905 377 1000 401 V620 H0Z" fill="#304f4a"/>
-<path d="M508 620 C520 553 596 535 639 493 C679 453 656 437 655 414" fill="none" stroke="#9b9d77" stroke-width="42" opacity=".7"/>
-<g filter="url(#wobble)" stroke="#263e3b" stroke-width="3" stroke-linejoin="round"><path d="M583 333 V469 H750 V333" fill="#a0a47d"/><path d="M563 340 L665 244 L771 340Z" fill="#4e5148"/><path d="M705 277 V223 H724 V297" fill="#69715e"/><path d="M625 384 H660 V469 H625Z" fill="#5e7059"/><path d="M686 371 H726 V409 H686Z" fill="#f5d181"/><path d="M706 371 V409 M686 390 H726" stroke="#a28b60" stroke-width="2"/><path d="M596 367 H616 V394 H596Z" fill="#f5d181"/></g>
-<g fill="#233f3b" stroke="#1e3533" stroke-width="3" filter="url(#wobble)"><path d="M111 115 Q42 235 55 304 Q106 332 182 294 Q185 228 111 115Z"/><path d="M873 119 Q799 236 808 298 Q871 328 938 289 Q939 222 873 119Z"/></g>
-<g stroke="#263f3b" stroke-width="9" stroke-linecap="round"><path d="M112 515 V254 M873 489 V245"/></g>
-<g fill="#f4db8d"><circle cx="286" cy="491" r="3"/><circle cx="305" cy="508" r="2"/><circle cx="811" cy="483" r="3"/><circle cx="832" cy="508" r="2"/><circle cx="454" cy="538" r="2"/></g>
-<rect width="1000" height="620" filter="url(#grain)"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="744" viewBox="0 0 1200 744">
+  <defs>
+    <!-- Deep Midnight Cosmos Sky -->
+    <linearGradient id="nightSky" x1="0" y1="0" x2="0.1" y2="1">
+      <stop offset="0%" stop-color="#071014"/>
+      <stop offset="35%" stop-color="#0E1E24"/>
+      <stop offset="72%" stop-color="#173136"/>
+      <stop offset="100%" stop-color="#224445"/>
+    </linearGradient>
+
+    <!-- Emerald-Cyan Aurora Borealis Glow -->
+    <radialGradient id="auroraLeft" cx="0.32" cy="0.28" r="0.45">
+      <stop offset="0%" stop-color="#5CE6B8" stop-opacity="0.34"/>
+      <stop offset="48%" stop-color="#359E88" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#184742" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="auroraRight" cx="0.76" cy="0.24" r="0.48">
+      <stop offset="0%" stop-color="#7EE8C4" stop-opacity="0.38"/>
+      <stop offset="42%" stop-color="#48B2A6" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#194247" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="moonHalo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#FFF5D6" stop-opacity="0.65"/>
+      <stop offset="40%" stop-color="#CBE8D8" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#CBE8D8" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Mountain Ridges -->
+    <linearGradient id="nightRidgeFar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1B363A"/>
+      <stop offset="100%" stop-color="#0F2124"/>
+    </linearGradient>
+    <linearGradient id="nightRidgeMid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#14292D"/>
+      <stop offset="100%" stop-color="#0B181B"/>
+    </linearGradient>
+    <linearGradient id="nightRidgeNear" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0F2023"/>
+      <stop offset="100%" stop-color="#071113"/>
+    </linearGradient>
+
+    <!-- Midnight Mirror Lake -->
+    <linearGradient id="nightLake" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#102528"/>
+      <stop offset="45%" stop-color="#0A191C"/>
+      <stop offset="100%" stop-color="#050D10"/>
+    </linearGradient>
+
+    <!-- Warm Amber Cabin Sanctuary Glow -->
+    <radialGradient id="cabinHalo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#FFD97D" stop-opacity="0.88"/>
+      <stop offset="42%" stop-color="#E89D42" stop-opacity="0.38"/>
+      <stop offset="100%" stop-color="#E89D42" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="nightWindow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFEAAC"/>
+      <stop offset="100%" stop-color="#E59A3E"/>
+    </linearGradient>
+
+    <linearGradient id="nightReflect" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFD980" stop-opacity="0.52"/>
+      <stop offset="60%" stop-color="#D48838" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#D48838" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Midnight Sky -->
+  <rect width="1200" height="744" fill="url(#nightSky)"/>
+
+  <!-- Sweeping Aurora Borealis Fields (Visible across left, center, and right!) -->
+  <ellipse cx="380" cy="210" rx="460" ry="210" fill="url(#auroraLeft)"/>
+  <ellipse cx="890" cy="185" rx="480" ry="230" fill="url(#auroraRight)"/>
+  <path d="M80,240 C260,120 460,290 680,165 C860,65 1030,220 1160,130" fill="none" stroke="#7AE8C3" stroke-width="26" stroke-linecap="round" opacity="0.12"/>
+  <path d="M120,275 C310,165 510,310 740,190 C910,105 1040,240 1180,165" fill="none" stroke="#A6F4D8" stroke-width="10" stroke-linecap="round" opacity="0.14"/>
+
+  <!-- Luminous Crescent Moon & Sonic Orbit Rings -->
+  <circle cx="888" cy="196" r="175" fill="url(#moonHalo)"/>
+  <g fill="none" stroke="#9EE6CF" stroke-linecap="round">
+    <circle cx="888" cy="196" r="88" stroke-width="1.2" stroke-opacity="0.28" stroke-dasharray="5 12"/>
+    <circle cx="888" cy="196" r="136" stroke-width="1" stroke-opacity="0.18"/>
+    <circle cx="888" cy="196" r="196" stroke-width="0.9" stroke-opacity="0.12" stroke-dasharray="2 9"/>
+    <circle cx="888" cy="196" r="264" stroke-width="0.8" stroke-opacity="0.08"/>
+  </g>
+  <path d="M 868 157 A 44 44 0 1 0 924 221 A 37 37 0 1 1 868 157 Z" fill="#FFF6D6"/>
+
+  <!-- Starlight & Constellation Network (Across entire sky so left/center crops also shine) -->
+  <g stroke="#8FD9C4" stroke-width="0.8" opacity="0.26" fill="none">
+    <polyline points="186,118 248,94 316,126 378,98 432,142"/>
+    <polyline points="540,148 612,108 684,132 732,88"/>
+  </g>
+  <g fill="#FFF9E6">
+    <circle cx="114" cy="88" r="2" opacity="0.8"/>
+    <circle cx="186" cy="118" r="3" opacity="0.95"/>
+    <circle cx="248" cy="94" r="2.5" opacity="0.9"/>
+    <circle cx="316" cy="126" r="3.2" opacity="0.95"/>
+    <circle cx="378" cy="98" r="2.4" opacity="0.85"/>
+    <circle cx="432" cy="142" r="2.8" opacity="0.9"/>
+    <circle cx="220" cy="188" r="2" opacity="0.7"/>
+    <circle cx="348" cy="212" r="2.5" opacity="0.8"/>
+    <circle cx="486" cy="84" r="2" opacity="0.75"/>
+    <circle cx="540" cy="148" r="2.8" opacity="0.9"/>
+    <circle cx="612" cy="108" r="3.2" opacity="0.95"/>
+    <circle cx="684" cy="132" r="2.4" opacity="0.85"/>
+    <circle cx="732" cy="88" r="2.8" opacity="0.9"/>
+    <circle cx="645" cy="210" r="2" opacity="0.75"/>
+    <circle cx="786" cy="262" r="2.2" opacity="0.8"/>
+    <circle cx="1018" cy="116" r="2.6" opacity="0.88"/>
+    <circle cx="1088" cy="168" r="2" opacity="0.75"/>
+    <circle cx="1134" cy="96" r="2.4" opacity="0.82"/>
+  </g>
+
+  <!-- Mountain Ranges -->
+  <path d="M0,418 C110,362 215,328 335,368 C448,405 540,302 678,334 C792,360 885,310 1015,332 C1095,346 1152,320 1200,308 L1200,560 L0,560 Z" fill="url(#nightRidgeFar)"/>
+  <path d="M0,456 C145,412 260,446 396,418 C525,392 612,434 736,412 C868,388 972,354 1094,386 C1142,398 1175,392 1200,384 L1200,580 L0,580 Z" fill="url(#nightRidgeMid)"/>
+  <path d="M0,502 C180,478 330,492 490,512 C645,530 755,472 935,468 C1048,465 1130,478 1200,488 L1200,560 L0,560 Z" fill="url(#nightRidgeNear)"/>
+
+  <!-- Midnight Mirror Lake -->
+  <rect x="0" y="518" width="1200" height="226" fill="url(#nightLake)"/>
+
+  <!-- Moon & Cabin Reflections on Dark Water -->
+  <ellipse cx="835" cy="598" rx="150" ry="72" fill="url(#nightReflect)"/>
+  <g fill="#FFE299">
+    <rect x="765" y="534" width="136" height="3" rx="1.5" opacity="0.58"/>
+    <rect x="748" y="546" width="168" height="2.5" rx="1.25" opacity="0.46"/>
+    <rect x="772" y="558" width="122" height="2.5" rx="1.25" opacity="0.38"/>
+    <rect x="758" y="572" width="144" height="2" rx="1" opacity="0.3"/>
+    <rect x="786" y="586" width="96" height="2" rx="1" opacity="0.22"/>
+  </g>
+  <!-- Cyan Aurora Shimmer on Left Water -->
+  <g fill="#7AE8C3" opacity="0.22">
+    <rect x="210" y="548" width="140" height="2" rx="1"/>
+    <rect x="180" y="564" width="190" height="2" rx="1"/>
+    <rect x="240" y="580" width="110" height="1.5" rx="0.75"/>
+  </g>
+
+  <!-- Midnight Glass Reading Pavilion -->
+  <g transform="translate(690, 352)">
+    <circle cx="138" cy="96" r="155" fill="url(#cabinHalo)"/>
+    <rect x="18" y="156" width="244" height="10" rx="2" fill="#0B181B"/>
+    <rect x="30" y="164" width="220" height="5" rx="1" fill="#233D40"/>
+    <rect x="42" y="62" width="196" height="94" rx="3" fill="#0E1E22" stroke="#315257" stroke-width="1.5"/>
+    <rect x="56" y="74" width="132" height="70" rx="2" fill="url(#nightWindow)"/>
+    <rect x="194" y="74" width="32" height="70" rx="1" fill="#152B30"/>
+
+    <!-- Interior Lamp & Desk -->
+    <line x1="138" y1="74" x2="138" y2="94" stroke="#3A2618" stroke-width="1.5"/>
+    <path d="M127,98 C127,91 149,91 149,98 Z" fill="#291B12"/>
+    <circle cx="138" cy="100" r="5.5" fill="#FFFDF5"/>
+    <circle cx="138" cy="102" r="24" fill="#FFF5C0" opacity="0.52"/>
+    <rect x="104" y="126" width="68" height="4" rx="1" fill="#291B12"/>
+    <path d="M124,126 L136,121 L136,126 Z" fill="#FFF8E1"/>
+    <path d="M148,126 L136,121 L136,126 Z" fill="#F2DEC0"/>
+
+    <!-- Window Mullions -->
+    <line x1="100" y1="74" x2="100" y2="144" stroke="#0E1E22" stroke-width="3"/>
+    <line x1="146" y1="74" x2="146" y2="144" stroke="#0E1E22" stroke-width="3"/>
+    <line x1="56" y1="118" x2="188" y2="118" stroke="#0E1E22" stroke-width="2.5"/>
+
+    <!-- Roof -->
+    <polygon points="22,64 146,36 258,56 248,65 30,68" fill="#091417" stroke="#3D6369" stroke-width="1"/>
+    <line x1="34" y1="65" x2="246" y2="59" stroke="#7AE8C3" stroke-width="1.8" stroke-opacity="0.58"/>
+  </g>
+
+  <!-- Foreground Trees -->
+  <g fill="#061012">
+    <rect x="86" y="340" width="6" height="190" rx="2"/>
+    <path d="M89,198 L48,292 L72,292 L40,362 L68,362 L34,428 L144,428 L110,362 L138,362 L106,292 L130,292 Z" opacity="0.96"/>
+    <rect x="148" y="390" width="4" height="135" rx="1.5"/>
+    <path d="M150,286 L120,356 L138,356 L112,412 L134,412 L108,462 L192,462 L166,412 L188,412 L162,356 L180,356 Z" fill="#0A181B" opacity="0.92"/>
+    <rect x="1116" y="330" width="6" height="190" rx="2"/>
+    <path d="M1119,204 L1082,292 L1104,292 L1074,358 L1098,358 L1068,422 L1170,422 L1140,358 L1164,358 L1134,292 L1156,292 Z" opacity="0.95"/>
+  </g>
+
+  <!-- MineRadio Acoustic Waveform & Firefly/Stardust Bokeh -->
+  <g stroke="#7AE8C3" stroke-linecap="round" opacity="0.38">
+    <line x1="180" y1="538" x2="180" y2="546" stroke-width="2"/>
+    <line x1="192" y1="533" x2="192" y2="551" stroke-width="2"/>
+    <line x1="204" y1="526" x2="204" y2="558" stroke-width="2"/>
+    <line x1="216" y1="534" x2="216" y2="550" stroke-width="2"/>
+    <line x1="228" y1="530" x2="228" y2="554" stroke-width="2"/>
+    <line x1="240" y1="522" x2="240" y2="562" stroke-width="2"/>
+    <line x1="252" y1="529" x2="252" y2="555" stroke-width="2"/>
+    <line x1="264" y1="535" x2="264" y2="549" stroke-width="2"/>
+    <line x1="276" y1="532" x2="276" y2="552" stroke-width="2"/>
+    <line x1="288" y1="538" x2="288" y2="546" stroke-width="2"/>
+  </g>
+
+  <g fill="#FFE8A3">
+    <circle cx="654" cy="458" r="3.2" opacity="0.9"/>
+    <circle cx="654" cy="458" r="10" opacity="0.22"/>
+    <circle cx="582" cy="488" r="2.5" opacity="0.8"/>
+    <circle cx="984" cy="472" r="3" opacity="0.85"/>
+    <circle cx="984" cy="472" r="9" opacity="0.2"/>
+    <circle cx="436" cy="478" r="2.8" opacity="0.82"/>
+    <circle cx="312" cy="456" r="3" opacity="0.78"/>
+    <circle cx="312" cy="456" r="9" opacity="0.18"/>
+  </g>
+  <g fill="#88F2CE">
+    <circle cx="520" cy="342" r="3" opacity="0.72"/>
+    <circle cx="520" cy="342" r="9" opacity="0.18"/>
+    <circle cx="386" cy="318" r="2.5" opacity="0.68"/>
+    <circle cx="748" cy="296" r="2.8" opacity="0.75"/>
+  </g>
 </svg>

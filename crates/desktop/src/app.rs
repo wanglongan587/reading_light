@@ -995,8 +995,7 @@ impl ReadingApp {
                         self.mood_reply = Some((input, generated.result));
                         self.mood_unsaved = None;
                         self.error = None;
-                        cx.on_next_frame(window, |app, _, cx| {
-                            app.mood_scroll.scroll_to_bottom();
+                        cx.on_next_frame(window, |_, _, cx| {
                             cx.notify();
                         });
                     }
@@ -1105,6 +1104,82 @@ impl ReadingApp {
         t.volume = v[11].parse()?;
         Ok(t)
     }
+    fn is_dark(&self) -> bool {
+        glow_core::theme::color(&self.theme().paper).unwrap_or(0) <= 0x606060
+    }
+    fn border_subtle(&self) -> Hsla {
+        if self.is_dark() {
+            rgb(0xffffff).opacity(0.11).into()
+        } else {
+            rgb(hex(&self.theme().text)).opacity(0.10).into()
+        }
+    }
+    fn border_strong(&self) -> Hsla {
+        if self.is_dark() {
+            rgb(0xffffff).opacity(0.18).into()
+        } else {
+            rgb(hex(&self.theme().text)).opacity(0.16).into()
+        }
+    }
+    fn specular_line(&self) -> Div {
+        div()
+            .w_full()
+            .h(px(1.))
+            .bg(rgb(0xffffff).opacity(if self.is_dark() { 0.14 } else { 0.62 }))
+    }
+    fn frequency_for_theme(id: &str) -> &'static str {
+        match id {
+            "forest" => "FM 88.6",
+            "paper" => "FM 92.4",
+            "night" => "FM 101.7",
+            _ => "FM 96.0",
+        }
+    }
+    fn waveform_bars(&self, active: bool, heights: &[f32]) -> Div {
+        let t = self.theme();
+        let mut row = h_flex().gap_1().items_center();
+        for (idx, h) in heights.iter().enumerate() {
+            let opacity = if active {
+                if idx % 2 == 0 { 0.92 } else { 0.64 }
+            } else if idx % 2 == 0 {
+                0.42
+            } else {
+                0.24
+            };
+            row = row.child(
+                div()
+                    .w(px(2.5))
+                    .h(px(*h))
+                    .rounded_full()
+                    .bg(rgb(hex(&t.accent)).opacity(opacity)),
+            );
+        }
+        row
+    }
+    fn studio_badge(&self, code: &str, label: &str, active: bool) -> Div {
+        let t = self.theme();
+        h_flex()
+            .gap_2()
+            .items_center()
+            .px_2p5()
+            .py_1()
+            .rounded_full()
+            .bg(rgb(hex(&t.accent)).opacity(if self.is_dark() { 0.18 } else { 0.11 }))
+            .border_1()
+            .border_color(rgb(hex(&t.accent)).opacity(0.28))
+            .child(div().size(px(6.)).rounded_full().bg(rgb(if active {
+                hex(&t.accent)
+            } else {
+                hex(&t.muted)
+            })))
+            .child(
+                div()
+                    .text_size(px(10.))
+                    .font_family(self.ui_font())
+                    .text_color(rgb(hex(&t.accent)))
+                    .child(format!("{code}  ·  {label}")),
+            )
+    }
     fn button(&self, label: &str, action: Action, cx: &Context<Self>) -> Button {
         Button::new(SharedString::from(format!("{label}-{action:?}")))
             .label(label.to_owned())
@@ -1142,11 +1217,11 @@ impl ReadingApp {
         };
         let background: Hsla = rgb(hex(&t.paper)).opacity(0.0).into();
         let hover: Hsla = if active {
-            rgb(hex(&t.accent)).opacity(0.88).into()
+            rgb(hex(&t.accent)).opacity(0.90).into()
         } else {
-            rgb(hex(&t.accent)).opacity(0.10).into()
+            rgb(hex(&t.accent)).opacity(0.12).into()
         };
-        let pressed: Hsla = rgb(hex(&t.accent)).opacity(0.20).into();
+        let pressed: Hsla = rgb(hex(&t.accent)).opacity(0.22).into();
         let style = ButtonCustomVariant::new(cx)
             .color(background)
             .foreground(foreground)
@@ -1156,11 +1231,11 @@ impl ReadingApp {
             .label(label.to_owned())
             .icon(icon)
             .custom(style)
-            .rounded(px(12.))
+            .rounded(px(11.))
             .w_full()
-            .h(px(44.))
+            .h(px(40.))
             .font_family(self.ui_font())
-            .text_size(px(14.))
+            .text_size(px(13.5))
             .toggled(active)
             .disabled(self.busy)
             .debug_selector({
@@ -1169,10 +1244,29 @@ impl ReadingApp {
             })
             .on_click(cx.listener(move |this, _, window, cx| this.act(action.clone(), window, cx)));
         div()
+            .relative()
             .w_full()
-            .rounded(px(12.))
-            .when(active, |this| this.bg(rgb(hex(&t.accent))))
+            .rounded(px(11.))
+            .border_1()
+            .border_color(if active {
+                rgb(hex(&t.accent)).opacity(0.65)
+            } else {
+                rgb(0x000000).opacity(0.0)
+            })
+            .when(active, |this| this.bg(rgb(hex(&t.accent))).shadow_sm())
             .child(button)
+            .when(active, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .left(px(5.))
+                        .top(px(11.))
+                        .w(px(3.))
+                        .h(px(18.))
+                        .rounded_full()
+                        .bg(rgb(hex(&t.paper)).opacity(0.85)),
+                )
+            })
     }
     fn mood_button(&self, mood: &str, active: bool, cx: &Context<Self>) -> Div {
         let t = self.theme();
@@ -1181,7 +1275,7 @@ impl ReadingApp {
             .color(if active {
                 rgb(hex(&t.paper)).opacity(0.0).into()
             } else {
-                rgb(hex(&t.paper)).into()
+                rgb(hex(&t.background)).opacity(0.55).into()
             })
             .foreground(if active {
                 rgb(hex(&t.paper)).into()
@@ -1191,18 +1285,18 @@ impl ReadingApp {
             .hover(if active {
                 rgb(hex(&t.accent)).opacity(0.88).into()
             } else {
-                rgb(hex(&t.accent)).opacity(0.12).into()
+                rgb(hex(&t.accent)).opacity(0.14).into()
             })
-            .active(rgb(hex(&t.accent)).opacity(0.20).into());
+            .active(rgb(hex(&t.accent)).opacity(0.22).into());
         let button = Button::new(SharedString::from(format!("mood-{mood}")))
             .label(mood.clone())
             .icon(IconName::Heart)
             .custom(style)
-            .rounded(px(24.))
-            .h(px(38.))
-            .px_4()
+            .rounded(px(20.))
+            .h(px(36.))
+            .px_3p5()
             .font_family(self.ui_font())
-            .text_size(px(14.))
+            .text_size(px(13.))
             .toggled(active)
             .disabled(self.busy)
             .debug_selector({
@@ -1213,108 +1307,152 @@ impl ReadingApp {
                 this.act(Action::Mood(mood.clone()), window, cx)
             }));
         div()
-            .rounded(px(24.))
-            .when(active, |this| this.bg(rgb(hex(&t.accent))))
+            .rounded(px(20.))
+            .border_1()
+            .border_color(if active {
+                Hsla::from(rgb(hex(&t.accent)).opacity(0.95))
+            } else {
+                self.border_subtle()
+            })
+            .when(active, |this| this.bg(rgb(hex(&t.accent))).shadow_sm())
             .child(button)
     }
     fn heading(&self, kicker: &str, title: &str, sub: &str) -> Div {
         v_flex()
-            .gap_3()
+            .gap_2()
+            .child(self.studio_badge("FM 94.2", kicker, true))
             .child(
                 div()
-                    .text_size(px(11.))
-                    .font_family(self.ui_font())
-                    .text_color(rgb(hex(&self.theme().accent)))
-                    .child(kicker.to_owned()),
-            )
-            .child(
-                div()
-                    .text_size(px(32.))
+                    .text_size(px(28.))
                     .font_family(self.display_font())
                     .line_height(relative(1.22))
                     .child(title.to_owned()),
             )
             .child(
                 div()
-                    .text_size(px(14.))
+                    .text_size(px(13.))
                     .font_family(self.ui_font())
-                    .line_height(relative(1.65))
+                    .line_height(relative(1.6))
                     .text_color(rgb(hex(&self.theme().muted)))
-                    .max_w(px(720.))
+                    .max_w(px(680.))
                     .child(sub.to_owned()),
             )
     }
     fn shelf(&self, cx: &Context<Self>) -> AnyElement {
         let t = self.theme();
-        let mut books = h_flex().flex_wrap().gap_6().items_start();
+        let is_dark = self.is_dark();
+        let total_highlights: usize = self
+            .store
+            .state
+            .books
+            .iter()
+            .map(|b| b.highlights.len())
+            .sum();
+        let total_journal = self.store.state.journal.len();
+        let mut books = h_flex().flex_wrap().gap_5().items_start();
         for (i, b) in self.store.state.books.iter().enumerate() {
-            let colors = [0x788368, 0xb29575, 0x879a99, 0x8a7f79];
-            let cover = if let Some(name) = &b.cover {
-                img(self.store.root.join("books").join(&b.id).join(name))
-                    .w_full()
-                    .h(px(214.))
-                    .object_fit(ObjectFit::Cover)
-                    .into_any_element()
-            } else {
-                v_flex()
-                    .w_full()
-                    .h(px(214.))
-                    .p_6()
-                    .justify_between()
-                    .bg(rgb(colors[i % 4]))
-                    .text_color(rgb(0xfffaed))
-                    .border_l_5()
-                    .border_color(rgb(0xffffff).opacity(0.18))
-                    .child(
-                        div()
-                            .text_size(px(10.))
-                            .font_family(self.ui_font())
-                            .child("微光藏书 · LITTLE LIGHT"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(22.))
-                            .font_family(self.display_font())
-                            .line_height(relative(1.35))
-                            .child(b.title.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .font_family(self.ui_font())
-                            .child(b.author.clone()),
-                    )
-                    .into_any_element()
-            };
+            let colors = [0x385043, 0x69503d, 0x364d56, 0x524656];
             let reading_label = if let Some(progress) = b.progress {
-                format!("阅读中 · {:.0}%", progress * 100.0)
+                format!("已读 {:.0}%", progress * 100.0)
             } else if b.location.is_some() {
                 "阅读中".to_owned()
             } else {
                 "未开始".to_owned()
             };
-            let progress = b.progress.map(|progress| {
-                (
-                    progress.clamp(0.0, 1.0),
-                    b.chapter
-                        .as_deref()
-                        .filter(|chapter| !chapter.trim().is_empty())
-                        .unwrap_or("继续上次的阅读"),
-                )
-            });
-            let mut card = v_flex()
-                .gap_4()
-                .w(px(228.))
-                .p_4()
+            let format_badge = b.format.to_uppercase();
+            let cover = if let Some(name) = &b.cover {
+                img(self.store.root.join("books").join(&b.id).join(name))
+                    .w_full()
+                    .h(px(184.))
+                    .object_fit(ObjectFit::Cover)
+                    .into_any_element()
+            } else {
+                v_flex()
+                    .w_full()
+                    .h(px(184.))
+                    .p_4()
+                    .pl_5()
+                    .justify_between()
+                    .bg(rgb(colors[i % 4]))
+                    .text_color(rgb(0xfffaed))
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_size(px(9.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(0xf5e2b8))
+                                    .child("微光藏书 · EDITION"),
+                            )
+                            .child(div().w(px(48.))),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .py_2p5()
+                            .border_t_1()
+                            .border_b_1()
+                            .border_color(rgb(0xffffff).opacity(0.16))
+                            .child(
+                                div()
+                                    .text_size(px(19.5))
+                                    .font_family(self.display_font())
+                                    .line_height(relative(1.32))
+                                    .child(b.title.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(0xe8dec8))
+                                    .text_ellipsis()
+                                    .child(b.author.clone()),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(div().w(px(36.)))
+                            .child(
+                                div()
+                                    .text_size(px(8.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(0xf5e2b8).opacity(0.72))
+                                    .child(format!("NO. {:02}", i + 1)),
+                            ),
+                    )
+                    .into_any_element()
+            };
+            let progress_val = b
+                .progress
+                .map(|p| p.clamp(0.0, 1.0))
+                .unwrap_or(if b.location.is_some() { 0.06 } else { 0.0 });
+            let chapter_label = b
+                .chapter
+                .as_deref()
+                .filter(|chapter| !chapter.trim().is_empty())
+                .unwrap_or(if b.location.is_some() {
+                    "继续上次停下的页面"
+                } else {
+                    "等待翻开第一页"
+                });
+            let card = v_flex()
+                .gap_3()
+                .w(px(236.))
+                .p_3p5()
                 .rounded_2xl()
-                .bg(rgb(hex(&t.paper)).opacity(0.88))
+                .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.90 } else { 0.94 }))
                 .border_1()
-                .border_color(rgb(hex(&t.text)).opacity(0.10))
+                .border_color(self.border_subtle())
                 .shadow_sm()
                 .hover(|style| {
                     style
-                        .bg(rgb(hex(&t.paper)).opacity(0.94))
-                        .border_color(rgb(hex(&t.accent)).opacity(0.35))
+                        .bg(rgb(hex(&t.paper)))
+                        .border_color(rgb(hex(&t.accent)).opacity(0.48))
+                        .shadow_md()
                 })
                 .child(
                     div()
@@ -1322,116 +1460,205 @@ impl ReadingApp {
                         .rounded_xl()
                         .overflow_hidden()
                         .border_1()
-                        .border_color(rgb(0xffffff).opacity(0.24))
+                        .border_color(rgb(0xffffff).opacity(0.22))
                         .shadow_sm()
-                        .child(cover),
+                        .child(cover)
+                        // 3D Hardcover Spine Crease Overlay
+                        .child(
+                            div()
+                                .absolute()
+                                .left(px(0.))
+                                .top(px(0.))
+                                .w(px(9.))
+                                .h_full()
+                                .bg(rgb(0x000000).opacity(0.24)),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .left(px(9.))
+                                .top(px(0.))
+                                .w(px(1.5))
+                                .h_full()
+                                .bg(rgb(0xffffff).opacity(0.26)),
+                        )
+                        // Top-right reading status pill on cover
+                        .child(
+                            div()
+                                .absolute()
+                                .right(px(8.))
+                                .top(px(8.))
+                                .px_2()
+                                .py_0p5()
+                                .rounded_full()
+                                .bg(rgb(0x0c1613).opacity(0.76))
+                                .border_1()
+                                .border_color(rgb(0xffffff).opacity(0.18))
+                                .text_size(px(10.))
+                                .font_family(self.ui_font())
+                                .text_color(rgb(0xfff7df))
+                                .child(reading_label.clone()),
+                        )
+                        // Bottom-left format badge on cover
+                        .child(
+                            div()
+                                .absolute()
+                                .left(px(16.))
+                                .bottom(px(8.))
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded(px(5.))
+                                .bg(rgb(0x0c1613).opacity(0.68))
+                                .text_size(px(9.))
+                                .font_family(self.ui_font())
+                                .text_color(rgb(0xe8efe9))
+                                .child(format_badge),
+                        ),
                 )
                 .child(
                     v_flex()
-                        .gap_2()
+                        .gap_1()
                         .child(
                             div()
-                                .text_size(px(16.))
+                                .text_size(px(15.5))
                                 .font_family(self.display_font())
-                                .line_height(relative(1.35))
+                                .line_height(relative(1.3))
                                 .text_color(rgb(hex(&t.text)))
+                                .text_ellipsis()
                                 .child(b.title.clone()),
                         )
                         .child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(px(11.5))
                                 .font_family(self.ui_font())
                                 .text_color(rgb(hex(&t.muted)))
-                                .child(format!("{}  ·  {}", b.author, reading_label)),
-                        ),
-                );
-            if let Some((progress, chapter)) = progress {
-                card = card.child(
-                    v_flex()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_size(px(10.))
-                                .font_family(self.ui_font())
-                                .text_color(rgb(hex(&t.accent)))
                                 .text_ellipsis()
-                                .child(chapter.to_owned()),
+                                .child(b.author.clone()),
+                        ),
+                )
+                .child(
+                    v_flex()
+                        .gap_1p5()
+                        .px_2p5()
+                        .py_2()
+                        .rounded_xl()
+                        .bg(rgb(hex(&t.background)).opacity(if is_dark { 0.58 } else { 0.68 }))
+                        .child(
+                            h_flex()
+                                .justify_between()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_size(px(10.))
+                                        .font_family(self.ui_font())
+                                        .text_color(if b.location.is_some() {
+                                            rgb(hex(&t.accent))
+                                        } else {
+                                            rgb(hex(&t.muted))
+                                        })
+                                        .text_ellipsis()
+                                        .child(chapter_label.to_owned()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(10.))
+                                        .font_family(self.ui_font())
+                                        .text_color(rgb(hex(&t.muted)))
+                                        .child(format!("{:.0}%", progress_val * 100.0)),
+                                ),
                         )
                         .child(
                             div()
                                 .w_full()
-                                .h(px(3.))
+                                .h(px(3.5))
                                 .rounded_full()
                                 .bg(rgb(hex(&t.text)).opacity(0.10))
                                 .child(
                                     div()
-                                        .w(px((196.0 * progress).max(2.0)))
+                                        .w(px((188.0 * progress_val)
+                                            .max(if b.location.is_some() { 6.0 } else { 0.0 })))
                                         .h_full()
                                         .rounded_full()
                                         .bg(rgb(hex(&t.accent))),
                                 ),
                         ),
-                );
-            }
-            card = card.child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        self.button_with_icon(
-                            if b.location.is_some() {
-                                "继续阅读"
-                            } else {
-                                "打开这本书"
-                            },
-                            IconName::BookOpen,
-                            Action::Open(b.id.clone()),
-                            cx,
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .justify_between()
+                        .child(
+                            self.button_with_icon(
+                                if b.location.is_some() {
+                                    "继续阅读"
+                                } else {
+                                    "打开这本书"
+                                },
+                                IconName::BookOpen,
+                                Action::Open(b.id.clone()),
+                                cx,
+                            )
+                            .primary(),
                         )
-                        .primary(),
-                    )
-                    .child(self.button_with_icon(
-                        "移出",
-                        IconName::X,
-                        Action::Remove(b.id.clone()),
-                        cx,
-                    )),
-            );
+                        .child(self.button_with_icon(
+                            "移出",
+                            IconName::X,
+                            Action::Remove(b.id.clone()),
+                            cx,
+                        )),
+                );
             books = books.child(card);
         }
         books = books.child(
             v_flex()
-                .w(px(228.))
-                .h(px(330.))
+                .w(px(236.))
+                .h(px(344.))
+                .p_5()
                 .items_center()
                 .justify_center()
-                .gap_5()
+                .gap_4()
                 .rounded_2xl()
                 .border_1()
-                .border_color(rgb(hex(&t.text)).opacity(0.14))
-                .bg(rgb(hex(&t.paper)).opacity(0.50))
+                .border_color(self.border_strong())
+                .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.56 } else { 0.68 }))
                 .hover(|style| {
                     style
-                        .bg(rgb(hex(&t.paper)).opacity(0.74))
-                        .border_color(rgb(hex(&t.accent)).opacity(0.38))
+                        .bg(rgb(hex(&t.paper)).opacity(0.88))
+                        .border_color(rgb(hex(&t.accent)).opacity(0.45))
+                        .shadow_sm()
                 })
                 .child(
                     div()
-                        .size(px(58.))
+                        .size(px(68.))
                         .rounded_full()
                         .flex()
                         .items_center()
                         .justify_center()
-                        .bg(rgb(hex(&t.accent)).opacity(0.12))
+                        .bg(rgb(hex(&t.accent)).opacity(0.10))
+                        .border_1()
+                        .border_color(rgb(hex(&t.accent)).opacity(0.26))
                         .child(
-                            Icon::new(IconName::Feather)
-                                .size(px(24.))
-                                .text_color(rgb(hex(&t.accent))),
+                            div()
+                                .size(px(48.))
+                                .rounded_full()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .bg(rgb(hex(&t.accent)).opacity(0.16))
+                                .child(
+                                    Icon::new(IconName::Feather)
+                                        .size(px(22.))
+                                        .text_color(rgb(hex(&t.accent))),
+                                ),
                         ),
                 )
                 .child(
                     v_flex()
                         .items_center()
-                        .gap_2()
+                        .gap_1p5()
                         .child(
                             div()
                                 .text_size(px(17.))
@@ -1440,12 +1667,13 @@ impl ReadingApp {
                         )
                         .child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(px(11.5))
                                 .font_family(self.ui_font())
                                 .text_color(rgb(hex(&t.muted)))
                                 .child("拖入 EPUB / TXT，或从电脑选择"),
                         ),
                 )
+                .child(self.waveform_bars(false, &[6., 11., 16., 9., 14., 8., 12., 7.]))
                 .child(
                     self.button_with_icon("添加一本书", IconName::Plus, Action::Import, cx)
                         .primary(),
@@ -1469,13 +1697,13 @@ impl ReadingApp {
                 .map(|progress| format!(" · 已读 {:.0}%", progress * 100.0))
                 .unwrap_or_default();
             (
-                "CONTINUE YOUR STORY",
+                "CONTINUE YOUR STORY · 续读波段",
                 "回到故事里，\n那盏灯还亮着。".to_owned(),
                 format!("《{}》 · {chapter}{progress}", book.title),
             )
         } else {
             (
-                "A LITTLE LIGHT · A LITTLE TIME",
+                "A LITTLE LIGHT · 慢读时刻",
                 "让心慢下来，\n读几页吧。".to_owned(),
                 "这里没有读完的期限。故事和微光，都会等你。".to_owned(),
             )
@@ -1483,10 +1711,12 @@ impl ReadingApp {
         let hero = h_flex()
             .relative()
             .w_full()
-            .h(px(310.))
+            .h(px(252.))
             .flex_shrink_0()
             .rounded_2xl()
             .overflow_hidden()
+            .border_1()
+            .border_color(self.border_strong())
             .bg(rgb(hex(&t.background)))
             .shadow_md()
             .child(
@@ -1500,27 +1730,21 @@ impl ReadingApp {
                 .object_fit(ObjectFit::Cover),
             )
             .child(
-                div()
-                    .absolute()
-                    .size_full()
-                    .bg(rgb(hex(&t.background)).opacity(0.06)),
-            )
-            .child(
                 v_flex()
                     .relative()
-                    .w(px(540.))
+                    .w(px(480.))
                     .max_w_full()
                     .h_full()
                     .p_6()
-                    .justify_center()
-                    .gap_6()
-                    .bg(rgb(hex(&t.paper)).opacity(0.90))
-                    .border_l_4()
-                    .border_color(rgb(hex(&t.accent)))
+                    .justify_between()
+                    .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.86 } else { 0.90 }))
+                    .border_r_1()
+                    .border_color(self.border_subtle())
                     .child(self.heading(hero_kicker, &hero_title, &hero_sub))
                     .child(
                         h_flex()
                             .gap_3()
+                            .items_center()
                             .child(
                                 self.button_with_icon(
                                     if resume.is_some() {
@@ -1550,106 +1774,349 @@ impl ReadingApp {
                             )),
                     ),
             )
+            // Right-side MineRadio Floating Telemetry & Poetic Stage HUD
             .child(
                 v_flex()
                     .absolute()
-                    .right_6()
-                    .bottom_6()
-                    .gap_1()
+                    .right_5()
+                    .top_4()
+                    .bottom_4()
+                    .justify_between()
                     .items_end()
-                    .text_color(rgb(hex(&t.text)))
                     .child(
-                        div()
-                            .text_size(px(12.))
-                            .font_family(self.ui_font())
-                            .text_color(rgb(hex(&t.paper)))
-                            .child("今天的一小段"),
+                        h_flex()
+                            .gap_2p5()
+                            .items_center()
+                            .px_3p5()
+                            .py_2()
+                            .rounded_xl()
+                            .bg(rgb(0x0b1512).opacity(0.68))
+                            .border_1()
+                            .border_color(rgb(0xffffff).opacity(0.16))
+                            .child(self.waveform_bars(true, &[5., 11., 15., 8., 13., 7.]))
+                            .child(
+                                v_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        div()
+                                            .text_size(px(9.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(0xf5dc9c))
+                                            .child(format!(
+                                                "{}  ·  AMBIENT STAGE",
+                                                Self::frequency_for_theme(&t.id)
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(0xf4f7f2))
+                                            .child(format!(
+                                                "藏书 {} 本  ·  划线 {} 处  ·  回响 {} 篇",
+                                                self.store.state.books.len(),
+                                                total_highlights,
+                                                total_journal
+                                            )),
+                                    ),
+                            ),
                     )
                     .child(
-                        div()
-                            .text_size(px(18.))
-                            .font_family(self.display_font())
-                            .text_color(rgb(hex(&t.paper)))
-                            .child("也足够让风停一会儿"),
+                        v_flex()
+                            .px_4()
+                            .py_2p5()
+                            .gap_0p5()
+                            .items_end()
+                            .rounded_xl()
+                            .bg(rgb(0x0b1512).opacity(0.68))
+                            .border_1()
+                            .border_color(rgb(0xffffff).opacity(0.16))
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(0xf5dc9c))
+                                    .child("今天的一小段"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(17.))
+                                    .font_family(self.display_font())
+                                    .text_color(rgb(0xfffdf7))
+                                    .child("也足够让风停一会儿"),
+                            ),
                     ),
             );
         v_flex()
             .id("shelf-scroll")
             .overflow_y_scroll()
             .size_full()
-            .p_8()
-            .gap_7()
+            .px_7()
+            .py_6()
+            .gap_5()
             .child(hero)
             .child(
-                v_flex()
-                    .gap_3()
+                h_flex()
+                    .justify_between()
+                    .items_end()
                     .child(
-                        div()
-                            .text_size(px(10.))
-                            .font_family(self.ui_font())
-                            .text_color(rgb(hex(&t.accent)))
-                            .child("YOUR QUIET SHELF"),
-                    )
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .items_end()
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_size(px(10.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.accent)))
+                                    .child("YOUR QUIET SHELF · 私人藏书架"),
+                            )
                             .child(
                                 h_flex()
-                                    .gap_3()
+                                    .gap_2p5()
                                     .items_center()
                                     .child(
                                         div()
-                                            .text_size(px(24.))
+                                            .text_size(px(22.))
                                             .font_family(self.display_font())
                                             .child("我的书架"),
                                     )
                                     .child(
                                         div()
-                                            .px_3()
-                                            .py_1()
+                                            .px_2p5()
+                                            .py_0p5()
                                             .rounded_full()
-                                            .bg(rgb(hex(&t.accent)).opacity(0.12))
-                                            .text_size(px(12.))
+                                            .bg(rgb(hex(&t.accent)).opacity(0.14))
+                                            .border_1()
+                                            .border_color(rgb(hex(&t.accent)).opacity(0.28))
+                                            .text_size(px(11.))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&t.accent)))
                                             .child(format!("{} 本", self.store.state.books.len())),
                                     ),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .px_3()
+                            .py_1()
+                            .rounded_full()
+                            .bg(rgb(hex(&t.paper)).opacity(0.76))
+                            .border_1()
+                            .border_color(self.border_subtle())
+                            .child(
+                                Icon::new(IconName::Leaf)
+                                    .size(px(12.))
+                                    .text_color(rgb(hex(&t.accent))),
                             )
                             .child(
                                 div()
-                                    .text_size(px(12.))
+                                    .text_size(px(11.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child("也可以把 EPUB / TXT 拖进窗口"),
+                                    .child("支持将 EPUB / TXT 拖入窗口直接阅读"),
                             ),
                     ),
             )
             .child(books)
+            .into_any_element()
+    }
+    fn reader_stage_backdrop(&self) -> Div {
+        let t = self.theme();
+        let is_dark = self.is_dark();
+        let book = self
+            .store
+            .state
+            .books
+            .iter()
+            .find(|b| Some(&b.id) == self.active_book.as_ref());
+        let title = book.map(|b| b.title.as_str()).unwrap_or("在林间，慢慢来");
+        let author = book
+            .map(|b| b.author.as_str())
+            .unwrap_or("微光阅读 · 原创示例");
+        let chapter = book
+            .and_then(|b| b.chapter.as_deref())
+            .filter(|c| !c.trim().is_empty())
+            .unwrap_or("正文 · 慢读频道");
+        let font_size = self
+            .store
+            .state
+            .reader_font_size
+            .unwrap_or(t.font_size)
+            .clamp(15.0, 26.0);
+        let leading = self
+            .store
+            .state
+            .reader_line_height
+            .unwrap_or(t.line_height)
+            .clamp(1.4, 2.3);
+        let width = self
+            .store
+            .state
+            .reader_width
+            .unwrap_or(t.width)
+            .clamp(480, 920) as f32;
+        let excerpt = if !self.echo_input.trim().is_empty() {
+            self.echo_input.trim().to_owned()
+        } else if let Some(first_hl) = book.and_then(|b| b.highlights.last()) {
+            first_hl.text.clone()
+        } else {
+            "傍晚的风从树梢滑下来，把白天的喧嚣留在林子外面。屋里那盏暖黄的小灯亮起来的时候，书页上的字句也仿佛有了温和的呼吸。"
+                .to_owned()
+        };
+        v_flex()
+            .absolute()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .px_6()
+            .py_4()
+            .bg(rgb(hex(&t.paper)))
             .child(
-                h_flex()
-                    .py_5()
-                    .gap_3()
-                    .items_center()
-                    .border_t_1()
-                    .border_color(rgb(hex(&t.text)).opacity(0.10))
+                v_flex()
+                    .w(px(width))
+                    .max_w_full()
+                    .h_full()
+                    .px_8()
+                    .py_6()
+                    .justify_between()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&t.background)).opacity(if is_dark { 0.24 } else { 0.32 }))
+                    .border_1()
+                    .border_color(self.border_subtle())
                     .child(
-                        Icon::new(IconName::Leaf)
-                            .size(px(15.))
-                            .text_color(rgb(hex(&t.accent))),
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .pb_3()
+                            .border_b_1()
+                            .border_color(self.border_subtle())
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        Icon::new(IconName::BookOpen)
+                                            .size(px(13.))
+                                            .text_color(rgb(hex(&t.accent))),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&t.muted)))
+                                            .child(format!("{title}  ·  {chapter}")),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.accent)))
+                                    .child(format!(
+                                        "{:.0} pt  ·  行距 {:.1}  ·  {} px",
+                                        font_size, leading, width as u32
+                                    )),
+                            ),
                     )
                     .child(
-                        div()
-                            .text_size(px(13.))
-                            .font_family(self.ui_font())
-                            .text_color(rgb(hex(&t.muted)))
-                            .child("不用一口气读完。今天的一小段，也很好。"),
+                        v_flex()
+                            .gap_4()
+                            .py_2()
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_size(px(23.))
+                                            .font_family(self.display_font())
+                                            .text_color(rgb(hex(&t.text)))
+                                            .child(chapter.to_owned()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.5))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&t.muted)))
+                                            .child(author.to_owned()),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(font_size))
+                                    .font_family(self.display_font())
+                                    .line_height(relative(leading))
+                                    .text_color(rgb(hex(&t.text)).opacity(0.86))
+                                    .child("许多年后，当目光再次落向这一页纸，那些曾在安静夜晚里被仔细读过的句子，依然保留着最初翻开时的温度与微光。"),
+                            )
+                            .child(
+                                v_flex()
+                                    .p_4()
+                                    .gap_2()
+                                    .rounded_xl()
+                                    .bg(rgb(hex(&t.accent)).opacity(if is_dark { 0.16 } else { 0.10 }))
+                                    .border_l_3()
+                                    .border_color(rgb(hex(&t.accent)))
+                                    .child(
+                                        h_flex()
+                                            .gap_1p5()
+                                            .items_center()
+                                            .child(
+                                                Icon::new(IconName::Sparkles)
+                                                    .size(px(12.))
+                                                    .text_color(rgb(hex(&t.accent))),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(10.))
+                                                    .font_family(self.ui_font())
+                                                    .text_color(rgb(hex(&t.accent)))
+                                                    .child("当前书页焦点段落 · SELECTED PASSAGE"),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(font_size))
+                                            .font_family(self.display_font())
+                                            .line_height(relative(leading))
+                                            .text_color(rgb(hex(&t.text)))
+                                            .child(excerpt.chars().take(190).collect::<String>()),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(font_size))
+                                    .font_family(self.display_font())
+                                    .line_height(relative(leading))
+                                    .text_color(rgb(hex(&t.text)).opacity(0.82))
+                                    .child("窗外的风声很轻，灯下的纸页不催促任何人。在这里停一会儿，或者顺着目录与搜索去往下一段故事。"),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .pt_3()
+                            .border_t_1()
+                            .border_color(self.border_subtle())
+                            .child(
+                                div()
+                                    .text_size(px(10.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child(if self.opened {
+                                        "GLOW READING STAGE · 书页已就绪"
+                                    } else {
+                                        "GLOW READING STAGE · 正在铺开书页…"
+                                    }),
+                            )
+                            .child(self.waveform_bars(true, &[4., 8., 12., 7., 10., 5.])),
                     ),
             )
-            .into_any_element()
     }
     fn reader(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
         let t = self.theme();
+        let is_dark = self.is_dark();
         let book = self
             .store
             .state
@@ -1660,6 +2127,9 @@ impl ReadingApp {
         let author = book
             .map(|b| b.author.as_str())
             .unwrap_or("从书架选择一本书");
+        let chapter = book
+            .and_then(|b| b.chapter.as_deref())
+            .filter(|c| !c.trim().is_empty());
         let progress = book
             .and_then(|book| book.progress)
             .map(|progress| progress.clamp(0.0, 1.0));
@@ -1667,11 +2137,25 @@ impl ReadingApp {
             .gap_1()
             .p_1()
             .rounded_xl()
-            .bg(rgb(hex(&t.background)).opacity(0.58))
-            .child(self.button_with_icon("目录", IconName::ListTree, Action::Toc, cx))
-            .child(self.button_with_icon("搜索", IconName::Search, Action::Search, cx))
-            .child(self.button_with_icon("划线", IconName::Feather, Action::Highlights, cx))
-            .child(self.button_with_icon("书签", IconName::Bookmark, Action::Bookmarks, cx))
+            .bg(rgb(hex(&t.background)).opacity(if is_dark { 0.68 } else { 0.74 }))
+            .border_1()
+            .border_color(self.border_subtle())
+            .child(
+                self.button_with_icon("目录", IconName::ListTree, Action::Toc, cx)
+                    .toggled(self.drawer == "toc"),
+            )
+            .child(
+                self.button_with_icon("搜索", IconName::Search, Action::Search, cx)
+                    .toggled(self.drawer == "search"),
+            )
+            .child(
+                self.button_with_icon("划线", IconName::Feather, Action::Highlights, cx)
+                    .toggled(self.drawer == "highlights"),
+            )
+            .child(
+                self.button_with_icon("书签", IconName::Bookmark, Action::Bookmarks, cx)
+                    .toggled(self.drawer == "bookmarks"),
+            )
             .child(self.button_with_icon(
                 if self.store.state.mode == "scrolled" {
                     "滚动"
@@ -1686,28 +2170,31 @@ impl ReadingApp {
                 Action::Mode,
                 cx,
             ))
-            .child(self.button_with_icon(
-                if self.focus_mode {
-                    "退出专注"
-                } else {
-                    "专注"
-                },
-                if self.focus_mode {
-                    IconName::Minimize2
-                } else {
-                    IconName::Focus
-                },
-                Action::Focus,
-                cx,
-            ));
+            .child(
+                self.button_with_icon(
+                    if self.focus_mode {
+                        "退出专注"
+                    } else {
+                        "专注"
+                    },
+                    if self.focus_mode {
+                        IconName::Minimize2
+                    } else {
+                        IconName::Focus
+                    },
+                    Action::Focus,
+                    cx,
+                )
+                .toggled(self.focus_mode),
+            );
         let toolbar = h_flex()
-            .h(px(68.))
+            .h(px(62.))
             .px_5()
-            .gap_4()
+            .gap_3()
             .items_center()
             .bg(rgb(hex(&t.paper)).opacity(0.96))
             .border_b_1()
-            .border_color(rgb(hex(&t.text)).opacity(0.10))
+            .border_color(self.border_subtle())
             .child(self.button_with_icon(
                 "书架",
                 IconName::ChevronLeft,
@@ -1715,75 +2202,129 @@ impl ReadingApp {
                 cx,
             ))
             .child(
+                div()
+                    .w(px(1.))
+                    .h(px(24.))
+                    .bg(rgb(hex(&t.text)).opacity(0.12)),
+            )
+            .child(
                 v_flex()
                     .min_w_0()
                     .gap_0p5()
                     .child(
-                        div()
-                            .text_size(px(15.))
-                            .font_family(self.display_font())
-                            .text_ellipsis()
-                            .child(title.to_owned()),
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_size(px(15.5))
+                                    .font_family(self.display_font())
+                                    .text_ellipsis()
+                                    .child(title.to_owned()),
+                            )
+                            .when_some(chapter, |this, ch| {
+                                this.child(
+                                    div()
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_full()
+                                        .bg(rgb(hex(&t.accent)).opacity(0.12))
+                                        .text_size(px(10.))
+                                        .font_family(self.ui_font())
+                                        .text_color(rgb(hex(&t.accent)))
+                                        .child(ch.to_owned()),
+                                )
+                            }),
                     )
                     .child(
                         div()
                             .text_size(px(11.))
                             .font_family(self.ui_font())
                             .text_color(rgb(hex(&t.muted)))
+                            .text_ellipsis()
                             .child(author.to_owned()),
                     ),
             )
             .child(div().flex_1())
             .child(controls);
         let narrow = f32::from(window.viewport_size().width)
-            - if self.focus_mode { 0. } else { 216. }
-            - 360.
+            - if self.focus_mode { 0. } else { 224. }
+            - 364.
             < 480.;
         let mut body = h_flex().flex_1().min_h_0().w_full();
         if (self.drawer.is_empty() || !narrow)
             && let Some(view) = &self.webview
         {
-            body = body.child(div().flex_1().h_full().min_w_0().child(view.clone()));
+            body = body.child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .h_full()
+                    .min_w_0()
+                    .child(self.reader_stage_backdrop())
+                    .child(view.clone()),
+            );
         }
         if !self.drawer.is_empty() {
             let panel = div().h_full();
             let panel = if narrow {
-                panel.flex_1().min_w_0()
+                panel
+                    .flex_1()
+                    .min_w_0()
+                    .bg(rgb(hex(&t.paper)).opacity(0.98))
             } else {
                 panel
-                    .w(px(360.))
+                    .w(px(364.))
                     .flex_shrink_0()
                     .bg(rgb(hex(&t.paper)).opacity(0.98))
                     .border_l_1()
-                    .border_color(rgb(hex(&t.text)).opacity(0.10))
+                    .border_color(self.border_subtle())
             };
             body = body.child(panel.child(self.reader_drawer(cx)));
         }
         let mut bottom = h_flex()
-            .h(px(58.))
+            .h(px(54.))
             .px_5()
-            .gap_2()
+            .gap_2p5()
             .items_center()
             .bg(rgb(hex(&t.paper)).opacity(0.96))
             .border_t_1()
-            .border_color(rgb(hex(&t.text)).opacity(0.10))
-            .child(self.button_with_icon("上一页", IconName::ChevronLeft, Action::Prev, cx))
-            .child(self.button_with_icon("下一页", IconName::ChevronRight, Action::Next, cx))
+            .border_color(self.border_subtle())
+            .child(
+                h_flex()
+                    .gap_1()
+                    .p_0p5()
+                    .rounded_lg()
+                    .bg(rgb(hex(&t.background)).opacity(0.62))
+                    .child(self.button_with_icon("上一页", IconName::ChevronLeft, Action::Prev, cx))
+                    .child(self.button_with_icon(
+                        "下一页",
+                        IconName::ChevronRight,
+                        Action::Next,
+                        cx,
+                    )),
+            )
             .child(div().flex_1());
         if let Some(progress) = progress {
             bottom = bottom.child(
                 h_flex()
                     .gap_2()
                     .items_center()
+                    .px_3()
+                    .py_1()
+                    .rounded_full()
+                    .bg(rgb(hex(&t.background)).opacity(0.66))
+                    .border_1()
+                    .border_color(self.border_subtle())
                     .child(
                         div()
-                            .w(px(88.))
-                            .h(px(3.))
+                            .w(px(96.))
+                            .h(px(3.5))
                             .rounded_full()
-                            .bg(rgb(hex(&t.text)).opacity(0.10))
+                            .bg(rgb(hex(&t.text)).opacity(0.12))
                             .child(
                                 div()
-                                    .w(px((88.0 * progress).max(2.0)))
+                                    .w(px((96.0 * progress).max(3.0)))
                                     .h_full()
                                     .rounded_full()
                                     .bg(rgb(hex(&t.accent))),
@@ -1791,9 +2332,9 @@ impl ReadingApp {
                     )
                     .child(
                         div()
-                            .text_size(px(10.))
+                            .text_size(px(10.5))
                             .font_family(self.ui_font())
-                            .text_color(rgb(hex(&t.muted)))
+                            .text_color(rgb(hex(&t.accent)))
                             .child(format!("{:.0}%", progress * 100.0)),
                     ),
             );
@@ -1807,6 +2348,10 @@ impl ReadingApp {
             h_flex()
                 .gap_2()
                 .items_center()
+                .px_3()
+                .py_1()
+                .rounded_full()
+                .bg(rgb(color).opacity(0.10))
                 .text_color(rgb(color))
                 .child(
                     Icon::new(if self.error.is_some() {
@@ -1814,11 +2359,11 @@ impl ReadingApp {
                     } else {
                         IconName::Sparkles
                     })
-                    .size(px(14.)),
+                    .size(px(13.)),
                 )
                 .child(
                     div()
-                        .max_w(px(560.))
+                        .max_w(px(460.))
                         .text_size(px(11.))
                         .font_family(self.ui_font())
                         .text_ellipsis()
@@ -1827,12 +2372,16 @@ impl ReadingApp {
                 .into_any_element()
         } else {
             h_flex()
-                .gap_2()
+                .gap_1p5()
                 .items_center()
+                .px_2p5()
+                .py_1()
+                .rounded_full()
+                .bg(rgb(hex(&t.accent)).opacity(0.08))
                 .text_color(rgb(hex(&t.muted)))
                 .child(
                     Icon::new(IconName::Sparkles)
-                        .size(px(14.))
+                        .size(px(13.))
                         .text_color(rgb(hex(&t.accent))),
                 )
                 .child(
@@ -1845,7 +2394,10 @@ impl ReadingApp {
         };
         bottom = bottom
             .child(hint)
-            .child(self.button_with_icon("排版", IconName::AArrowDown, Action::Typography, cx))
+            .child(
+                self.button_with_icon("排版", IconName::AArrowDown, Action::Typography, cx)
+                    .toggled(self.drawer == "type"),
+            )
             .child(self.button_with_icon("留下书签", IconName::Bookmark, Action::Bookmark, cx));
         if book.is_some_and(|b| b.format == "txt") {
             bottom = bottom
@@ -1877,36 +2429,33 @@ impl ReadingApp {
             _ => "文字的回响",
         };
         let kicker = match self.drawer.as_str() {
-            "toc" => "IN THIS BOOK",
-            "search" => "FIND THE WORDS",
-            "highlights" => "LINES WORTH KEEPING",
-            "type" => "READ YOUR WAY",
-            "bookmarks" => "LITTLE MARKS",
-            _ => "A SMALL ECHO",
+            "toc" => "IN THIS BOOK · 章节导航",
+            "search" => "FIND THE WORDS · 全书检索",
+            "highlights" => "LINES WORTH KEEPING · 划线",
+            "type" => "READ YOUR WAY · 排版调音台",
+            "bookmarks" => "LITTLE MARKS · 书签记号",
+            _ => "A SMALL ECHO · 文字共鸣",
         };
         let mut content = v_flex()
             .id("reader-drawer")
             .overflow_y_scroll()
             .size_full()
-            .p_6()
-            .gap_6()
+            .p_5()
+            .gap_5()
             .child(
                 h_flex()
                     .justify_between()
                     .items_start()
+                    .pb_3()
+                    .border_b_1()
+                    .border_color(self.border_subtle())
                     .child(
                         v_flex()
-                            .gap_2()
+                            .gap_1p5()
+                            .child(self.studio_badge("STUDIO", kicker, true))
                             .child(
                                 div()
-                                    .text_size(px(10.))
-                                    .font_family(self.ui_font())
-                                    .text_color(rgb(hex(&t.accent)))
-                                    .child(kicker),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(23.))
+                                    .text_size(px(22.))
                                     .font_family(self.display_font())
                                     .child(title),
                             ),
@@ -1922,6 +2471,8 @@ impl ReadingApp {
                             .gap_3()
                             .rounded_xl()
                             .bg(rgb(hex(&t.background)).opacity(0.62))
+                            .border_1()
+                            .border_color(self.border_subtle())
                             .child(
                                 Icon::new(IconName::ListTree)
                                     .size(px(22.))
@@ -1945,8 +2496,9 @@ impl ReadingApp {
                         content = content.child(
                             v_flex()
                                 .w_full()
+                                .rounded_lg()
                                 .border_b_1()
-                                .border_color(rgb(hex(&t.text)).opacity(0.08))
+                                .border_color(self.border_subtle())
                                 .child(self.button_with_icon(
                                     &item.label,
                                     IconName::ChevronRight,
@@ -1960,7 +2512,12 @@ impl ReadingApp {
             "search" => {
                 content = content.child(
                     v_flex()
+                        .p_3p5()
                         .gap_3()
+                        .rounded_xl()
+                        .bg(rgb(hex(&t.background)).opacity(0.55))
+                        .border_1()
+                        .border_color(self.border_subtle())
                         .child(Input::new(&self.search_input).w_full())
                         .child(
                             self.button_with_icon(
@@ -2002,11 +2559,27 @@ impl ReadingApp {
                     );
                 } else {
                     content = content.child(
-                        div()
-                            .text_size(px(11.))
-                            .font_family(self.ui_font())
-                            .text_color(rgb(hex(&t.muted)))
-                            .child(format!("找到 {} 处", self.search_results.len())),
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                div()
+                                    .px_2p5()
+                                    .py_0p5()
+                                    .rounded_full()
+                                    .bg(rgb(hex(&t.accent)).opacity(0.12))
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.accent)))
+                                    .child(format!("找到 {} 处", self.search_results.len())),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child("点击直接跳转到对应段落"),
+                            ),
                     );
                     for hit in &self.search_results {
                         let chapter = if hit.chapter.is_empty() {
@@ -2018,10 +2591,12 @@ impl ReadingApp {
                         content = content.child(
                             v_flex()
                                 .w_full()
-                                .gap_1()
+                                .gap_1p5()
                                 .p_3()
                                 .rounded_xl()
-                                .bg(rgb(hex(&t.background)).opacity(0.52))
+                                .bg(rgb(hex(&t.background)).opacity(0.56))
+                                .border_1()
+                                .border_color(self.border_subtle())
                                 .child(
                                     div()
                                         .text_size(px(10.))
@@ -2054,6 +2629,8 @@ impl ReadingApp {
                                 .gap_3()
                                 .rounded_xl()
                                 .bg(rgb(hex(&t.background)).opacity(0.62))
+                                .border_1()
+                                .border_color(self.border_subtle())
                                 .child(
                                     Icon::new(IconName::Feather)
                                         .size(px(22.))
@@ -2077,19 +2654,38 @@ impl ReadingApp {
                                 .p_4()
                                 .gap_3()
                                 .rounded_xl()
-                                .bg(rgb(hex(&t.background)).opacity(0.58))
+                                .bg(rgb(hex(&t.background)).opacity(0.62))
                                 .border_1()
-                                .border_color(rgb(hex(&t.text)).opacity(0.08))
+                                .border_color(self.border_subtle())
                                 .child(
-                                    div()
-                                        .text_size(px(10.))
-                                        .font_family(self.ui_font())
-                                        .text_color(rgb(hex(&t.muted)))
-                                        .child(display_time(&highlight.created_at)),
+                                    h_flex()
+                                        .justify_between()
+                                        .items_center()
+                                        .child(
+                                            div()
+                                                .px_2()
+                                                .py_0p5()
+                                                .rounded_full()
+                                                .bg(rgb(hex(&t.accent)).opacity(0.12))
+                                                .text_size(px(10.))
+                                                .font_family(self.ui_font())
+                                                .text_color(rgb(hex(&t.accent)))
+                                                .child("HIGHLIGHT · 原文摘录"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(10.))
+                                                .font_family(self.ui_font())
+                                                .text_color(rgb(hex(&t.muted)))
+                                                .child(display_time(&highlight.created_at)),
+                                        ),
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(16.))
+                                        .pl_3()
+                                        .border_l_2()
+                                        .border_color(rgb(hex(&t.accent)))
+                                        .text_size(px(15.5))
                                         .font_family(self.display_font())
                                         .line_height(relative(1.6))
                                         .child(excerpt),
@@ -2128,94 +2724,161 @@ impl ReadingApp {
                     .state
                     .reader_width
                     .unwrap_or_else(|| self.theme().width);
+                let size_ratio = ((size - 14.0) / (36.0 - 14.0)).clamp(0.05, 1.0);
+                let leading_ratio = ((leading - 1.3) / (2.6 - 1.3)).clamp(0.05, 1.0);
+                let width_ratio = ((width as f32 - 400.0) / (1100.0 - 400.0)).clamp(0.05, 1.0);
                 content = content.child(
                     v_flex()
-                        .p_5()
-                        .gap_5()
-                        .rounded_xl()
-                        .bg(rgb(hex(&t.background)).opacity(0.58))
+                        .p_4()
+                        .gap_4()
+                        .rounded_2xl()
+                        .bg(rgb(hex(&t.background)).opacity(0.62))
+                        .border_1()
+                        .border_color(self.border_subtle())
                         .child(
-                            h_flex()
-                                .justify_between()
-                                .items_center()
+                            v_flex()
+                                .gap_2()
                                 .child(
-                                    v_flex()
-                                        .gap_1()
+                                    h_flex()
+                                        .justify_between()
+                                        .items_center()
                                         .child(
-                                            div()
-                                                .text_size(px(12.))
-                                                .font_family(self.ui_font())
-                                                .text_color(rgb(hex(&t.muted)))
-                                                .child("正文字号"),
+                                            v_flex()
+                                                .gap_0p5()
+                                                .child(
+                                                    div()
+                                                        .text_size(px(11.5))
+                                                        .font_family(self.ui_font())
+                                                        .text_color(rgb(hex(&t.muted)))
+                                                        .child("正文字号 · FONT SIZE"),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(px(20.))
+                                                        .font_family(self.display_font())
+                                                        .child(format!("{size:.0} pt")),
+                                                ),
                                         )
                                         .child(
-                                            div()
-                                                .text_size(px(20.))
-                                                .font_family(self.display_font())
-                                                .child(format!("{size:.0} pt")),
+                                            h_flex()
+                                                .gap_1p5()
+                                                .child(self.button("A−", Action::TypeSize(-1), cx))
+                                                .child(self.button("A+", Action::TypeSize(1), cx)),
                                         ),
                                 )
                                 .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(self.button("A−", Action::TypeSize(-1), cx))
-                                        .child(self.button("A+", Action::TypeSize(1), cx)),
+                                    div()
+                                        .w_full()
+                                        .h(px(4.))
+                                        .rounded_full()
+                                        .bg(rgb(hex(&t.text)).opacity(0.10))
+                                        .child(
+                                            div()
+                                                .w(px(280.0 * size_ratio))
+                                                .h_full()
+                                                .rounded_full()
+                                                .bg(rgb(hex(&t.accent))),
+                                        ),
                                 ),
                         )
                         .child(
-                            h_flex()
-                                .justify_between()
-                                .items_center()
+                            v_flex()
+                                .gap_2()
                                 .child(
-                                    v_flex()
-                                        .gap_1()
+                                    h_flex()
+                                        .justify_between()
+                                        .items_center()
                                         .child(
-                                            div()
-                                                .text_size(px(12.))
-                                                .font_family(self.ui_font())
-                                                .text_color(rgb(hex(&t.muted)))
-                                                .child("行距"),
+                                            v_flex()
+                                                .gap_0p5()
+                                                .child(
+                                                    div()
+                                                        .text_size(px(11.5))
+                                                        .font_family(self.ui_font())
+                                                        .text_color(rgb(hex(&t.muted)))
+                                                        .child("行距呼吸感 · LINE HEIGHT"),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(px(19.))
+                                                        .font_family(self.display_font())
+                                                        .child(format!("{leading:.1}")),
+                                                ),
                                         )
                                         .child(
-                                            div()
-                                                .text_size(px(18.))
-                                                .font_family(self.display_font())
-                                                .child(format!("{leading:.1}")),
+                                            h_flex()
+                                                .gap_1p5()
+                                                .child(self.button(
+                                                    "紧",
+                                                    Action::TypeLeading(-1),
+                                                    cx,
+                                                ))
+                                                .child(self.button(
+                                                    "松",
+                                                    Action::TypeLeading(1),
+                                                    cx,
+                                                )),
                                         ),
                                 )
                                 .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(self.button("紧", Action::TypeLeading(-1), cx))
-                                        .child(self.button("松", Action::TypeLeading(1), cx)),
+                                    div()
+                                        .w_full()
+                                        .h(px(4.))
+                                        .rounded_full()
+                                        .bg(rgb(hex(&t.text)).opacity(0.10))
+                                        .child(
+                                            div()
+                                                .w(px(280.0 * leading_ratio))
+                                                .h_full()
+                                                .rounded_full()
+                                                .bg(rgb(hex(&t.accent))),
+                                        ),
                                 ),
                         )
                         .child(
-                            h_flex()
-                                .justify_between()
-                                .items_center()
+                            v_flex()
+                                .gap_2()
                                 .child(
-                                    v_flex()
-                                        .gap_1()
+                                    h_flex()
+                                        .justify_between()
+                                        .items_center()
                                         .child(
-                                            div()
-                                                .text_size(px(12.))
-                                                .font_family(self.ui_font())
-                                                .text_color(rgb(hex(&t.muted)))
-                                                .child("版心宽度"),
+                                            v_flex()
+                                                .gap_0p5()
+                                                .child(
+                                                    div()
+                                                        .text_size(px(11.5))
+                                                        .font_family(self.ui_font())
+                                                        .text_color(rgb(hex(&t.muted)))
+                                                        .child("版心宽度 · MEASURE"),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(px(19.))
+                                                        .font_family(self.display_font())
+                                                        .child(format!("{width} px")),
+                                                ),
                                         )
                                         .child(
-                                            div()
-                                                .text_size(px(18.))
-                                                .font_family(self.display_font())
-                                                .child(format!("{width} px")),
+                                            h_flex()
+                                                .gap_1p5()
+                                                .child(self.button("窄", Action::TypeWidth(-1), cx))
+                                                .child(self.button("宽", Action::TypeWidth(1), cx)),
                                         ),
                                 )
                                 .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(self.button("窄", Action::TypeWidth(-1), cx))
-                                        .child(self.button("宽", Action::TypeWidth(1), cx)),
+                                    div()
+                                        .w_full()
+                                        .h(px(4.))
+                                        .rounded_full()
+                                        .bg(rgb(hex(&t.text)).opacity(0.10))
+                                        .child(
+                                            div()
+                                                .w(px(280.0 * width_ratio))
+                                                .h_full()
+                                                .rounded_full()
+                                                .bg(rgb(hex(&t.accent))),
+                                        ),
                                 ),
                         ),
                 );
@@ -2226,7 +2889,7 @@ impl ReadingApp {
                             .font_family(self.ui_font())
                             .line_height(relative(1.65))
                             .text_color(rgb(hex(&t.muted)))
-                            .child("调整会立即应用，并对之后打开的书保留。"),
+                            .child("调整会立即同步至当前书页，并对之后打开的书保留。"),
                     )
                     .child(self.button("恢复主题默认", Action::ResetTypography, cx));
             }
@@ -2245,6 +2908,8 @@ impl ReadingApp {
                                 .gap_3()
                                 .rounded_xl()
                                 .bg(rgb(hex(&t.background)).opacity(0.62))
+                                .border_1()
+                                .border_color(self.border_subtle())
                                 .child(
                                     Icon::new(IconName::Bookmark)
                                         .size(px(22.))
@@ -2264,7 +2929,7 @@ impl ReadingApp {
                             v_flex()
                                 .w_full()
                                 .border_b_1()
-                                .border_color(rgb(hex(&t.text)).opacity(0.08))
+                                .border_color(self.border_subtle())
                                 .child(self.button_with_icon(
                                     &mark.label,
                                     IconName::Bookmark,
@@ -2291,6 +2956,11 @@ impl ReadingApp {
                     content = content.child(
                         h_flex()
                             .gap_2()
+                            .p_1p5()
+                            .rounded_xl()
+                            .bg(rgb(hex(&t.background)).opacity(0.55))
+                            .border_1()
+                            .border_color(self.border_subtle())
                             .child(
                                 self.button_with_icon(
                                     if already_kept {
@@ -2320,20 +2990,22 @@ impl ReadingApp {
     fn echo_card(&self, echo: &EchoResult, input: &str, cx: &Context<Self>) -> AnyElement {
         let t = self.theme();
         let mut view = v_flex()
-            .gap_6()
+            .gap_4()
             .child(
                 v_flex()
-                    .gap_3()
+                    .gap_2()
                     .child(
                         h_flex()
                             .gap_2()
                             .items_center()
                             .child(
                                 div()
-                                    .px_3()
-                                    .py_1()
+                                    .px_2p5()
+                                    .py_0p5()
                                     .rounded_full()
-                                    .bg(rgb(hex(&t.accent)).opacity(0.12))
+                                    .bg(rgb(hex(&t.accent)).opacity(0.14))
+                                    .border_1()
+                                    .border_color(rgb(hex(&t.accent)).opacity(0.28))
                                     .text_size(px(10.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.accent)))
@@ -2357,9 +3029,9 @@ impl ReadingApp {
                     )
                     .child(
                         div()
-                            .text_size(px(21.))
+                            .text_size(px(20.))
                             .font_family(self.display_font())
-                            .line_height(relative(1.35))
+                            .line_height(relative(1.32))
                             .child(if echo.demo {
                                 "这段话，也让我想起——"
                             } else {
@@ -2369,42 +3041,55 @@ impl ReadingApp {
             )
             .child(
                 v_flex()
-                    .p_4()
-                    .gap_2()
+                    .p_3p5()
+                    .gap_1p5()
+                    .rounded_xl()
                     .border_l_3()
-                    .border_color(rgb(hex(&t.accent)).opacity(0.55))
-                    .bg(rgb(hex(&t.background)).opacity(0.42))
+                    .border_color(rgb(hex(&t.accent)))
+                    .bg(rgb(hex(&t.background)).opacity(0.52))
                     .child(
                         div()
                             .text_size(px(10.))
                             .font_family(self.ui_font())
-                            .text_color(rgb(hex(&t.muted)))
+                            .text_color(rgb(hex(&t.accent)))
                             .child("你留下的文字"),
                     )
                     .child(
                         div()
-                            .text_size(px(14.))
+                            .text_size(px(13.5))
                             .font_family(self.ui_font())
-                            .line_height(relative(1.65))
-                            .text_color(rgb(hex(&t.muted)))
+                            .line_height(relative(1.62))
+                            .text_color(rgb(hex(&t.text)).opacity(0.88))
                             .child(input.chars().take(250).collect::<String>()),
                     ),
             );
         for (index, q) in echo.quotes.iter().enumerate() {
             let mut quote = v_flex()
-                .p_5()
-                .gap_4()
+                .p_4()
+                .gap_3()
                 .rounded_xl()
                 .bg(rgb(hex(&t.background)).opacity(0.68))
                 .border_1()
-                .border_color(rgb(hex(&t.text)).opacity(0.10));
+                .border_color(self.border_subtle());
             quote = quote.child(
-                div()
-                    .text_size(px(38.))
-                    .line_height(relative(0.72))
-                    .font_family(self.display_font())
-                    .text_color(rgb(hex(&t.muted)))
-                    .child("“"),
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_size(px(32.))
+                            .line_height(relative(0.75))
+                            .font_family(self.display_font())
+                            .text_color(rgb(hex(&t.accent)).opacity(0.75))
+                            .child("“"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(9.5))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&t.muted)))
+                            .child("LITERARY RESONANCE · 典籍回声"),
+                    ),
             );
             if q.spoiler && !self.spoilers.contains(&q.id) {
                 quote = quote.child(self.button_with_icon(
@@ -2416,42 +3101,46 @@ impl ReadingApp {
             } else {
                 quote = quote.child(
                     div()
-                        .text_size(px(18.))
+                        .text_size(px(17.))
                         .font_family(self.display_font())
-                        .line_height(relative(1.62))
+                        .line_height(relative(1.6))
                         .child(q.text.clone()),
                 );
             }
             let source = q.source.clone();
             quote = quote
-                .child(div().h(px(1.)).w_full().bg(rgb(hex(&t.text)).opacity(0.10)))
+                .child(div().h(px(1.)).w_full().bg(self.border_subtle()))
                 .child(
-                    v_flex()
-                        .gap_1()
+                    h_flex()
+                        .justify_between()
+                        .items_end()
+                        .gap_2()
                         .child(
-                            div()
-                                .text_size(px(13.))
-                                .font_family(self.ui_font())
-                                .text_color(rgb(hex(&t.text)))
-                                .child(format!("{} ·《{}》", q.author, q.work)),
+                            v_flex()
+                                .gap_0p5()
+                                .child(
+                                    div()
+                                        .text_size(px(12.5))
+                                        .font_family(self.ui_font())
+                                        .text_color(rgb(hex(&t.text)))
+                                        .child(format!("{} ·《{}》", q.author, q.work)),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(10.))
+                                        .font_family(self.ui_font())
+                                        .line_height(relative(1.5))
+                                        .text_color(rgb(hex(&t.muted)))
+                                        .child(format!("{} · {}", q.chapter, q.edition)),
+                                ),
                         )
                         .child(
-                            div()
-                                .text_size(px(10.))
-                                .font_family(self.ui_font())
-                                .line_height(relative(1.55))
-                                .text_color(rgb(hex(&t.muted)))
-                                .child(format!("{} · {}", q.chapter, q.edition)),
+                            Button::new(SharedString::from(format!("source-{}", q.id)))
+                                .ghost()
+                                .label("核对出处")
+                                .text_color(rgb(hex(&t.accent)))
+                                .on_click(move |_, _, cx| cx.open_url(&source)),
                         ),
-                )
-                .child(
-                    h_flex().justify_start().child(
-                        Button::new(SharedString::from(format!("source-{}", q.id)))
-                            .ghost()
-                            .label("核对出处")
-                            .text_color(rgb(hex(&t.accent)))
-                            .on_click(move |_, _, cx| cx.open_url(&source)),
-                    ),
                 );
             view = view.child(quote);
             if index == 0 {
@@ -2466,223 +3155,364 @@ impl ReadingApp {
     fn reply_card(&self, reply: &str) -> Div {
         let t = self.theme();
         v_flex()
-            .gap_3()
-            .p_5()
+            .gap_2p5()
+            .p_4()
             .rounded_xl()
-            .bg(rgb(hex(&t.accent)).opacity(0.11))
+            .bg(rgb(hex(&t.accent)).opacity(if self.is_dark() { 0.16 } else { 0.11 }))
+            .border_1()
+            .border_color(rgb(hex(&t.accent)).opacity(0.32))
             .border_l_3()
-            .border_color(rgb(hex(&t.accent)))
             .child(
                 h_flex()
-                    .gap_2()
+                    .justify_between()
                     .items_center()
                     .child(
-                        Icon::new(IconName::Sparkles)
-                            .size(px(16.))
-                            .text_color(rgb(hex(&t.accent))),
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                Icon::new(IconName::Sparkles)
+                                    .size(px(15.))
+                                    .text_color(rgb(hex(&t.accent))),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.accent)))
+                                    .child("一束微光"),
+                            ),
                     )
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .font_family(self.ui_font())
-                            .text_color(rgb(hex(&t.accent)))
-                            .child("一束微光"),
-                    ),
+                    .child(self.waveform_bars(true, &[4., 8., 11., 6., 9., 5.])),
             )
             .child(
                 div()
-                    .text_size(px(15.))
+                    .text_size(px(14.5))
                     .font_family(self.ui_font())
-                    .line_height(relative(1.75))
+                    .line_height(relative(1.72))
                     .child(reply.to_owned()),
             )
     }
 
     fn mood_page(&self, cx: &Context<Self>) -> AnyElement {
         let t = self.theme();
+        let is_dark = self.is_dark();
         let mut moods = h_flex().gap_2().flex_wrap();
         for mood in echo::MOODS {
             moods = moods.child(self.mood_button(mood, self.mood == *mood, cx));
         }
-        let mut content = v_flex()
+        let mut left_console = v_flex()
+            .w(px(408.))
+            .max_w_full()
+            .flex_shrink_0()
+            .p_5()
+            .gap_4()
+            .rounded_2xl()
+            .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.90 } else { 0.94 }))
+            .border_1()
+            .border_color(self.border_subtle())
+            .shadow_sm()
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.accent)))
+                                    .child("选一个最接近的情绪波段"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child(format!("当前：{}", self.mood)),
+                            ),
+                    )
+                    .child(moods),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child("如果愿意，再写下一点（选填）"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child(format!(
+                                        "{} / 1000 字",
+                                        self.mood_input.read(cx).value().trim().chars().count()
+                                    )),
+                            ),
+                    )
+                    .child(
+                        Textarea::new(&self.mood_input)
+                            .aria_label("心情文字")
+                            .w_full(),
+                    ),
+            )
+            .child(
+                self.button_with_icon(
+                    if self.mood_rx.is_some() {
+                        "正在读你的文字…"
+                    } else if self.mood_unsaved.as_ref().is_some_and(|pending| {
+                        pending.input == self.mood_input.read(cx).value().trim()
+                            && pending.mood == self.mood
+                    }) {
+                        "重试保存回答"
+                    } else {
+                        "让文字陪我一会儿"
+                    },
+                    IconName::MessageCircleHeart,
+                    Action::SubmitMood,
+                    cx,
+                )
+                .primary()
+                .disabled(self.mood_rx.is_some()),
+            );
+        if self.mood_rx.is_some() {
+            left_console = left_console.child(self.button("停止等待", Action::CancelMood, cx));
+        }
+        left_console = left_console.child(
+            h_flex()
+                .gap_2()
+                .items_start()
+                .pt_1()
+                .border_t_1()
+                .border_color(self.border_subtle())
+                .child(
+                    Icon::new(IconName::Feather)
+                        .size(px(12.))
+                        .text_color(rgb(hex(&t.accent))),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.5))
+                        .font_family(self.ui_font())
+                        .line_height(relative(1.5))
+                        .text_color(rgb(hex(&t.muted)))
+                        .flex_1()
+                        .min_w(px(0.))
+                        .child("点击后将本次文字与所选心情发送给 OpenAI 生成回答，可能产生 API 费用。不会发送书库或历史日记；成功后保存在本机。"),
+                ),
+        );
+
+        let right_stage = v_flex()
+            .flex_1()
+            .min_w(px(330.))
+            .gap_4()
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .h(px(152.))
+                    .rounded_2xl()
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(self.border_strong())
+                    .shadow_sm()
+                    .child(
+                        img(if t.id == "night" {
+                            "scene-night.png"
+                        } else {
+                            "scene.png"
+                        })
+                        .size_full()
+                        .object_fit(ObjectFit::Cover),
+                    )
+                    .child(
+                        h_flex()
+                            .absolute()
+                            .left_4()
+                            .right_4()
+                            .bottom_4()
+                            .p_3p5()
+                            .justify_between()
+                            .items_center()
+                            .rounded_xl()
+                            .bg(rgb(0x0b1512).opacity(0.72))
+                            .border_1()
+                            .border_color(rgb(0xffffff).opacity(0.16))
+                            .child(
+                                v_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        div()
+                                            .text_size(px(16.5))
+                                            .font_family(self.display_font())
+                                            .text_color(rgb(0xfffdf7))
+                                            .child("先不急着变好。"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.5))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(0xd8e4dd))
+                                            .child("在这里坐一会儿，让一句话陪你呼吸。"),
+                                    ),
+                            )
+                            .child(self.waveform_bars(true, &[6., 13., 18., 9., 15., 11., 7.])),
+                    ),
+            )
+            .child(if let Some((input, echo)) = &self.mood_reply {
+                v_flex()
+                    .p_5()
+                    .gap_3()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.90 } else { 0.94 }))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .shadow_sm()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.accent)))
+                                    .child("给你的回响 · LIVE RESONANCE"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child("已自动存入本地私人日记"),
+                            ),
+                    )
+                    .child(self.echo_card(echo, input, cx))
+                    .into_any_element()
+            } else {
+                v_flex()
+                    .p_6()
+                    .gap_3()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.78 } else { 0.86 }))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                Icon::new(IconName::Sparkles)
+                                    .size(px(16.))
+                                    .text_color(rgb(hex(&t.accent))),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(15.))
+                                    .font_family(self.display_font())
+                                    .child("情绪波段待机中 · 等待你的声音"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.5))
+                            .font_family(self.ui_font())
+                            .line_height(relative(1.65))
+                            .text_color(rgb(hex(&t.muted)))
+                            .child("在左侧选一种接近此刻的状态，或者写下几句想说的话。生成的微光陪伴会在这里展开，并为你留在本地日记里。"),
+                    )
+                    .into_any_element()
+            });
+
+        v_flex()
             .id("mood-scroll")
             .track_scroll(&self.mood_scroll)
             .overflow_y_scroll()
             .size_full()
-            .p_8()
-            .gap_8()
+            .px_7()
+            .py_6()
+            .gap_5()
             .child(self.heading(
-                "A PLACE TO REST",
+                "A PLACE TO REST · 情绪调频",
                 "此刻，你感觉怎么样？",
                 "不用把心情整理好再来。选一种接近的感觉就可以。",
             ))
             .child(
                 h_flex()
-                    .gap_7()
+                    .gap_5()
                     .items_start()
                     .flex_wrap()
-                    .child(
-                        v_flex()
-                            .relative()
-                            .w(px(300.))
-                            .h(px(272.))
-                            .rounded_2xl()
-                            .overflow_hidden()
-                            .shadow_md()
-                            .child(
-                                img(if t.id == "night" {
-                                    "scene-night.png"
-                                } else {
-                                    "scene.png"
-                                })
-                                .size_full()
-                                .object_fit(ObjectFit::Cover),
-                            )
-                            .child(
-                                v_flex()
-                                    .absolute()
-                                    .left_5()
-                                    .right_5()
-                                    .bottom_5()
-                                    .p_4()
-                                    .gap_2()
-                                    .rounded_xl()
-                                    .bg(rgb(hex(&t.paper)).opacity(0.88))
-                                    .child(
-                                        div()
-                                            .text_size(px(17.))
-                                            .font_family(self.display_font())
-                                            .child("先不急着变好。"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .font_family(self.ui_font())
-                                            .line_height(relative(1.6))
-                                            .text_color(rgb(hex(&t.muted)))
-                                            .child("在这里坐一会儿，\n让一句话陪你呼吸。"),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w(px(420.))
-                            .max_w(px(680.))
-                            .p_7()
-                            .gap_6()
-                            .rounded_2xl()
-                            .bg(rgb(hex(&t.paper)).opacity(0.92))
-                            .border_1()
-                            .border_color(rgb(hex(&t.text)).opacity(0.10))
-                            .shadow_sm()
-                            .child(
-                                v_flex()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .font_family(self.ui_font())
-                                            .text_color(rgb(hex(&t.accent)))
-                                            .child("选一个最接近的"),
-                                    )
-                                    .child(moods),
-                            )
-                            .child(
-                                v_flex()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .font_family(self.ui_font())
-                                            .text_color(rgb(hex(&t.muted)))
-                                            .child("如果愿意，再写下一点（选填）"),
-                                    )
-                                    .child(Textarea::new(&self.mood_input).aria_label("心情文字").w_full())
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .font_family(self.ui_font())
-                                            .text_color(rgb(hex(&t.muted)))
-                                            .child(format!("{} / 1000 字", self.mood_input.read(cx).value().trim().chars().count())),
-                                    ),
-                            )
-                            .child(
-                                self.button_with_icon(
-                                    if self.mood_rx.is_some() {"正在读你的文字…"} else if self.mood_unsaved.as_ref().is_some_and(|pending| pending.input == self.mood_input.read(cx).value().trim() && pending.mood == self.mood) {"重试保存回答"} else {"让文字陪我一会儿"},
-                                    IconName::MessageCircleHeart,
-                                    Action::SubmitMood,
-                                    cx,
-                                )
-                                .primary()
-                                .disabled(self.mood_rx.is_some()),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .items_start()
-                                    .child(
-                                        Icon::new(IconName::Feather)
-                                            .size(px(13.))
-                                            .text_color(rgb(hex(&t.accent))),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .font_family(self.ui_font())
-                                            .line_height(relative(1.55))
-                                            .text_color(rgb(hex(&t.muted)))
-                                            .flex_1()
-                                            .min_w(px(0.))
-                                            .child("点击后将本次文字与所选心情发送给 OpenAI 生成回答，可能产生 API 费用。不会发送书库或历史日记；成功后保存在本机。"),
-                                    ),
-                            ),
-                    ),
-            );
-        if self.mood_rx.is_some() {
-            content = content.child(self.button("停止等待", Action::CancelMood, cx));
-        }
-        if let Some((input, echo)) = &self.mood_reply {
-            content = content.child(
-                v_flex()
-                    .max_w(px(780.))
-                    .gap_4()
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .font_family(self.ui_font())
-                            .text_color(rgb(hex(&t.accent)))
-                            .child("给你的回响"),
-                    )
-                    .child(self.echo_card(echo, input, cx)),
-            );
-        }
-        content.into_any_element()
+                    .child(left_console)
+                    .child(right_stage),
+            )
+            .into_any_element()
     }
     fn journal(&self, cx: &Context<Self>) -> AnyElement {
         let t = self.theme();
+        let is_dark = self.is_dark();
+        let fav_count = self
+            .store
+            .state
+            .journal
+            .iter()
+            .filter(|e| e.favorite)
+            .count();
         let mut content = v_flex()
             .id("journal-scroll")
             .overflow_y_scroll()
             .size_full()
-            .p_8()
-            .gap_7()
+            .px_7()
+            .py_6()
+            .gap_5()
             .child(
                 h_flex()
                     .justify_between()
                     .items_start()
                     .gap_6()
                     .child(self.heading(
-                        "LITTLE THINGS KEPT",
+                        "LITTLE THINGS KEPT · 私人回响档案",
                         "那些被文字接住的时刻",
                         "日记保存在这台电脑上，尚未加密。你可以随时删除。",
                     ))
-                    .child(self.button_with_icon(
-                        "清空日记",
-                        IconName::X,
-                        Action::ClearJournal,
-                        cx,
-                    )),
+                    .child(
+                        h_flex()
+                            .gap_2p5()
+                            .items_center()
+                            .child(
+                                div()
+                                    .px_3()
+                                    .py_1()
+                                    .rounded_full()
+                                    .bg(rgb(hex(&t.paper)).opacity(0.84))
+                                    .border_1()
+                                    .border_color(self.border_subtle())
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child(format!(
+                                        "共 {} 篇  ·  收藏 {} 篇",
+                                        self.store.state.journal.len(),
+                                        fav_count
+                                    )),
+                            )
+                            .child(self.button_with_icon(
+                                "清空日记",
+                                IconName::X,
+                                Action::ClearJournal,
+                                cx,
+                            )),
+                    ),
             );
         if self.store.state.journal.is_empty() {
             content = content.child(
@@ -2692,9 +3522,9 @@ impl ReadingApp {
                     .items_center()
                     .gap_4()
                     .rounded_2xl()
-                    .bg(rgb(hex(&t.paper)).opacity(0.68))
+                    .bg(rgb(hex(&t.paper)).opacity(0.76))
                     .border_1()
-                    .border_color(rgb(hex(&t.text)).opacity(0.10))
+                    .border_color(self.border_subtle())
                     .child(
                         div()
                             .size(px(58.))
@@ -2735,15 +3565,23 @@ impl ReadingApp {
                 entry.input.clone()
             };
             let mut bar = h_flex()
-                .gap_1()
+                .gap_2()
+                .pb_3()
+                .border_b_1()
+                .border_color(self.border_subtle())
                 .items_center()
                 .child(
-                    v_flex()
+                    h_flex()
                         .flex_1()
-                        .gap_1()
+                        .gap_2p5()
+                        .items_center()
                         .child(
                             div()
-                                .text_size(px(10.))
+                                .px_2p5()
+                                .py_0p5()
+                                .rounded_full()
+                                .bg(rgb(hex(&t.accent)).opacity(0.14))
+                                .text_size(px(10.5))
                                 .font_family(self.ui_font())
                                 .text_color(rgb(hex(&t.accent)))
                                 .child(entry.mood.as_deref().unwrap_or("阅读回响").to_owned()),
@@ -2798,12 +3636,12 @@ impl ReadingApp {
             content = content.child(
                 v_flex()
                     .id(SharedString::from(entry.id.clone()))
-                    .p_6()
-                    .gap_5()
+                    .p_5()
+                    .gap_4()
                     .rounded_2xl()
                     .border_1()
-                    .border_color(rgb(hex(&t.text)).opacity(0.10))
-                    .bg(rgb(hex(&t.paper)).opacity(0.88))
+                    .border_color(self.border_subtle())
+                    .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.90 } else { 0.94 }))
                     .shadow_sm()
                     .child(bar)
                     .child(self.echo_card(&entry.echo, &display_input, cx)),
@@ -2813,19 +3651,21 @@ impl ReadingApp {
     }
     fn theme_page(&self, cx: &Context<Self>) -> AnyElement {
         let active_theme = self.theme();
+        let is_dark = self.is_dark();
         let mut view = v_flex()
             .id("themes-scroll")
             .overflow_y_scroll()
             .size_full()
-            .p_8()
-            .gap_7()
+            .px_7()
+            .py_6()
+            .gap_5()
             .child(
                 h_flex()
                     .justify_between()
                     .items_start()
                     .gap_6()
                     .child(self.heading(
-                        "MAKE YOURSELF AT HOME",
+                        "MAKE YOURSELF AT HOME · 空间与声景调音台",
                         "把这里，变成喜欢的样子。",
                         "从一张纸、一种颜色，到窗外的风景。主题包不包含你的书和日记。",
                     ))
@@ -2846,73 +3686,130 @@ impl ReadingApp {
                             )),
                     ),
             );
-        let mut choices = h_flex().gap_5().flex_wrap();
+        let mut choices = h_flex().gap_4().flex_wrap();
         for (i, t) in self.all_themes().iter().enumerate() {
             let active = active_theme.id == t.id;
-            let preview = if matches!(t.id.as_str(), "forest" | "night") {
+            let swatches = h_flex()
+                .gap_1()
+                .items_center()
+                .px_2()
+                .py_1()
+                .rounded_full()
+                .bg(rgb(0x0b1512).opacity(0.66))
+                .child(
+                    div()
+                        .size(px(9.))
+                        .rounded_full()
+                        .bg(rgb(hex(&t.background)))
+                        .border_1()
+                        .border_color(rgb(0xffffff).opacity(0.35)),
+                )
+                .child(
+                    div()
+                        .size(px(9.))
+                        .rounded_full()
+                        .bg(rgb(hex(&t.paper)))
+                        .border_1()
+                        .border_color(rgb(0xffffff).opacity(0.35)),
+                )
+                .child(
+                    div()
+                        .size(px(9.))
+                        .rounded_full()
+                        .bg(rgb(hex(&t.accent)))
+                        .border_1()
+                        .border_color(rgb(0xffffff).opacity(0.35)),
+                )
+                .child(
+                    div()
+                        .size(px(9.))
+                        .rounded_full()
+                        .bg(rgb(hex(&t.text)))
+                        .border_1()
+                        .border_color(rgb(0xffffff).opacity(0.35)),
+                );
+            let preview_inner = if matches!(t.id.as_str(), "forest" | "night") {
                 img(if t.id == "night" {
                     "scene-night.png"
                 } else {
                     "scene.png"
                 })
                 .w_full()
-                .h(px(142.))
+                .h(px(132.))
                 .object_fit(ObjectFit::Cover)
                 .into_any_element()
             } else if let Some(image) = &t.image {
                 img(self.store.root.join("themes").join(&t.id).join(image))
                     .w_full()
-                    .h(px(142.))
+                    .h(px(132.))
                     .object_fit(ObjectFit::Cover)
                     .into_any_element()
             } else {
                 v_flex()
                     .w_full()
-                    .h(px(142.))
-                    .p_5()
+                    .h(px(132.))
+                    .p_4()
                     .justify_between()
                     .bg(rgb(hex(&t.background)))
                     .child(
-                        Icon::new(IconName::Sun)
-                            .size(px(19.))
-                            .text_color(rgb(hex(&t.accent))),
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .child(
+                                Icon::new(IconName::Sun)
+                                    .size(px(15.))
+                                    .text_color(rgb(hex(&t.accent))),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(9.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child("EDITORIAL PAPER"),
+                            ),
                     )
                     .child(
                         v_flex()
-                            .gap_2()
-                            .child(div().w(px(38.)).h(px(2.)).bg(rgb(hex(&t.accent))))
+                            .gap_1p5()
+                            .child(div().w(px(34.)).h(px(2.)).bg(rgb(hex(&t.accent))))
                             .child(
                                 div()
-                                    .text_size(px(18.))
+                                    .text_size(px(15.5))
                                     .font_family(self.display_font())
-                                    .line_height(relative(1.55))
+                                    .line_height(relative(1.48))
                                     .text_color(rgb(hex(&t.text)))
-                                    .child("风吹过纸页，\n留下一句喜欢的话。"),
+                                    .child("风吹过微黄纸页，\n把心绪轻轻放下。"),
                             ),
                     )
                     .into_any_element()
             };
             let card = v_flex()
-                .w(px(252.))
-                .p_4()
-                .gap_4()
+                .w(px(236.))
+                .p_3p5()
+                .gap_3()
                 .rounded_2xl()
-                .bg(rgb(hex(&t.paper)))
+                .bg(rgb(hex(&active_theme.paper)).opacity(if is_dark { 0.90 } else { 0.94 }))
                 .border_1()
-                .border_color(rgb(hex(&t.text)).opacity(0.10))
+                .border_color(if active {
+                    Hsla::from(rgb(hex(&active_theme.accent)).opacity(0.65))
+                } else {
+                    self.border_subtle()
+                })
                 .shadow_sm()
                 .hover(|style| {
                     style
-                        .border_color(rgb(hex(&t.accent)).opacity(0.45))
+                        .border_color(rgb(hex(&active_theme.accent)).opacity(0.55))
                         .shadow_md()
                 })
                 .child(
                     div()
+                        .relative()
                         .rounded_xl()
                         .overflow_hidden()
                         .border_1()
-                        .border_color(rgb(hex(&t.text)).opacity(0.08))
-                        .child(preview),
+                        .border_color(rgb(hex(&t.text)).opacity(0.12))
+                        .child(preview_inner)
+                        .child(div().absolute().right(px(8.)).top(px(8.)).child(swatches)),
                 )
                 .child(
                     h_flex()
@@ -2920,24 +3817,24 @@ impl ReadingApp {
                         .items_center()
                         .child(
                             v_flex()
-                                .gap_1()
+                                .gap_0p5()
                                 .child(
                                     div()
-                                        .text_size(px(17.))
+                                        .text_size(px(16.5))
                                         .font_family(self.display_font())
-                                        .text_color(rgb(hex(&t.text)))
+                                        .text_color(rgb(hex(&active_theme.text)))
                                         .child(t.name.clone()),
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(10.))
+                                        .text_size(px(9.5))
                                         .font_family(self.ui_font())
-                                        .text_color(rgb(hex(&t.muted)))
+                                        .text_color(rgb(hex(&active_theme.muted)))
                                         .child(match t.id.as_str() {
-                                            "forest" => "FOREST LIGHT",
-                                            "paper" => "QUIET PAPER",
-                                            "night" => "NIGHT GARDEN",
-                                            _ => "PERSONAL THEME",
+                                            "forest" => "FOREST LIGHT · 88.6 FM",
+                                            "paper" => "QUIET PAPER · 92.4 FM",
+                                            "night" => "NIGHT GARDEN · 101.7 FM",
+                                            _ => "PERSONAL THEME · 96.0 FM",
                                         }),
                                 ),
                         )
@@ -2946,17 +3843,17 @@ impl ReadingApp {
                                 h_flex()
                                     .gap_1()
                                     .items_center()
-                                    .px_3()
-                                    .py_1()
+                                    .px_2p5()
+                                    .py_0p5()
                                     .rounded_full()
-                                    .bg(rgb(hex(&t.accent)).opacity(0.12))
+                                    .bg(rgb(hex(&active_theme.accent)).opacity(0.14))
                                     .text_size(px(10.))
                                     .font_family(self.ui_font())
-                                    .text_color(rgb(hex(&t.accent)))
+                                    .text_color(rgb(hex(&active_theme.accent)))
                                     .child(
                                         Icon::new(IconName::Check)
-                                            .size(px(12.))
-                                            .text_color(rgb(hex(&t.accent))),
+                                            .size(px(11.))
+                                            .text_color(rgb(hex(&active_theme.accent))),
                                     )
                                     .child("正在使用"),
                             )
@@ -2986,15 +3883,64 @@ impl ReadingApp {
             choices = choices.child(card);
         }
         view = view.child(choices).child(
-            h_flex().gap_2().flex_wrap().child(
-                self.button_with_icon(
-                    "自定义 / 另存主题",
-                    IconName::Feather,
-                    Action::EditTheme,
-                    cx,
+            h_flex()
+                .justify_between()
+                .items_center()
+                .flex_wrap()
+                .gap_3()
+                .p_4()
+                .rounded_2xl()
+                .bg(rgb(hex(&active_theme.paper)).opacity(if is_dark { 0.88 } else { 0.92 }))
+                .border_1()
+                .border_color(self.border_subtle())
+                .child(
+                    h_flex()
+                        .gap_3()
+                        .items_center()
+                        .child(
+                            self.button_with_icon(
+                                "自定义 / 另存主题",
+                                IconName::Feather,
+                                Action::EditTheme,
+                                cx,
+                            )
+                            .primary(),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .font_family(self.ui_font())
+                                .text_color(rgb(hex(&active_theme.muted)))
+                                .child("可调整色彩、字号、背景图片与专属环境音"),
+                        ),
                 )
-                .primary(),
-            ),
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .px_3()
+                        .py_1p5()
+                        .rounded_full()
+                        .bg(rgb(hex(&active_theme.accent)).opacity(0.12))
+                        .child(
+                            Icon::new(IconName::ShieldCheck)
+                                .size(px(14.))
+                                .text_color(rgb(hex(&active_theme.accent))),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .font_family(self.ui_font())
+                                .text_color(rgb(hex(&active_theme.accent)))
+                                .child(format!(
+                                    "当前正文对比度 {:.1}:1 · 最低要求 4.5:1",
+                                    glow_core::theme::contrast(
+                                        &active_theme.text,
+                                        &active_theme.paper
+                                    )
+                                )),
+                        ),
+                ),
         );
         if let Some(draft) = &self.draft {
             let labels = [
@@ -3015,8 +3961,8 @@ impl ReadingApp {
             for (i, label) in labels.iter().enumerate() {
                 fields = fields.child(
                     v_flex()
-                        .w(px(220.))
-                        .gap_2()
+                        .w(px(212.))
+                        .gap_1p5()
                         .child(
                             div()
                                 .text_size(px(11.))
@@ -3029,26 +3975,20 @@ impl ReadingApp {
             }
             view = view.child(
                 v_flex()
-                    .p_6()
-                    .gap_6()
+                    .p_5()
+                    .gap_5()
                     .rounded_2xl()
-                    .bg(rgb(hex(&active_theme.paper)).opacity(0.92))
+                    .bg(rgb(hex(&active_theme.paper)).opacity(0.94))
                     .border_1()
-                    .border_color(rgb(hex(&active_theme.text)).opacity(0.10))
+                    .border_color(self.border_subtle())
                     .shadow_sm()
                     .child(
                         v_flex()
-                            .gap_2()
+                            .gap_1p5()
+                            .child(self.studio_badge("DIY CONSOLE", "MAKE IT YOURS", true))
                             .child(
                                 div()
-                                    .text_size(px(10.))
-                                    .font_family(self.ui_font())
-                                    .text_color(rgb(hex(&active_theme.accent)))
-                                    .child("MAKE IT YOURS"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(22.))
+                                    .text_size(px(21.))
                                     .font_family(self.display_font())
                                     .child("编辑这一个阅读空间"),
                             ),
@@ -3122,27 +4062,7 @@ impl ReadingApp {
                     ),
             );
         }
-        view.child(
-            h_flex()
-                .gap_2()
-                .items_center()
-                .child(
-                    Icon::new(IconName::ShieldCheck)
-                        .size(px(14.))
-                        .text_color(rgb(hex(&active_theme.accent))),
-                )
-                .child(
-                    div()
-                        .text_size(px(11.))
-                        .font_family(self.ui_font())
-                        .text_color(rgb(hex(&active_theme.muted)))
-                        .child(format!(
-                            "当前正文对比度 {:.1}:1 · 最低要求 4.5:1",
-                            glow_core::theme::contrast(&active_theme.text, &active_theme.paper)
-                        )),
-                ),
-        )
-        .into_any_element()
+        view.into_any_element()
     }
     fn smoke_tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.smoke_started.elapsed() > Duration::from_secs(75) {
@@ -3291,6 +4211,16 @@ impl ReadingApp {
                 if let Ok(image) = window.render_to_image() {
                     let _ = image.save(self.store.root.join("reader-1024.png"));
                 }
+                window.resize(size(px(1280.), px(820.)));
+                self.act(Action::Page(Page::Shelf), window, cx);
+                self.smoke_step = 40;
+                self.smoke_started = Instant::now();
+            }
+            40 if self.smoke_started.elapsed() > Duration::from_millis(600) => {
+                #[cfg(feature = "ui-test")]
+                if let Ok(image) = window.render_to_image() {
+                    let _ = image.save(self.store.root.join("shelf-resume.png"));
+                }
                 self.smoke_step = 3;
             }
             3 => {
@@ -3324,8 +4254,9 @@ impl ReadingApp {
                 }
                 self.act(Action::Page(Page::Themes), window, cx);
                 self.smoke_step = 4;
+                self.smoke_started = Instant::now();
             }
-            4 => {
+            4 if self.smoke_started.elapsed() > Duration::from_millis(600) => {
                 #[cfg(feature = "ui-test")]
                 if let Ok(image) = window.render_to_image() {
                     let _ = image.save(self.store.root.join("themes.png"));
@@ -3425,9 +4356,10 @@ fn display_time(raw: &str) -> String {
 impl Render for ReadingApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme().clone();
+        let dark = self.is_dark();
         let narrow = f32::from(window.viewport_size().width)
-            - if self.focus_mode { 0. } else { 216. }
-            - 360.
+            - if self.focus_mode { 0. } else { 224. }
+            - 368.
             < 480.;
         let visible = self.page == Page::Reader
             && !self.busy
@@ -3441,54 +4373,93 @@ impl Render for ReadingApp {
                 view.update(cx, |v, _| v.hide());
             }
         }
+        let freq = Self::frequency_for_theme(&t.id);
         let mut sidebar = v_flex()
-            .w(px(216.))
+            .w(px(224.))
             .h_full()
             .px_4()
             .py_5()
-            .gap_2()
+            .gap_1p5()
             .flex_shrink_0()
-            .bg(rgb(hex(&t.paper)).opacity(0.86))
+            .bg(rgb(hex(&t.paper)).opacity(if dark { 0.90 } else { 0.94 }))
             .border_r_1()
-            .border_color(rgb(hex(&t.text)).opacity(0.10))
+            .border_color(self.border_subtle())
             .child(
                 h_flex()
                     .gap_3()
                     .items_center()
-                    .p_2()
-                    .pb_7()
+                    .px_2()
+                    .pt_1()
+                    .pb_5()
                     .child(
-                        img("glow-icon.png")
-                            .size(px(42.))
-                            .object_fit(ObjectFit::Contain)
-                            .rounded_xl(),
+                        div()
+                            .relative()
+                            .p_0p5()
+                            .rounded_2xl()
+                            .bg(rgb(hex(&t.accent)).opacity(0.14))
+                            .border_1()
+                            .border_color(rgb(hex(&t.accent)).opacity(0.28))
+                            .child(
+                                img("glow-icon.png")
+                                    .size(px(40.))
+                                    .object_fit(ObjectFit::Contain)
+                                    .rounded_xl(),
+                            ),
                     )
                     .child(
                         v_flex()
                             .gap_0p5()
                             .child(
-                                div()
-                                    .text_size(px(23.))
-                                    .font_family(self.display_font())
-                                    .child("微光"),
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_size(px(21.))
+                                            .font_family(self.display_font())
+                                            .child("微光"),
+                                    )
+                                    .child(
+                                        div()
+                                            .px_1p5()
+                                            .py_0p5()
+                                            .rounded_full()
+                                            .bg(rgb(hex(&t.accent)).opacity(0.14))
+                                            .text_size(px(8.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&t.accent)))
+                                            .child("FM 94.2"),
+                                    ),
                             )
                             .child(
                                 div()
                                     .text_size(px(8.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child("A QUIET READING ROOM"),
+                                    .child("AMBIENT READING STATION"),
                             ),
                     ),
             );
         sidebar = sidebar.child(
-            div()
+            h_flex()
                 .px_3()
-                .pb_2()
-                .text_size(px(9.))
-                .font_family(self.ui_font())
-                .text_color(rgb(hex(&t.muted)).opacity(0.82))
-                .child("在这里"),
+                .pb_1p5()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_size(px(9.))
+                        .font_family(self.ui_font())
+                        .text_color(rgb(hex(&t.muted)).opacity(0.84))
+                        .child("在这里"),
+                )
+                .child(
+                    div()
+                        .text_size(px(8.))
+                        .font_family(self.ui_font())
+                        .text_color(rgb(hex(&t.muted)).opacity(0.55))
+                        .child("CHANNELS"),
+                ),
         );
         for (label, page, icon) in [
             ("我的书架", Page::Shelf, IconName::LibraryBig),
@@ -3513,62 +4484,117 @@ impl Render for ReadingApp {
             .child(
                 v_flex()
                     .p_3()
-                    .gap_2()
-                    .rounded_xl()
-                    .bg(rgb(hex(&t.background)).opacity(0.58))
+                    .gap_2p5()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&t.background)).opacity(if dark { 0.72 } else { 0.76 }))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .child(self.specular_line())
                     .child(
                         h_flex()
-                            .gap_2()
                             .items_center()
+                            .justify_between()
                             .child(
-                                Icon::new(if t.id == "night" {
-                                    IconName::Moon
-                                } else {
-                                    IconName::Sun
-                                })
-                                .size(px(14.))
-                                .text_color(rgb(hex(&t.accent))),
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        Icon::new(if t.id == "night" {
+                                            IconName::Moon
+                                        } else {
+                                            IconName::Sun
+                                        })
+                                        .size(px(13.))
+                                        .text_color(rgb(hex(&t.accent))),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&t.text)))
+                                            .child(t.name.clone()),
+                                    ),
                             )
                             .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .font_family(self.ui_font())
-                                    .text_color(rgb(hex(&t.text)))
-                                    .child(t.name.clone()),
+                                h_flex()
+                                    .gap_1p5()
+                                    .items_center()
+                                    .child(div().size(px(5.)).rounded_full().bg(rgb(
+                                        if self.audio.is_some() {
+                                            0x36c98e
+                                        } else {
+                                            hex(&t.accent)
+                                        },
+                                    )))
+                                    .child(
+                                        div()
+                                            .text_size(px(8.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&t.muted)))
+                                            .child(if self.audio.is_some() {
+                                                "LIVE"
+                                            } else {
+                                                "IDLE"
+                                            }),
+                                    ),
                             ),
                     )
                     .child(
-                        div()
-                            .text_size(px(9.))
-                            .font_family(self.ui_font())
-                            .text_color(rgb(hex(&t.muted)))
-                            .child("你的阅读空间"),
-                    ),
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .px_2p5()
+                            .py_1p5()
+                            .rounded_lg()
+                            .bg(rgb(hex(&t.paper)).opacity(if dark { 0.56 } else { 0.78 }))
+                            .child(
+                                v_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        div()
+                                            .text_size(px(8.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&t.accent)))
+                                            .child(freq),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(9.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&t.muted)))
+                                            .child("你的阅读空间"),
+                                    ),
+                            )
+                            .child(self.waveform_bars(
+                                self.audio.is_some(),
+                                &[5., 11., 15., 8., 13., 9., 6., 12., 8., 5.],
+                            )),
+                    )
+                    .child(self.nav_button(
+                        if self.audio.is_some() {
+                            "关闭环境音"
+                        } else {
+                            "开启环境音"
+                        },
+                        if self.audio.is_some() {
+                            IconName::VolumeX
+                        } else {
+                            IconName::AudioLines
+                        },
+                        self.audio.is_some(),
+                        Action::Audio,
+                        cx,
+                    )),
             )
-            .child(self.nav_button(
-                if self.audio.is_some() {
-                    "关闭环境音"
-                } else {
-                    "开启环境音"
-                },
-                if self.audio.is_some() {
-                    IconName::VolumeX
-                } else {
-                    IconName::AudioLines
-                },
-                self.audio.is_some(),
-                Action::Audio,
-                cx,
-            ))
             .child(
                 div()
                     .px_3()
-                    .pt_2()
-                    .text_size(px(10.))
+                    .pt_1p5()
+                    .text_size(px(9.))
                     .font_family(self.ui_font())
-                    .line_height(relative(1.55))
-                    .text_color(rgb(hex(&t.muted)))
-                    .child("一盏灯，一本书。\n按自己的步子来。"),
+                    .line_height(relative(1.5))
+                    .text_color(rgb(hex(&t.muted)).opacity(0.84))
+                    .child("一盏灯，一本书 · 按自己的步子来"),
             );
         let page = if !self.store.state.privacy_seen {
             v_flex()
@@ -3576,26 +4602,33 @@ impl Render for ReadingApp {
                 .p_8()
                 .items_center()
                 .justify_center()
-                .bg(rgb(hex(&t.background)).opacity(0.30))
+                .bg(rgb(hex(&t.background)).opacity(0.45))
                 .child(
                     v_flex()
                         .w(px(620.))
                         .max_w_full()
                         .p_8()
-                        .gap_7()
+                        .gap_6()
                         .rounded_2xl()
-                        .bg(rgb(hex(&t.paper)).opacity(0.96))
+                        .bg(rgb(hex(&t.paper)).opacity(0.97))
                         .border_1()
-                        .border_color(rgb(hex(&t.text)).opacity(0.10))
+                        .border_color(self.border_strong())
                         .shadow_lg()
+                        .child(self.specular_line())
                         .child(
-                            img("glow-icon.png")
-                                .size(px(58.))
-                                .object_fit(ObjectFit::Contain)
-                                .rounded_2xl(),
+                            h_flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    img("glow-icon.png")
+                                        .size(px(56.))
+                                        .object_fit(ObjectFit::Contain)
+                                        .rounded_2xl(),
+                                )
+                                .child(self.studio_badge("LOCAL-FIRST", "PRIVATE STORAGE", true)),
                         )
                         .child(self.heading(
-                            "WELCOME HOME",
+                            "WELCOME TO GLOW STATION",
                             "欢迎来到微光。",
                             "书库、划线和日记保存在这台电脑上；心情回复可连接 OpenAI。",
                         ))
@@ -3624,25 +4657,20 @@ impl Render for ReadingApp {
                 .p_8()
                 .items_center()
                 .justify_center()
-                .bg(rgb(hex(&t.background)).opacity(0.48))
+                .bg(rgb(hex(&t.background)).opacity(0.55))
                 .child(
                     v_flex()
                         .w(px(520.))
                         .max_w_full()
                         .p_7()
-                        .gap_6()
+                        .gap_5()
                         .rounded_2xl()
-                        .bg(rgb(hex(&t.paper)).opacity(0.97))
+                        .bg(rgb(hex(&t.paper)).opacity(0.98))
                         .border_1()
-                        .border_color(rgb(hex(&t.text)).opacity(0.12))
+                        .border_color(self.border_strong())
                         .shadow_lg()
-                        .child(
-                            div()
-                                .text_size(px(12.))
-                                .font_family(self.ui_font())
-                                .text_color(rgb(hex(&t.accent)))
-                                .child("请再确认一次"),
-                        )
+                        .child(self.specular_line())
+                        .child(self.studio_badge("CONFIRM", "请再确认一次", true))
                         .child(
                             div()
                                 .text_size(px(26.))
@@ -3702,10 +4730,10 @@ impl Render for ReadingApp {
                     .gap_3()
                     .items_center()
                     .px_5()
-                    .py_3()
+                    .py_2p5()
                     .bg(rgb(hex(&t.paper)).opacity(0.96))
                     .border_b_1()
-                    .border_color(rgb(hex(&t.text)).opacity(0.10))
+                    .border_color(self.border_subtle())
                     .text_color(rgb(if self.error.is_some() {
                         0xb34f36
                     } else {
@@ -3717,7 +4745,7 @@ impl Render for ReadingApp {
                         } else {
                             IconName::Sparkles
                         })
-                        .size(px(16.)),
+                        .size(px(15.)),
                     )
                     .child(
                         div()
@@ -3771,21 +4799,30 @@ impl Render for ReadingApp {
                 );
         }
         if matches!(t.id.as_str(), "forest" | "night") {
-            root = root.child(
-                img(if t.id == "night" {
-                    "scene-night.png"
-                } else {
-                    "scene.png"
-                })
-                .absolute()
-                .size_full()
-                .object_fit(ObjectFit::Cover)
-                .opacity(if self.page == Page::Reader {
-                    0.04
-                } else {
-                    0.34
-                }),
-            );
+            root = root
+                .child(
+                    img("scene-night.png")
+                        .absolute()
+                        .size(px(1.))
+                        .opacity(0.001),
+                )
+                .child(
+                    img(if t.id == "night" {
+                        "scene-night.png"
+                    } else {
+                        "scene.png"
+                    })
+                    .absolute()
+                    .size_full()
+                    .object_fit(ObjectFit::Cover)
+                    .opacity(if self.page == Page::Reader {
+                        0.03
+                    } else if dark {
+                        0.10
+                    } else {
+                        0.07
+                    }),
+                );
         }
         if !self.focus_mode || self.page != Page::Reader {
             root = root.child(sidebar.relative());
