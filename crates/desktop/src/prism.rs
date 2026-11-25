@@ -383,7 +383,12 @@ fn paint_glow_orb(
     blur_radius: f32,
     color: Hsla,
 ) {
-    if color.a <= 0.002 {
+    if color.a <= 0.002
+        || core_radius <= 0.0
+        || blur_radius <= 0.0
+        || !f32::from(center.x).is_finite()
+        || !f32::from(center.y).is_finite()
+    {
         return;
     }
     let d = core_radius * 2.0;
@@ -725,7 +730,10 @@ pub fn prism_beam_horizontal(
     canvas(
         |_, _, _| (),
         move |bounds, _, window, _| {
-            let w = f32::from(bounds.size.width).max(1.0);
+            let w = f32::from(bounds.size.width);
+            if !w.is_finite() || w < 4.0 {
+                return;
+            }
             let ox = f32::from(bounds.origin.x);
             let oy = f32::from(bounds.origin.y);
             let h = f32::from(bounds.size.height).max(thickness);
@@ -800,8 +808,11 @@ pub fn prism_beam_horizontal(
             }
 
             // Soft optical bloom directly around the mouse-tracked focal segment
-            let glow_w = (w * 0.34).clamp(90.0, 280.0);
-            let glow_x = (ox + focal * w - glow_w * 0.5).clamp(ox + 8.0, ox + w - glow_w - 8.0);
+            let max_glow = (w - 8.0).max(8.0);
+            let glow_w = (w * 0.34).min(280.0).min(max_glow).max(8.0);
+            let min_x = ox + 4.0;
+            let max_x = (ox + w - glow_w - 4.0).max(min_x);
+            let glow_x = (ox + focal * w - glow_w * 0.5).clamp(min_x, max_x);
             let glow_color = if rainbow {
                 spectral_color(
                     focal * 0.9 + snap.phase * 0.08 + phase_offset * 0.18,
@@ -1105,6 +1116,9 @@ pub fn light_vial_canvas(snap: MotionSnapshot, fill_ratio: f32) -> impl IntoElem
             let oy = f32::from(bounds.origin.y);
             let w = f32::from(bounds.size.width);
             let h = f32::from(bounds.size.height);
+            if !w.is_finite() || !h.is_finite() || w < 6.0 || h < 10.0 {
+                return;
+            }
 
             // Outer borosilicate capsule glass shell
             let shell_bg = if snap.is_dark {
@@ -1139,7 +1153,8 @@ pub fn light_vial_canvas(snap: MotionSnapshot, fill_ratio: f32) -> impl IntoElem
                 } else {
                     (snap.phase * 2.4 + frac * 4.2).sin() * 2.0
                 };
-                let liq_h = (inner_h * ratio + wave).clamp(5.0, inner_h - 1.0);
+                let max_liq = (inner_h - 1.0).max(5.0);
+                let liq_h = (inner_h * ratio + wave).clamp(5.0, max_liq);
                 let lx = ox + inset + c as f32 * col_w;
                 let ly = oy + h - inset - liq_h;
                 let top_col = if snap.is_prism {

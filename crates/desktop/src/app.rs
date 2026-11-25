@@ -137,6 +137,7 @@ pub struct ReadingApp {
     smoke_started: Instant,
     busy: bool,
     motion: MotionEngine,
+    frame_scheduled: bool,
 }
 
 impl ReadingApp {
@@ -197,6 +198,7 @@ impl ReadingApp {
             smoke_started: Instant::now(),
             busy: false,
             motion: MotionEngine::new(),
+            frame_scheduled: false,
         };
         app.install_native_theme(cx);
         window.focus(&app.focus, cx);
@@ -959,9 +961,7 @@ impl ReadingApp {
                 let whisper = self.motion.trigger_pet(origin, reduced);
                 self.motion.on_click(origin, reduced, is_prism);
                 self.notice = Some(whisper.into());
-                if !reduced && !cfg!(test) && !self.smoke {
-                    window.request_animation_frame();
-                }
+                self.schedule_motion_frame(window, cx);
             }
             Action::RevealSpoiler(id) => {
                 self.spoilers.insert(id);
@@ -1142,6 +1142,16 @@ impl ReadingApp {
     }
     fn is_prism(&self) -> bool {
         self.theme().id == "prism"
+    }
+    fn schedule_motion_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.frame_scheduled || self.theme().reduced_motion || cfg!(test) || self.smoke {
+            return;
+        }
+        self.frame_scheduled = true;
+        cx.on_next_frame(window, |this, _, cx| {
+            this.frame_scheduled = false;
+            cx.notify();
+        });
     }
     fn scene_asset(&self) -> &'static str {
         match self.theme().id.as_str() {
@@ -4642,8 +4652,8 @@ impl Render for ReadingApp {
         let is_prism = self.is_prism();
         let continuous_flow = !t.reduced_motion && (is_prism || self.audio.is_some());
         let needs_frame = self.motion.step(t.reduced_motion, continuous_flow);
-        if needs_frame && !cfg!(test) && !self.smoke {
-            window.request_animation_frame();
+        if needs_frame {
+            self.schedule_motion_frame(window, cx);
         }
         let snap = self.motion_snapshot();
         let narrow = f32::from(window.viewport_size().width)
@@ -5146,8 +5156,8 @@ impl Render for ReadingApp {
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
                 let reduced = this.theme().reduced_motion;
                 this.motion.on_mouse_move(event.position, reduced);
-                if !reduced && !cfg!(test) && !this.smoke {
-                    window.request_animation_frame();
+                if !reduced {
+                    this.schedule_motion_frame(window, cx);
                 }
                 cx.notify();
             }))
@@ -5155,8 +5165,8 @@ impl Render for ReadingApp {
                 let reduced = this.theme().reduced_motion;
                 let is_prism = this.is_prism();
                 this.motion.on_click(event.position, reduced, is_prism);
-                if !reduced && !cfg!(test) && !this.smoke {
-                    window.request_animation_frame();
+                if !reduced {
+                    this.schedule_motion_frame(window, cx);
                 }
                 cx.notify();
             }))
@@ -5691,5 +5701,36 @@ mod tests {
         assert_eq!(reopened.state.reader_font_size, Some(22.0));
         assert_eq!(reopened.state.reader_line_height, Some(2.0));
         assert_eq!(reopened.state.reader_width, Some(760));
+    }
+
+    #[gpui::test]
+    fn prism_theme_mouse_move_click_and_pet_interactions_do_not_panic(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().into()).unwrap();
+        store.install_sample().unwrap();
+        store.state.privacy_seen = true;
+        let (app, cx) = cx.add_window_view(|window, cx| test_app(store, window, cx));
+        app.update_in(cx, |app, window, cx| {
+            app.act(Action::PickTheme(3), window, cx);
+            assert_eq!(app.theme().id, "prism");
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_mouse_move(point(px(320.), px(220.)), None, Modifiers::default());
+        cx.simulate_mouse_move(point(px(540.), px(260.)), None, Modifiers::default());
+        cx.simulate_click(point(px(540.), px(260.)), Modifiers::default());
+        app.update_in(cx, |app, window, cx| {
+            app.act(Action::PetInteract(point(px(900.), px(40.))), window, cx);
+            assert!(app.notice.as_deref().is_some_and(|n| n.contains("棱镜喵")));
+            app.act(Action::Page(Page::Mood), window, cx);
+            app.act(Action::ToggleFlow, window, cx);
+            assert!(app.theme().reduced_motion);
+            app.act(Action::ToggleFlow, window, cx);
+            assert!(!app.theme().reduced_motion);
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_mouse_move(point(px(420.), px(300.)), None, Modifiers::default());
+        cx.simulate_click(point(px(420.), px(300.)), Modifiers::default());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
     }
 }

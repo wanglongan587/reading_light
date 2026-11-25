@@ -37,6 +37,11 @@ fn run() -> anyhow::Result<()> {
     }
     let root = glow_core::Store::default_root()?;
     std::fs::create_dir_all(&root)?;
+    let crash_log = root.join("last-crash.log");
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = std::fs::write(&crash_log, format!("{info}\n"));
+        eprintln!("微光阅读遇到意外错误：{info}");
+    }));
     let instance_lock = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
