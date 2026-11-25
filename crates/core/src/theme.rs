@@ -239,8 +239,27 @@ mod tests {
     use super::*;
     #[test]
     fn defaults_are_readable() {
-        for theme in crate::model::themes() {
+        let all = crate::model::themes();
+        let ids: Vec<&str> = all.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "forest", "paper", "night", "prism", "totoro", "spirited", "howl", "kiki",
+                "lantern"
+            ]
+        );
+        for theme in all {
             validate(&theme).unwrap();
+            assert!(
+                contrast(&theme.text, &theme.paper) >= 7.0,
+                "{} text contrast should be comfortable for long reading",
+                theme.id
+            );
+            assert!(
+                contrast(&theme.accent, &theme.paper) >= 4.5,
+                "{} accent button contrast should pass WCAG AA",
+                theme.id
+            );
         }
     }
     #[test]

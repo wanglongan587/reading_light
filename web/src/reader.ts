@@ -20,6 +20,7 @@ let tocEntries:{label:string;href:string}[]=[], currentHref='', locationsReady=f
 let bookHighlights:Highlight[]=[]; const appliedHighlights=new Map<string,string>();
 let openWatchdog:ReturnType<typeof setTimeout>|undefined;
 let readerFailed=false;
+let pendingReflow=false;
 let lastEdge:'top'|'bottom'|'none'='none';
 
 const reader=document.querySelector<HTMLElement>('#reader')!;
@@ -43,7 +44,7 @@ function hideEcho(){
 }
 function isDarkTheme(){
  if(!theme)return false;
- if(theme.id==='night'||theme.id==='prism')return true;
+ if(theme.id==='night'||theme.id==='prism'||theme.id==='lantern')return true;
  const hex=theme.paper?.replace('#','');
  if(hex&&hex.length===6){
   const r=parseInt(hex.slice(0,2),16),g=parseInt(hex.slice(2,4),16),b=parseInt(hex.slice(4,6),16);
@@ -476,11 +477,28 @@ async function searchBook(query:string){
 }
 async function reflow(cmd:Command){
  if(!rendition)return;
+ const prevTheme=theme;
+ const prevMode=mode;
+ const nextTheme=cmd.theme??theme;
+ const nextMode=cmd.mode||mode;
+ const modeChanged=nextMode!==prevMode;
+ const layoutChanged=!!prevTheme&&!!nextTheme&&(
+  nextTheme.font!==prevTheme.font
+  ||nextTheme.font_size!==prevTheme.font_size
+  ||nextTheme.line_height!==prevTheme.line_height
+  ||nextTheme.width!==prevTheme.width
+  ||nextTheme.font_url!==prevTheme.font_url
+ );
+ const needsLayout=cmd.kind==='restore'||modeChanged||layoutChanged;
+ if(cmd.theme)theme=cmd.theme;
+ if(modeChanged){mode=nextMode;rendition.flow(mode==='paginated'?'paginated':'scrolled-doc');}
+ await applyTheme();
+ if(!needsLayout)return;
+ if(reader.clientWidth<=0||reader.clientHeight<=0){pendingReflow=true;return;}
+ pendingReflow=false;
  const saved=currentCfi;relocating=true;hideEcho();
  try{
-  if(cmd.theme)theme=cmd.theme;
-  if(cmd.mode&&cmd.mode!==mode){mode=cmd.mode;rendition.flow(mode==='paginated'?'paginated':'scrolled-doc');}
-  await applyTheme();rendition.resize(reader.clientWidth,reader.clientHeight);
+  rendition.resize(reader.clientWidth,reader.clientHeight);
   if(saved)await displayChapter(saved);
  }finally{relocating=false;}
  await captureLocation();
@@ -525,11 +543,11 @@ let resizeTimer:ReturnType<typeof setTimeout>;
 let lastObservedW=0, lastObservedH=0;
 new ResizeObserver(()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{
  const w=reader.clientWidth, h=reader.clientHeight;
- if(!rendition||w<=0)return;
+ if(!rendition||w<=0||h<=0)return;
  const widthChanged=w!==lastObservedW;
  const heightChanged=h!==lastObservedH;
  lastObservedW=w; lastObservedH=h;
- if(!widthChanged&&(mode==='scrolled'||!heightChanged))return;
+ if(!pendingReflow&&!widthChanged&&(mode==='scrolled'||!heightChanged))return;
  queue=queue.then(()=>reflow({version:1,session,request_id:0,kind:'restore'})).catch(failure);
 },150);}).observe(reader);
 window.addEventListener('beforeunload',()=>{disposed=true;clearTimeout(resizeTimer);rendition?.destroy();book?.destroy();});

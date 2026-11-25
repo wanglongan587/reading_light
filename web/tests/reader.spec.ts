@@ -356,3 +356,20 @@ test('floating pill supports direct multi-color highlight, note, copy and warm f
  await expect(page.locator('html')).toHaveAttribute('data-reduced-motion','yes');
  await expect(page.locator('html')).toHaveAttribute('data-warm-filter','no');
 });
+
+test('miyazaki themes apply healing palettes and dark lantern blending cleanly',async({page})=>{
+ await open(page,'scrolled','/book.epub',{...theme,id:'totoro',paper:'#F9FCF6',text:'#1F3626',accent:'#3D7A52'});
+ await expect(page.locator('html')).toHaveAttribute('data-theme','totoro');
+ const frame=page.frames().find(f=>f.parentFrame()!==null)!;
+ await expect(frame.locator('body')).toHaveCSS('background-color','rgb(249, 252, 246)');
+ await expect(frame.locator('p').first()).toHaveCSS('color','rgb(31, 54, 38)');
+ await command(page,{version:1,session:'test',request_id:2,kind:'configure',theme:{...theme,id:'spirited',paper:'#FFF9F5',text:'#3B2427',accent:'#B84B42'},mode:'scrolled'});
+ await expect(page.locator('html')).toHaveAttribute('data-theme','spirited');
+ await expect(frame.locator('body')).toHaveCSS('background-color','rgb(255, 249, 245)');
+ await command(page,{version:1,session:'test',request_id:3,kind:'configure',theme:{...theme,id:'lantern',paper:'#201B26',text:'#F5E9D6',accent:'#E69F52',warm_filter:true},mode:'scrolled'});
+ await expect(page.locator('html')).toHaveAttribute('data-theme','lantern');
+ await expect(page.locator('html')).toHaveAttribute('data-warm-filter','yes');
+ await expect(frame.locator('body')).toHaveCSS('background-color','rgb(32, 27, 38)');
+ await expect(frame.locator('p').first()).toHaveCSS('color','rgb(245, 233, 214)');
+ expect(await page.evaluate(()=>(window as any).__events.filter((e:any)=>e.kind==='error'))).toEqual([]);
+});

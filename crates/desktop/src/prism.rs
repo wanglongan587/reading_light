@@ -43,6 +43,33 @@ pub struct BurstSpark {
     pub hue: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThemeAtmosphere {
+    Sky,
+    Totoro,
+    Spirited,
+    Howl,
+    Kiki,
+    Lantern,
+    Prism,
+    Classic,
+}
+
+impl ThemeAtmosphere {
+    pub fn from_theme_id(id: &str) -> Self {
+        match id {
+            "forest" => Self::Sky,
+            "totoro" => Self::Totoro,
+            "spirited" => Self::Spirited,
+            "howl" => Self::Howl,
+            "kiki" => Self::Kiki,
+            "lantern" => Self::Lantern,
+            "prism" => Self::Prism,
+            _ => Self::Classic,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct MotionSnapshot {
     pub pointer_smooth: Point<Pixels>,
@@ -51,6 +78,7 @@ pub struct MotionSnapshot {
     pub pointer_speed: f32,
     pub idle_fade: f32,
     pub phase: f32,
+    pub atmosphere: ThemeAtmosphere,
     pub is_prism: bool,
     pub is_sky: bool,
     pub is_dark: bool,
@@ -306,13 +334,14 @@ impl MotionEngine {
 
     pub fn snapshot(
         &self,
-        is_prism: bool,
-        is_sky: bool,
+        atmosphere: ThemeAtmosphere,
         accent: u32,
         is_dark: bool,
         reduced_motion: bool,
         pet_mood: Option<String>,
     ) -> MotionSnapshot {
+        let is_prism = atmosphere == ThemeAtmosphere::Prism;
+        let is_sky = atmosphere == ThemeAtmosphere::Sky;
         let speed = (self.pointer_vel.0 * self.pointer_vel.0
             + self.pointer_vel.1 * self.pointer_vel.1)
             .sqrt()
@@ -335,6 +364,7 @@ impl MotionEngine {
             pointer_speed: speed,
             idle_fade,
             phase: self.phase,
+            atmosphere,
             is_prism,
             is_sky,
             is_dark,
@@ -536,42 +566,219 @@ pub fn ambient_stage_canvas(snap: MotionSnapshot, is_reader: bool) -> impl IntoE
                         border_style: BorderStyle::default(),
                     });
                 }
-            } else if snap.is_sky && !is_reader {
-                // Studio Ghibli Castle-in-the-Sky luminous blue sky & drifting sunlit cloud puffs
+            } else if !is_reader {
+                // Studio Ghibli hand-painted atmospheric lighting & gentle floating motes
                 let p = if snap.reduced_motion { 0.0 } else { snap.phase };
-                let cloud1 = point(
-                    px(ox + w * (0.28 + 0.04 * (p * 0.16).sin()) - px_norm * 24.0),
-                    px(oy + h * 0.16 - py_norm * 14.0),
-                );
-                let cloud2 = point(
-                    px(ox + w * (0.78 + 0.05 * (p * 0.14 + 1.5).cos()) - px_norm * 32.0),
-                    px(oy + h * 0.24 - py_norm * 18.0),
-                );
-                let cloud3 = point(
-                    px(ox + w * (0.64 + 0.04 * (p * 0.12 + 3.0).sin()) + px_norm * 20.0),
-                    px(oy + h * 0.84 + py_norm * 12.0),
-                );
-                paint_glow_orb(
-                    window,
-                    cloud1,
-                    96.0,
-                    180.0,
-                    Hsla::from(rgb(0xffffff).opacity(0.42)),
-                );
-                paint_glow_orb(
-                    window,
-                    cloud2,
-                    108.0,
-                    195.0,
-                    Hsla::from(rgb(0xffffff).opacity(0.38)),
-                );
-                paint_glow_orb(
-                    window,
-                    cloud3,
-                    92.0,
-                    170.0,
-                    Hsla::from(rgb(0x93c5fd).opacity(0.24)),
-                );
+                match snap.atmosphere {
+                    ThemeAtmosphere::Sky => {
+                        let cloud1 = point(
+                            px(ox + w * (0.28 + 0.04 * (p * 0.16).sin()) - px_norm * 24.0),
+                            px(oy + h * 0.16 - py_norm * 14.0),
+                        );
+                        let cloud2 = point(
+                            px(ox + w * (0.78 + 0.05 * (p * 0.14 + 1.5).cos()) - px_norm * 32.0),
+                            px(oy + h * 0.24 - py_norm * 18.0),
+                        );
+                        let cloud3 = point(
+                            px(ox + w * (0.64 + 0.04 * (p * 0.12 + 3.0).sin()) + px_norm * 20.0),
+                            px(oy + h * 0.84 + py_norm * 12.0),
+                        );
+                        paint_glow_orb(window, cloud1, 96.0, 180.0, Hsla::from(rgb(0xffffff).opacity(0.42)));
+                        paint_glow_orb(window, cloud2, 108.0, 195.0, Hsla::from(rgb(0xffffff).opacity(0.38)));
+                        paint_glow_orb(window, cloud3, 92.0, 170.0, Hsla::from(rgb(0x93c5fd).opacity(0.24)));
+                    }
+                    ThemeAtmosphere::Totoro => {
+                        // Dappled camphor forest sunbeams & gentle drifting woodland spores
+                        let sun1 = point(
+                            px(ox + w * (0.30 + 0.03 * (p * 0.14).sin()) - px_norm * 22.0),
+                            px(oy + h * 0.18 - py_norm * 14.0),
+                        );
+                        let canopy2 = point(
+                            px(ox + w * (0.76 + 0.04 * (p * 0.12 + 1.4).cos()) - px_norm * 28.0),
+                            px(oy + h * 0.28 - py_norm * 16.0),
+                        );
+                        let moss3 = point(
+                            px(ox + w * (0.62 + 0.03 * (p * 0.10 + 2.6).sin()) + px_norm * 18.0),
+                            px(oy + h * 0.82 + py_norm * 10.0),
+                        );
+                        paint_glow_orb(window, sun1, 92.0, 185.0, Hsla::from(rgb(0xfff5cc).opacity(0.36)));
+                        paint_glow_orb(window, canopy2, 102.0, 190.0, Hsla::from(rgb(0xa7ddb0).opacity(0.26)));
+                        paint_glow_orb(window, moss3, 88.0, 165.0, Hsla::from(rgb(0xdff5d8).opacity(0.32)));
+                        if !snap.reduced_motion {
+                            for i in 0..10_usize {
+                                let seed = i as f32 * 1.618_034;
+                                let mx = ox
+                                    + w * (0.22 + ((seed * 2.91).sin() * 0.5 + 0.5) * 0.72)
+                                    + (p * 0.42 + seed).sin() * 14.0
+                                    - px_norm * 14.0;
+                                let travel = ((p * 0.022 + seed * 0.31).rem_euclid(1.0)) * h;
+                                let my = oy + h - travel;
+                                let pulse = 0.40 + 0.60 * ((p * 1.3 + seed * 2.1).sin() * 0.5 + 0.5);
+                                let r = 1.6 + (i % 3) as f32 * 0.55;
+                                let mote = if i % 2 == 0 {
+                                    Hsla::from(rgb(0xfff1a8).opacity(0.45 * pulse))
+                                } else {
+                                    Hsla::from(rgb(0x7cc48b).opacity(0.32 * pulse))
+                                };
+                                window.paint_quad(PaintQuad {
+                                    bounds: Bounds::new(
+                                        point(px(mx - r), px(my - r)),
+                                        size(px(r * 2.0), px(r * 2.0)),
+                                    ),
+                                    corner_radii: Corners::all(px(r)),
+                                    background: mote.into(),
+                                    border_widths: Edges::default(),
+                                    border_color: transparent_black(),
+                                    border_style: BorderStyle::default(),
+                                });
+                            }
+                        }
+                    }
+                    ThemeAtmosphere::Spirited => {
+                        // Soft apricot-rose twilight sky blooms & subtle mirror-water glints
+                        let glow1 = point(
+                            px(ox + w * (0.28 + 0.04 * (p * 0.13).sin()) - px_norm * 22.0),
+                            px(oy + h * 0.22 - py_norm * 14.0),
+                        );
+                        let glow2 = point(
+                            px(ox + w * (0.76 + 0.04 * (p * 0.11 + 1.6).cos()) - px_norm * 30.0),
+                            px(oy + h * 0.26 - py_norm * 16.0),
+                        );
+                        let glow3 = point(
+                            px(ox + w * (0.58 + 0.05 * (p * 0.10 + 3.1).sin()) + px_norm * 18.0),
+                            px(oy + h * 0.80 + py_norm * 12.0),
+                        );
+                        paint_glow_orb(window, glow1, 98.0, 190.0, Hsla::from(rgb(0xffd7c4).opacity(0.38)));
+                        paint_glow_orb(window, glow2, 102.0, 190.0, Hsla::from(rgb(0xf6bcc5).opacity(0.30)));
+                        paint_glow_orb(window, glow3, 94.0, 175.0, Hsla::from(rgb(0xb2c9eb).opacity(0.24)));
+                        if !snap.reduced_motion {
+                            for i in 0..8_usize {
+                                let seed = i as f32 * 2.13;
+                                let rx = ox
+                                    + w * (0.24 + ((seed * 1.9).sin() * 0.5 + 0.5) * 0.70)
+                                    + (p * 0.30 + seed).sin() * 18.0;
+                                let ry = oy + h * (0.62 + (i as f32 / 8.0) * 0.30);
+                                let shimmer = 0.25 + 0.75 * ((p * 1.2 + seed).sin() * 0.5 + 0.5);
+                                let rw = 16.0 + (i % 3) as f32 * 10.0;
+                                window.paint_quad(PaintQuad {
+                                    bounds: Bounds::new(point(px(rx), px(ry)), size(px(rw), px(2.0))),
+                                    corner_radii: Corners::all(px(1.0)),
+                                    background: Hsla::from(rgb(0xfff0d9).opacity(0.32 * shimmer)).into(),
+                                    border_widths: Edges::default(),
+                                    border_color: transparent_black(),
+                                    border_style: BorderStyle::default(),
+                                });
+                            }
+                        }
+                    }
+                    ThemeAtmosphere::Howl => {
+                        // Luminous alpine spring sky & gently drifting pastel wildflowers
+                        let cloud1 = point(
+                            px(ox + w * (0.30 + 0.04 * (p * 0.15).sin()) - px_norm * 24.0),
+                            px(oy + h * 0.18 - py_norm * 14.0),
+                        );
+                        let cloud2 = point(
+                            px(ox + w * (0.78 + 0.04 * (p * 0.13 + 1.3).cos()) - px_norm * 28.0),
+                            px(oy + h * 0.26 - py_norm * 16.0),
+                        );
+                        let bloom3 = point(
+                            px(ox + w * (0.64 + 0.04 * (p * 0.11 + 2.8).sin()) + px_norm * 18.0),
+                            px(oy + h * 0.84 + py_norm * 12.0),
+                        );
+                        paint_glow_orb(window, cloud1, 96.0, 185.0, Hsla::from(rgb(0xd4cbf7).opacity(0.32)));
+                        paint_glow_orb(window, cloud2, 102.0, 190.0, Hsla::from(rgb(0xffffff).opacity(0.40)));
+                        paint_glow_orb(window, bloom3, 90.0, 170.0, Hsla::from(rgb(0xfff1ba).opacity(0.28)));
+                        if !snap.reduced_motion {
+                            for i in 0..10_usize {
+                                let seed = i as f32 * 1.732;
+                                let drift = (p * 0.026 + seed * 0.29).rem_euclid(1.0);
+                                let mx = ox + w * (0.18 + drift * 0.78);
+                                let my = oy
+                                    + h * (0.12 + ((seed * 2.4).sin() * 0.5 + 0.5) * 0.76)
+                                    + (p * 0.8 + seed).sin() * 14.0;
+                                let petal = match i % 3 {
+                                    0 => Hsla::from(rgb(0xf9c8d6).opacity(0.46)),
+                                    1 => Hsla::from(rgb(0xffffff).opacity(0.55)),
+                                    _ => Hsla::from(rgb(0xd8cdfa).opacity(0.44)),
+                                };
+                                window.paint_quad(PaintQuad {
+                                    bounds: Bounds::new(point(px(mx), px(my)), size(px(5.0), px(3.0))),
+                                    corner_radii: Corners::all(px(1.5)),
+                                    background: petal.into(),
+                                    border_widths: Edges::default(),
+                                    border_color: transparent_black(),
+                                    border_style: BorderStyle::default(),
+                                });
+                            }
+                        }
+                    }
+                    ThemeAtmosphere::Kiki => {
+                        // Warm sunlit Mediterranean afternoon coastal glow & sea breeze glints
+                        let sun1 = point(
+                            px(ox + w * (0.30 + 0.04 * (p * 0.14).sin()) - px_norm * 22.0),
+                            px(oy + h * 0.18 - py_norm * 14.0),
+                        );
+                        let coast2 = point(
+                            px(ox + w * (0.76 + 0.04 * (p * 0.12 + 1.5).cos()) - px_norm * 28.0),
+                            px(oy + h * 0.26 - py_norm * 16.0),
+                        );
+                        let sea3 = point(
+                            px(ox + w * (0.60 + 0.04 * (p * 0.10 + 3.0).sin()) + px_norm * 18.0),
+                            px(oy + h * 0.82 + py_norm * 12.0),
+                        );
+                        paint_glow_orb(window, sun1, 96.0, 185.0, Hsla::from(rgb(0xffe7ba).opacity(0.40)));
+                        paint_glow_orb(window, coast2, 98.0, 185.0, Hsla::from(rgb(0xf5c4a2).opacity(0.28)));
+                        paint_glow_orb(window, sea3, 92.0, 175.0, Hsla::from(rgb(0xbae6fd).opacity(0.24)));
+                    }
+                    ThemeAtmosphere::Lantern => {
+                        // Cozy Spirited Away night lantern glow & gently rising spirit fireflies
+                        let lamp1 = point(
+                            px(ox + w * (0.32 + 0.04 * (p * 0.14).sin()) - px_norm * 24.0),
+                            px(oy + h * 0.22 - py_norm * 14.0),
+                        );
+                        let lamp2 = point(
+                            px(ox + w * (0.76 + 0.05 * (p * 0.12 + 1.8).cos()) - px_norm * 32.0),
+                            px(oy + h * 0.30 - py_norm * 18.0),
+                        );
+                        let river3 = point(
+                            px(ox + w * (0.64 + 0.04 * (p * 0.11 + 3.2).sin()) + px_norm * 20.0),
+                            px(oy + h * 0.80 + py_norm * 14.0),
+                        );
+                        paint_glow_orb(window, lamp1, 84.0, 180.0, Hsla::from(rgb(0x6d4c8c).opacity(0.16)));
+                        paint_glow_orb(window, lamp2, 86.0, 185.0, Hsla::from(rgb(0xf5b962).opacity(0.16)));
+                        paint_glow_orb(window, river3, 74.0, 165.0, Hsla::from(rgb(0xd96b4e).opacity(0.12)));
+                        if !snap.reduced_motion {
+                            for i in 0..12_usize {
+                                let seed = i as f32 * 1.618_034;
+                                let mx = ox
+                                    + w * (0.20 + ((seed * 3.17).sin() * 0.5 + 0.5) * 0.76)
+                                    + (p * 0.45 + seed).sin() * 14.0
+                                    - px_norm * 16.0;
+                                let travel = ((p * 0.025 + seed * 0.37).rem_euclid(1.0)) * h;
+                                let my = oy + h - travel;
+                                let twinkle = 0.35 + 0.65 * ((p * 1.4 + seed * 2.3).sin() * 0.5 + 0.5);
+                                let r = 1.4 + (i % 3) as f32 * 0.5;
+                                let col = if i % 3 == 0 {
+                                    Hsla::from(rgb(0xf7b267).opacity(0.42 * twinkle))
+                                } else {
+                                    Hsla::from(rgb(0xfde4a6).opacity(0.46 * twinkle))
+                                };
+                                window.paint_quad(PaintQuad {
+                                    bounds: Bounds::new(
+                                        point(px(mx - r), px(my - r)),
+                                        size(px(r * 2.0), px(r * 2.0)),
+                                    ),
+                                    corner_radii: Corners::all(px(r)),
+                                    background: col.into(),
+                                    border_widths: Edges::default(),
+                                    border_color: transparent_black(),
+                                    border_style: BorderStyle::default(),
+                                });
+                            }
+                        }
+                    }
+                    ThemeAtmosphere::Prism | ThemeAtmosphere::Classic => {}
+                }
             }
 
             // 2. Mouse-following optical spotlight & chromatic dispersion aura
@@ -633,6 +840,81 @@ pub fn ambient_stage_canvas(snap: MotionSnapshot, is_reader: bool) -> impl IntoE
                         28.0,
                         94.0,
                         Hsla::from(rgb(0xffffff).opacity(0.26 * intensity)),
+                    );
+                } else if snap.atmosphere == ThemeAtmosphere::Totoro {
+                    paint_glow_orb(
+                        window,
+                        snap.pointer_smooth,
+                        36.0,
+                        116.0,
+                        Hsla::from(rgb(0x5fa370).opacity(0.11 * intensity)),
+                    );
+                    paint_glow_orb(
+                        window,
+                        snap.pointer_halo,
+                        28.0,
+                        92.0,
+                        Hsla::from(rgb(0xfff4c2).opacity(0.24 * intensity)),
+                    );
+                } else if snap.atmosphere == ThemeAtmosphere::Spirited {
+                    paint_glow_orb(
+                        window,
+                        snap.pointer_smooth,
+                        36.0,
+                        116.0,
+                        Hsla::from(rgb(0xd97365).opacity(0.11 * intensity)),
+                    );
+                    paint_glow_orb(
+                        window,
+                        snap.pointer_halo,
+                        28.0,
+                        92.0,
+                        Hsla::from(rgb(0xffebd6).opacity(0.25 * intensity)),
+                    );
+                } else if snap.atmosphere == ThemeAtmosphere::Howl {
+                    paint_glow_orb(
+                        window,
+                        snap.pointer_smooth,
+                        36.0,
+                        116.0,
+                        Hsla::from(rgb(0x8b7acc).opacity(0.11 * intensity)),
+                    );
+                    paint_glow_orb(
+                        window,
+                        snap.pointer_halo,
+                        28.0,
+                        92.0,
+                        Hsla::from(rgb(0xfff5cc).opacity(0.24 * intensity)),
+                    );
+                } else if snap.atmosphere == ThemeAtmosphere::Kiki {
+                    paint_glow_orb(
+                        window,
+                        snap.pointer_smooth,
+                        36.0,
+                        116.0,
+                        Hsla::from(rgb(0xd98752).opacity(0.11 * intensity)),
+                    );
+                    paint_glow_orb(
+                        window,
+                        snap.pointer_halo,
+                        28.0,
+                        92.0,
+                        Hsla::from(rgb(0xfff4d9).opacity(0.25 * intensity)),
+                    );
+                } else if snap.atmosphere == ThemeAtmosphere::Lantern {
+                    paint_glow_orb(
+                        window,
+                        snap.pointer_smooth,
+                        36.0,
+                        120.0,
+                        Hsla::from(rgb(0xe69f52).opacity(0.17 * intensity)),
+                    );
+                    paint_glow_orb(
+                        window,
+                        snap.pointer_halo,
+                        24.0,
+                        88.0,
+                        Hsla::from(rgb(0xfde6a8).opacity(0.13 * intensity)),
                     );
                 } else {
                     // Subtle warm reading lamplight following the cursor in Paper/Night
@@ -1031,23 +1313,27 @@ pub fn prism_companion_canvas(snap: MotionSnapshot) -> impl IntoElement {
                 });
             };
 
-            // --- Mascot 1: Purple Pixel Prism Cat (Clawd-inspired) ---
-            let cat_main = Hsla::from(rgb(if snap.is_prism {
-                0x9b87ff
-            } else if snap.is_sky {
-                0x3b82c4
-            } else {
-                0x8a79d8
-            }));
-            let cat_hi = Hsla::from(rgb(if snap.is_sky { 0xbae6fd } else { 0xc4b5fd }));
-            let cat_dark = Hsla::from(rgb(if snap.is_sky { 0x1e4e79 } else { 0x4c3f91 }));
+            // --- Mascot 1: Theme-Harmonized Pixel Cat Companion ---
+            let (cat_main_hex, cat_hi_hex, cat_dark_hex, default_eye_hex) = match snap.atmosphere {
+                ThemeAtmosphere::Prism => (0x9b87ff, 0xc4b5fd, 0x4c3f91, 0x7dd3fc),
+                ThemeAtmosphere::Sky => (0x3b82c4, 0xbae6fd, 0x1e4e79, 0x7dd3fc),
+                ThemeAtmosphere::Totoro => (0x6e8575, 0xcde3ca, 0x3b4f41, 0xfde68a),
+                ThemeAtmosphere::Spirited => (0xc46b66, 0xfad8cf, 0x6b3234, 0xfff0c2),
+                ThemeAtmosphere::Howl => (0x7a6cb5, 0xdcd5fb, 0x453b73, 0xfef08a),
+                ThemeAtmosphere::Kiki => (0x282532, 0x565169, 0x121018, 0xfbbf24),
+                ThemeAtmosphere::Lantern => (0x50436b, 0x9b89ba, 0x261e36, 0xfde29f),
+                ThemeAtmosphere::Classic => (0x8a79d8, 0xc4b5fd, 0x4c3f91, 0x7dd3fc),
+            };
+            let cat_main = Hsla::from(rgb(cat_main_hex));
+            let cat_hi = Hsla::from(rgb(cat_hi_hex));
+            let cat_dark = Hsla::from(rgb(cat_dark_hex));
             let eye_bg = Hsla::from(rgb(0x0b0e18));
             let eye_glow = if snap.pet_happy {
                 spectral_color(snap.phase * 0.4, 1.0)
             } else if let Some(tint) = mood_tint {
                 Hsla::from(rgb(tint))
             } else {
-                Hsla::from(rgb(0x7dd3fc))
+                Hsla::from(rgb(default_eye_hex))
             };
 
             // Ears (subtle twitch)
@@ -1065,6 +1351,13 @@ pub fn prism_companion_canvas(snap: MotionSnapshot) -> impl IntoElement {
             px_block(2.0, 4.0, 9.0, 5.0, cat_main);
             px_block(3.0, 4.0, 7.0, 1.0, cat_hi); // top specular rim
             px_block(2.0, 8.0, 9.0, 1.0, cat_dark); // belly shadow
+            if snap.atmosphere == ThemeAtmosphere::Kiki {
+                // Tiny crimson ribbon accent honoring Kiki's little black cat companion
+                px_block(4.5, 7.8, 4.0, 0.9, Hsla::from(rgb(0xd9534f)));
+            } else if snap.atmosphere == ThemeAtmosphere::Totoro {
+                // Soft cream woodland belly patch
+                px_block(4.0, 7.2, 5.0, 1.4, Hsla::from(rgb(0xf2f0df)));
+            }
 
             // Cute pixel legs
             px_block(2.5, 9.0, 1.3, 2.0, cat_dark);
@@ -1120,10 +1413,18 @@ pub fn prism_companion_canvas(snap: MotionSnapshot) -> impl IntoElement {
                 spectral_color(snap.phase * 0.16 + 0.65, 0.95)
             } else if let Some(tint) = mood_tint {
                 Hsla::from(rgb(tint).opacity(0.95))
-            } else if snap.is_sky {
-                Hsla::from(rgb(0x38bdf8).opacity(0.96))
             } else {
-                Hsla::from(rgb(0xb8d4f4).opacity(0.92))
+                match snap.atmosphere {
+                    ThemeAtmosphere::Sky => Hsla::from(rgb(0x38bdf8).opacity(0.96)),
+                    ThemeAtmosphere::Totoro => Hsla::from(rgb(0x74c686).opacity(0.96)),
+                    ThemeAtmosphere::Spirited => Hsla::from(rgb(0xf2a68d).opacity(0.96)),
+                    ThemeAtmosphere::Howl => Hsla::from(rgb(0xb8a8f5).opacity(0.96)),
+                    ThemeAtmosphere::Kiki => Hsla::from(rgb(0xf5b762).opacity(0.96)),
+                    ThemeAtmosphere::Lantern => Hsla::from(rgb(0xf5b962).opacity(0.98)),
+                    ThemeAtmosphere::Prism | ThemeAtmosphere::Classic => {
+                        Hsla::from(rgb(0xb8d4f4).opacity(0.92))
+                    }
+                }
             };
             paint_glow_orb(
                 window,
@@ -1380,17 +1681,33 @@ pub fn breathing_orb_canvas(snap: MotionSnapshot, elapsed_secs: f32) -> impl Int
 
             let primary = if snap.is_prism {
                 spectral_color(bp.color_t + snap.phase * 0.02, 0.85)
-            } else if snap.is_sky {
-                Hsla::from(rgb(0x38bdf8).opacity(0.84))
             } else {
-                Hsla::from(rgb(snap.accent).opacity(0.82))
+                match snap.atmosphere {
+                    ThemeAtmosphere::Sky => Hsla::from(rgb(0x38bdf8).opacity(0.84)),
+                    ThemeAtmosphere::Totoro => Hsla::from(rgb(0x4d9464).opacity(0.84)),
+                    ThemeAtmosphere::Spirited => Hsla::from(rgb(0xd46a5e).opacity(0.84)),
+                    ThemeAtmosphere::Howl => Hsla::from(rgb(0x7c6cc4).opacity(0.84)),
+                    ThemeAtmosphere::Kiki => Hsla::from(rgb(0xc9733e).opacity(0.84)),
+                    ThemeAtmosphere::Lantern => Hsla::from(rgb(0xe69f52).opacity(0.86)),
+                    ThemeAtmosphere::Prism | ThemeAtmosphere::Classic => {
+                        Hsla::from(rgb(snap.accent).opacity(0.82))
+                    }
+                }
             };
             let secondary = if snap.is_prism {
                 spectral_color(bp.color_t + 0.25 + snap.phase * 0.02, 0.42)
-            } else if snap.is_sky {
-                Hsla::from(rgb(0xffffff).opacity(0.62))
             } else {
-                Hsla::from(rgb(0xfde68a).opacity(0.40))
+                match snap.atmosphere {
+                    ThemeAtmosphere::Sky => Hsla::from(rgb(0xffffff).opacity(0.62)),
+                    ThemeAtmosphere::Totoro => Hsla::from(rgb(0xfff4c2).opacity(0.62)),
+                    ThemeAtmosphere::Spirited => Hsla::from(rgb(0xffe6d4).opacity(0.64)),
+                    ThemeAtmosphere::Howl => Hsla::from(rgb(0xf6f0ff).opacity(0.64)),
+                    ThemeAtmosphere::Kiki => Hsla::from(rgb(0xfff1cf).opacity(0.64)),
+                    ThemeAtmosphere::Lantern => Hsla::from(rgb(0xffe3a8).opacity(0.52)),
+                    ThemeAtmosphere::Prism | ThemeAtmosphere::Classic => {
+                        Hsla::from(rgb(0xfde68a).opacity(0.40))
+                    }
+                }
             };
 
             // Soft outer optical bloom

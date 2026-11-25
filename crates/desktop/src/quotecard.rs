@@ -7,16 +7,35 @@ const HEIGHT: usize = 1240;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuoteCardStyle {
     Sky,
+    Totoro,
+    Spirited,
+    Howl,
+    Kiki,
+    Lantern,
     Prism,
     Paper,
 }
 
 impl QuoteCardStyle {
-    pub const ALL: [Self; 3] = [Self::Sky, Self::Prism, Self::Paper];
+    pub const ALL: [Self; 8] = [
+        Self::Sky,
+        Self::Totoro,
+        Self::Spirited,
+        Self::Howl,
+        Self::Kiki,
+        Self::Lantern,
+        Self::Prism,
+        Self::Paper,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Sky => "林间暖光 · 蓝天白云",
+            Self::Sky => "天空之城 · 蓝天白云",
+            Self::Totoro => "龙猫林荫 · 森林晴雨",
+            Self::Spirited => "千寻海轨 · 浅海黄昏",
+            Self::Howl => "哈尔花原 · 秘密花海",
+            Self::Kiki => "魔女海镇 · 海风烘焙",
+            Self::Lantern => "汤屋灯夜 · 暖灯夜读",
             Self::Prism => "黑曜棱镜",
             Self::Paper => "素纸信笺",
         }
@@ -24,6 +43,11 @@ impl QuoteCardStyle {
 
     pub fn from_theme_id(id: &str) -> Self {
         match id {
+            "totoro" => Self::Totoro,
+            "spirited" => Self::Spirited,
+            "howl" => Self::Howl,
+            "kiki" => Self::Kiki,
+            "lantern" => Self::Lantern,
             "prism" | "night" => Self::Prism,
             "paper" => Self::Paper,
             _ => Self::Sky,
@@ -294,6 +318,130 @@ pub fn render_png(draft: &QuoteCardDraft) -> Result<Vec<u8>> {
                 [225, 240, 252],
             )
         }
+        QuoteCardStyle::Totoro => {
+            canvas.fill_vertical_gradient(&[
+                (0.0, [134, 189, 146]),
+                (0.42, [196, 224, 194]),
+                (0.78, [232, 244, 226]),
+                (1.0, [246, 251, 241]),
+            ]);
+            for &(cx, cy, rad, col, a) in &[
+                (180.0, 175.0, 230.0, [255, 246, 206], 0.56),
+                (790.0, 210.0, 240.0, [164, 216, 168], 0.44),
+                (300.0, 1110.0, 260.0, [242, 250, 235], 0.68),
+                (760.0, 1080.0, 250.0, [255, 247, 214], 0.54),
+                (670.0, 165.0, 110.0, [255, 244, 196], 0.44),
+            ] {
+                canvas.fill_radial_glow(cx, cy, rad, col, a);
+            }
+            (
+                [31, 54, 38],
+                [78, 107, 86],
+                [61, 122, 82],
+                [249, 252, 246],
+                0.94,
+                [172, 208, 178],
+                [231, 242, 228],
+            )
+        }
+        QuoteCardStyle::Spirited => {
+            canvas.fill_vertical_gradient(&[
+                (0.0, [152, 168, 214]),
+                (0.36, [235, 184, 176]),
+                (0.72, [248, 220, 205]),
+                (1.0, [214, 226, 245]),
+            ]);
+            for &(cx, cy, rad, col, a) in &[
+                (210.0, 210.0, 240.0, [255, 236, 214], 0.52),
+                (780.0, 230.0, 230.0, [248, 198, 188], 0.48),
+                (480.0, 1110.0, 320.0, [255, 244, 234], 0.64),
+                (760.0, 1070.0, 220.0, [255, 224, 176], 0.42),
+            ] {
+                canvas.fill_radial_glow(cx, cy, rad, col, a);
+            }
+            (
+                [59, 36, 39],
+                [116, 84, 88],
+                [184, 75, 66],
+                [255, 249, 245],
+                0.94,
+                [226, 182, 174],
+                [247, 232, 226],
+            )
+        }
+        QuoteCardStyle::Howl => {
+            canvas.fill_vertical_gradient(&[
+                (0.0, [145, 166, 232]),
+                (0.40, [202, 198, 242]),
+                (0.76, [238, 235, 250]),
+                (1.0, [248, 247, 238]),
+            ]);
+            for &(cx, cy, rad, col, a) in &[
+                (190.0, 185.0, 220.0, [255, 255, 255], 0.54),
+                (780.0, 210.0, 240.0, [255, 248, 212], 0.46),
+                (240.0, 1100.0, 250.0, [250, 218, 228], 0.46),
+                (740.0, 1090.0, 260.0, [255, 246, 204], 0.52),
+            ] {
+                canvas.fill_radial_glow(cx, cy, rad, col, a);
+            }
+            (
+                [43, 39, 64],
+                [95, 90, 122],
+                [99, 84, 158],
+                [252, 251, 247],
+                0.94,
+                [196, 188, 230],
+                [238, 235, 248],
+            )
+        }
+        QuoteCardStyle::Kiki => {
+            canvas.fill_vertical_gradient(&[
+                (0.0, [148, 198, 226]),
+                (0.38, [238, 214, 182]),
+                (0.76, [247, 234, 214]),
+                (1.0, [253, 248, 238]),
+            ]);
+            for &(cx, cy, rad, col, a) in &[
+                (180.0, 180.0, 230.0, [255, 246, 220], 0.58),
+                (790.0, 220.0, 235.0, [242, 196, 158], 0.42),
+                (480.0, 1110.0, 300.0, [255, 250, 238], 0.68),
+            ] {
+                canvas.fill_radial_glow(cx, cy, rad, col, a);
+            }
+            (
+                [59, 42, 30],
+                [117, 93, 74],
+                [174, 87, 42],
+                [255, 253, 247],
+                0.95,
+                [222, 192, 164],
+                [247, 238, 224],
+            )
+        }
+        QuoteCardStyle::Lantern => {
+            canvas.fill_vertical_gradient(&[
+                (0.0, [17, 15, 27]),
+                (0.50, [29, 23, 40]),
+                (1.0, [19, 15, 28]),
+            ]);
+            for &(cx, cy, rad, col, a) in &[
+                (210.0, 200.0, 290.0, [112, 76, 146], 0.24),
+                (770.0, 260.0, 310.0, [230, 159, 82], 0.28),
+                (680.0, 1050.0, 300.0, [196, 86, 68], 0.20),
+                (220.0, 1080.0, 240.0, [245, 194, 108], 0.16),
+            ] {
+                canvas.fill_radial_glow(cx, cy, rad, col, a);
+            }
+            (
+                [245, 233, 214],
+                [188, 168, 149],
+                [230, 159, 82],
+                [32, 27, 38],
+                0.95,
+                [230, 159, 82],
+                [46, 37, 52],
+            )
+        }
         QuoteCardStyle::Prism => {
             canvas.fill_vertical_gradient(&[
                 (0.0, [8, 10, 18]),
@@ -368,7 +516,7 @@ pub fn render_png(draft: &QuoteCardDraft) -> Result<Vec<u8>> {
     for layer in 0..6 {
         let spread = (layer + 1) * 5;
         let shadow_alpha = match draft.style {
-            QuoteCardStyle::Prism => 0.10 - layer as f32 * 0.014,
+            QuoteCardStyle::Prism | QuoteCardStyle::Lantern => 0.10 - layer as f32 * 0.014,
             _ => 0.045 - layer as f32 * 0.006,
         };
         canvas.fill_rounded_rect(
@@ -408,6 +556,31 @@ pub fn render_png(draft: &QuoteCardDraft) -> Result<Vec<u8>> {
             (0.5, [37, 115, 184]),
             (1.0, [186, 230, 253]),
         ],
+        QuoteCardStyle::Totoro => &[
+            (0.0, [186, 228, 184]),
+            (0.5, [61, 122, 82]),
+            (1.0, [242, 224, 166]),
+        ],
+        QuoteCardStyle::Spirited => &[
+            (0.0, [245, 194, 168]),
+            (0.5, [184, 75, 66]),
+            (1.0, [166, 188, 230]),
+        ],
+        QuoteCardStyle::Howl => &[
+            (0.0, [199, 190, 242]),
+            (0.5, [99, 84, 158]),
+            (1.0, [248, 224, 170]),
+        ],
+        QuoteCardStyle::Kiki => &[
+            (0.0, [242, 200, 155]),
+            (0.5, [174, 87, 42]),
+            (1.0, [158, 206, 232]),
+        ],
+        QuoteCardStyle::Lantern => &[
+            (0.0, [196, 86, 68]),
+            (0.5, [230, 159, 82]),
+            (1.0, [253, 228, 168]),
+        ],
         QuoteCardStyle::Paper => &[
             (0.0, [214, 188, 154]),
             (0.5, [138, 94, 59]),
@@ -425,6 +598,11 @@ pub fn render_png(draft: &QuoteCardDraft) -> Result<Vec<u8>> {
 
     let header_tag = match draft.style {
         QuoteCardStyle::Sky => "GLOW · 天空云境书摘",
+        QuoteCardStyle::Totoro => "GLOW · 龙猫林荫书摘",
+        QuoteCardStyle::Spirited => "GLOW · 海上电车书摘",
+        QuoteCardStyle::Howl => "GLOW · 秘密花原书摘",
+        QuoteCardStyle::Kiki => "GLOW · 魔女海镇书摘",
+        QuoteCardStyle::Lantern => "GLOW · 汤屋灯夜书摘",
         QuoteCardStyle::Prism => "GLOW · 黑曜棱镜书摘",
         QuoteCardStyle::Paper => "GLOW · 素纸信笺书摘",
     };
@@ -1124,7 +1302,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn renders_valid_png_for_all_three_styles() {
+    fn renders_valid_png_for_all_styles_and_maps_miyazaki_themes() {
+        assert_eq!(QuoteCardStyle::ALL.len(), 8);
+        assert_eq!(QuoteCardStyle::from_theme_id("forest"), QuoteCardStyle::Sky);
+        assert_eq!(QuoteCardStyle::from_theme_id("totoro"), QuoteCardStyle::Totoro);
+        assert_eq!(
+            QuoteCardStyle::from_theme_id("spirited"),
+            QuoteCardStyle::Spirited
+        );
+        assert_eq!(QuoteCardStyle::from_theme_id("howl"), QuoteCardStyle::Howl);
+        assert_eq!(QuoteCardStyle::from_theme_id("kiki"), QuoteCardStyle::Kiki);
+        assert_eq!(
+            QuoteCardStyle::from_theme_id("lantern"),
+            QuoteCardStyle::Lantern
+        );
         for style in QuoteCardStyle::ALL {
             let draft = QuoteCardDraft {
                 text: "傍晚的风从树梢滑下来，把白天的喧嚣留在林子外面。".into(),

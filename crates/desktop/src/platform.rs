@@ -174,6 +174,21 @@ impl AssetSource for Assets {
             "scene.png" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../../../assets/scene.png"
             )))),
+            "scene-totoro.png" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../../../assets/scene-totoro.png"
+            )))),
+            "scene-spirited.png" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../../../assets/scene-spirited.png"
+            )))),
+            "scene-howl.png" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../../../assets/scene-howl.png"
+            )))),
+            "scene-kiki.png" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../../../assets/scene-kiki.png"
+            )))),
+            "scene-lantern.png" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../../../assets/scene-lantern.png"
+            )))),
             "scene-night.png" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../../../assets/scene-night.png"
             )))),

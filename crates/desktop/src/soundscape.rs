@@ -56,9 +56,9 @@ impl SoundscapePreset {
 
     pub fn for_theme(theme_id: &str) -> Self {
         match theme_id {
-            "paper" => Self::Fireplace,
-            "night" => Self::Breeze,
-            "prism" => Self::Cosmos,
+            "paper" | "kiki" | "lantern" => Self::Fireplace,
+            "night" | "howl" => Self::Breeze,
+            "prism" | "spirited" => Self::Cosmos,
             _ => Self::Rain,
         }
     }

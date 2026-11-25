@@ -1,6 +1,6 @@
 use crate::{
     mood, platform,
-    prism::{self, MotionEngine, MotionSnapshot},
+    prism::{self, MotionEngine, MotionSnapshot, ThemeAtmosphere},
     quotecard::{self, QuoteCardDraft, QuoteCardStyle},
     soundscape::{ChimeSource, SoundscapeHandle, SoundscapePreset, SoundscapeSource},
 };
@@ -374,7 +374,7 @@ impl ReadingApp {
         }
         if !matches!(
             self.theme().id.as_str(),
-            "forest" | "paper" | "night" | "prism"
+            "forest" | "paper" | "night" | "prism" | "totoro" | "spirited" | "howl" | "kiki" | "lantern"
         ) {
             return self
                 .theme()
@@ -1969,8 +1969,107 @@ impl ReadingApp {
     fn is_prism(&self) -> bool {
         self.theme().id == "prism"
     }
+    #[cfg(test)]
     fn is_sky(&self) -> bool {
         self.theme().id == "forest"
+    }
+    fn is_ghibli(&self) -> bool {
+        Self::is_ghibli_id(&self.theme().id)
+    }
+    fn is_ghibli_id(id: &str) -> bool {
+        matches!(
+            id,
+            "forest" | "totoro" | "spirited" | "howl" | "kiki" | "lantern"
+        )
+    }
+    fn scene_asset_for(id: &str) -> Option<&'static str> {
+        match id {
+            "forest" => Some("scene.png"),
+            "totoro" => Some("scene-totoro.png"),
+            "spirited" => Some("scene-spirited.png"),
+            "howl" => Some("scene-howl.png"),
+            "kiki" => Some("scene-kiki.png"),
+            "lantern" => Some("scene-lantern.png"),
+            "night" => Some("scene-night.png"),
+            "prism" => Some("scene-prism.png"),
+            _ => None,
+        }
+    }
+    fn theme_card_meta(id: &str) -> (&'static str, Option<&'static str>, &'static str) {
+        match id {
+            "forest" => (
+                "LAPUTA SKY · 天空之城 · 88.6 FM",
+                Some("✦ 天空之城"),
+                "蓝天流云与浮岛树屋，清澈舒展",
+            ),
+            "totoro" => (
+                "TOTORO WOODLAND · 龙猫森林 · 90.2 FM",
+                Some("✦ 龙猫"),
+                "古樟树荫与林间晴雨，温柔护眼",
+            ),
+            "spirited" => (
+                "SPIRITED SEA TRAIN · 海上电车 · 94.8 FM",
+                Some("✦ 千与千寻"),
+                "浅海黄昏与温柔车厢，卸下疲惫",
+            ),
+            "howl" => (
+                "HOWL'S MEADOW · 秘密花原 · 96.5 FM",
+                Some("✦ 哈尔的移动城堡"),
+                "微风花海与雪山湖畔，轻盈开阔",
+            ),
+            "kiki" => (
+                "KIKI'S COAST · 海风烘焙镇 · 98.4 FM",
+                Some("✦ 魔女宅急便"),
+                "红瓦海港与暖阳窗台，惬意日常",
+            ),
+            "lantern" => (
+                "SPIRITED LANTERN · 汤屋灯夜 · 103.6 FM",
+                Some("✦ 千与千寻 · 夜灯"),
+                "红桥暖灯与静谧暮川，治愈夜读",
+            ),
+            "paper" => ("QUIET PAPER · 92.4 FM", None, "温润古典素纸，专注文字本身"),
+            "night" => ("NIGHT GARDEN · 101.7 FM", None, "低亮度青墨夜色，静心深读"),
+            "prism" => (
+                "OBSIDIAN PRISM · 108.0 FM",
+                Some("✦ 鼠标流光"),
+                "黑曜光谱与流光粒子交互",
+            ),
+            _ => ("PERSONAL THEME · 96.0 FM", None, "你亲手调制的私人阅读空间"),
+        }
+    }
+    fn theme_cover_palette(&self) -> [u32; 4] {
+        match self.theme().id.as_str() {
+            "forest" => [0x2b6294, 0x3b729c, 0x385e82, 0x4b6b8e],
+            "totoro" => [0x365c43, 0x4b6f50, 0x5c6d4c, 0x3d5c52],
+            "spirited" => [0x8c4442, 0x6b4c5e, 0x456278, 0x995d4c],
+            "howl" => [0x554c82, 0x6e5a88, 0x48667d, 0x7b6078],
+            "kiki" => [0x9c5739, 0x7c5a44, 0x3f6478, 0xa16f43],
+            "lantern" => [0x6e322e, 0x4d354a, 0x7a5032, 0x384359],
+            _ => [0x385043, 0x69503d, 0x364d56, 0x524656],
+        }
+    }
+    fn theme_hud_palette(&self) -> (u32, Rgba, Option<u32>) {
+        match self.theme().id.as_str() {
+            "forest" => (0x133352, rgb(0xbae6fd), Some(0x93c5fd)),
+            "totoro" => (0x183022, rgb(0xd9f2d0), Some(0xa7ddb0)),
+            "spirited" => (0x361d24, rgb(0xffdfc9), Some(0xf5bfa8)),
+            "howl" => (0x241f3d, rgb(0xe4dcff), Some(0xc7bef2)),
+            "kiki" => (0x382418, rgb(0xffe6bd), Some(0xf2c89b)),
+            "lantern" => (0x1a1322, rgb(0xfde2a6), Some(0xe69f52)),
+            _ => (0x0b1512, rgb(0xf5dc9c), Some(0xf5dc9c)),
+        }
+    }
+    fn theme_shelf_cue(&self) -> &'static str {
+        match self.theme().id.as_str() {
+            "forest" => "云端晴空 · 今天的一小段",
+            "totoro" => "樟树林荫 · 今天的一小段",
+            "spirited" => "浅海黄昏 · 今天的一小段",
+            "howl" => "秘密花原 · 今天的一小段",
+            "kiki" => "海风晴午 · 今天的一小段",
+            "lantern" => "暖灯夜读 · 今天的一小段",
+            "prism" => "棱镜星穹 · 今天的一小段",
+            _ => "今天的一小段",
+        }
     }
     fn schedule_motion_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.frame_scheduled || self.theme().reduced_motion || cfg!(test) || self.smoke {
@@ -1983,11 +2082,7 @@ impl ReadingApp {
         });
     }
     fn scene_asset(&self) -> &'static str {
-        match self.theme().id.as_str() {
-            "prism" => "scene-prism.png",
-            "night" => "scene-night.png",
-            _ => "scene.png",
-        }
+        Self::scene_asset_for(&self.theme().id).unwrap_or("scene.png")
     }
     fn motion_snapshot(&self) -> MotionSnapshot {
         let t = self.theme();
@@ -2001,8 +2096,7 @@ impl ReadingApp {
                 .and_then(|entry| entry.mood.clone())
         };
         self.motion.snapshot(
-            self.is_prism(),
-            self.is_sky(),
+            ThemeAtmosphere::from_theme_id(&t.id),
             hex(&t.accent),
             self.is_dark(),
             t.reduced_motion,
@@ -2130,8 +2224,13 @@ impl ReadingApp {
     fn frequency_for_theme(id: &str) -> &'static str {
         match id {
             "forest" => "FM 88.6",
+            "totoro" => "FM 90.2",
             "paper" => "FM 92.4",
+            "spirited" => "FM 94.8",
+            "howl" => "FM 96.5",
+            "kiki" => "FM 98.4",
             "night" => "FM 101.7",
+            "lantern" => "FM 103.6",
             "prism" => "FM 108.0",
             _ => "FM 96.0",
         }
@@ -2427,7 +2526,8 @@ impl ReadingApp {
     fn shelf(&self, cx: &Context<Self>) -> AnyElement {
         let t = self.theme();
         let is_dark = self.is_dark();
-        let is_sky = self.is_sky();
+        let (hud_hex, hud_gold, hud_wave_tint) = self.theme_hud_palette();
+        let cover_colors = self.theme_cover_palette();
         let total_highlights: usize = self
             .store
             .state
@@ -2463,11 +2563,7 @@ impl ReadingApp {
             .collect();
         let mut books = h_flex().flex_wrap().gap_5().items_start();
         for (i, b) in filtered_books.iter().copied() {
-            let colors = if is_sky {
-                [0x2b6294, 0x3b729c, 0x385e82, 0x4b6b8e]
-            } else {
-                [0x385043, 0x69503d, 0x364d56, 0x524656]
-            };
+            let colors = cover_colors;
             let reading_label = if let Some(progress) = b.progress {
                 format!("已读 {:.0}%", progress * 100.0)
             } else if b.location.is_some() {
@@ -2613,7 +2709,7 @@ impl ReadingApp {
                                 .px_2()
                                 .py_0p5()
                                 .rounded_full()
-                                .bg(rgb(if is_sky { 0x133352 } else { 0x0c1613 }).opacity(0.78))
+                                .bg(rgb(hud_hex).opacity(0.78))
                                 .border_1()
                                 .border_color(rgb(0xffffff).opacity(0.18))
                                 .text_size(px(10.))
@@ -2630,7 +2726,7 @@ impl ReadingApp {
                                 .px_1p5()
                                 .py_0p5()
                                 .rounded(px(5.))
-                                .bg(rgb(if is_sky { 0x133352 } else { 0x0c1613 }).opacity(0.72))
+                                .bg(rgb(hud_hex).opacity(0.72))
                                 .text_size(px(9.))
                                 .font_family(self.ui_font())
                                 .text_color(rgb(0xe8efe9))
@@ -2862,6 +2958,7 @@ impl ReadingApp {
             ));
         if is_late_night && !is_dark {
             hero_actions = hero_actions
+                .child(self.button_with_icon("汤屋灯夜", IconName::Flame, Action::PickTheme(8), cx))
                 .child(self.button_with_icon("切到静夜", IconName::Moon, Action::PickTheme(2), cx))
                 .child(self.button_with_icon(
                     "黑曜棱镜",
@@ -2870,17 +2967,7 @@ impl ReadingApp {
                     cx,
                 ));
         }
-        let hud_bg = if is_sky {
-            rgb(0x133352).opacity(0.72)
-        } else {
-            rgb(0x0b1512).opacity(0.70)
-        };
-        let hud_gold = if is_sky { rgb(0xbae6fd) } else { rgb(0xf5dc9c) };
-        let hud_wave_tint = if is_sky {
-            Some(0x93c5fd)
-        } else {
-            Some(0xf5dc9c)
-        };
+        let hud_bg = rgb(hud_hex).opacity(0.72);
         let rediscovery_card =
             if let Some((quote_text, source_label, target, pool_len)) = rediscovery {
                 let short_quote: String = if quote_text.chars().count() > 42 {
@@ -2981,11 +3068,7 @@ impl ReadingApp {
                             .text_size(px(11.))
                             .font_family(self.ui_font())
                             .text_color(hud_gold)
-                            .child(if is_sky {
-                                "云端晴空 · 今天的一小段"
-                            } else {
-                                "今天的一小段"
-                            }),
+                            .child(self.theme_shelf_cue()),
                     )
                     .child(
                         div()
@@ -2998,7 +3081,7 @@ impl ReadingApp {
         let hero = h_flex()
             .relative()
             .w_full()
-            .h(px(252.))
+            .h(px(264.))
             .flex_shrink_0()
             .rounded_2xl()
             .overflow_hidden()
@@ -5109,11 +5192,8 @@ impl ReadingApp {
                 )
                 .into_any_element()
         } else {
-            let hud_bg = if self.is_sky() {
-                rgb(0x133352).opacity(0.72)
-            } else {
-                rgb(0x0b1512).opacity(0.72)
-            };
+            let (hud_hex, _, hud_wave_tint) = self.theme_hud_palette();
+            let hud_bg = rgb(hud_hex).opacity(0.72);
             div()
                 .relative()
                 .w_full()
@@ -5175,7 +5255,7 @@ impl ReadingApp {
                                 .child(self.waveform_bars_tinted(
                                     true,
                                     &[6., 13., 18., 9., 15., 11., 7.],
-                                    Some(if self.is_sky() { 0x93c5fd } else { 0xf5dc9c }),
+                                    hud_wave_tint,
                                 ))
                                 .child(
                                     self.button_with_icon(
@@ -5633,9 +5713,274 @@ impl ReadingApp {
         }
         content.into_any_element()
     }
+    fn theme_card(
+        &self,
+        i: usize,
+        t: &ReadingTheme,
+        active_theme: &ReadingTheme,
+        is_dark: bool,
+        cx: &Context<Self>,
+    ) -> Div {
+        let active = active_theme.id == t.id;
+        let (subtitle, poster_badge, mood_note) = Self::theme_card_meta(&t.id);
+        let is_ghibli_card = Self::is_ghibli_id(&t.id);
+        let is_prism_card = t.id == "prism";
+        let swatches = h_flex()
+            .gap_1()
+            .items_center()
+            .px_2()
+            .py_1()
+            .rounded_full()
+            .bg(rgb(0x0b1512).opacity(0.66))
+            .child(
+                div()
+                    .size(px(9.))
+                    .rounded_full()
+                    .bg(rgb(hex(&t.background)))
+                    .border_1()
+                    .border_color(rgb(0xffffff).opacity(0.35)),
+            )
+            .child(
+                div()
+                    .size(px(9.))
+                    .rounded_full()
+                    .bg(rgb(hex(&t.paper)))
+                    .border_1()
+                    .border_color(rgb(0xffffff).opacity(0.35)),
+            )
+            .child(
+                div()
+                    .size(px(9.))
+                    .rounded_full()
+                    .bg(rgb(hex(&t.accent)))
+                    .border_1()
+                    .border_color(rgb(0xffffff).opacity(0.35)),
+            )
+            .child(
+                div()
+                    .size(px(9.))
+                    .rounded_full()
+                    .bg(rgb(hex(&t.text)))
+                    .border_1()
+                    .border_color(rgb(0xffffff).opacity(0.35)),
+            );
+        let snap = self.motion_snapshot();
+        let preview_h = px(152.);
+        let preview_inner = if let Some(scene) = Self::scene_asset_for(&t.id) {
+            img(scene)
+                .w_full()
+                .h(preview_h)
+                .object_fit(ObjectFit::Cover)
+                .into_any_element()
+        } else if let Some(image) = &t.image {
+            img(self.store.root.join("themes").join(&t.id).join(image))
+                .w_full()
+                .h(preview_h)
+                .object_fit(ObjectFit::Cover)
+                .into_any_element()
+        } else {
+            v_flex()
+                .w_full()
+                .h(preview_h)
+                .p_4()
+                .justify_between()
+                .bg(rgb(hex(&t.background)))
+                .child(
+                    h_flex()
+                        .gap_1p5()
+                        .items_center()
+                        .child(
+                            Icon::new(IconName::Sun)
+                                .size(px(15.))
+                                .text_color(rgb(hex(&t.accent))),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(9.))
+                                .font_family(self.ui_font())
+                                .text_color(rgb(hex(&t.muted)))
+                                .child("EDITORIAL PAPER"),
+                        ),
+                )
+                .child(
+                    v_flex()
+                        .gap_1p5()
+                        .child(div().w(px(34.)).h(px(2.)).bg(rgb(hex(&t.accent))))
+                        .child(
+                            div()
+                                .text_size(px(15.5))
+                                .font_family(self.display_font())
+                                .line_height(relative(1.48))
+                                .text_color(rgb(hex(&t.text)))
+                                .child("风吹过微黄纸页，\n把心绪轻轻放下。"),
+                        ),
+                )
+                .into_any_element()
+        };
+        let badge_bg = if is_prism_card {
+            rgb(0x090a0f).opacity(0.82)
+        } else if t.id == "lantern" {
+            rgb(0x1a1322).opacity(0.82)
+        } else {
+            rgb(0x132028).opacity(0.72)
+        };
+        let badge_fg = if is_prism_card {
+            rgb(0xe9d5ff)
+        } else if t.id == "lantern" {
+            rgb(0xfde2a6)
+        } else {
+            rgb(0xfffdf7)
+        };
+        let badge_border = if is_prism_card {
+            rgb(0xc4b5fd).opacity(0.42)
+        } else if is_ghibli_card {
+            rgb(0xffffff).opacity(0.28)
+        } else {
+            rgb(0xffffff).opacity(0.20)
+        };
+        let card = v_flex()
+            .relative()
+            .overflow_hidden()
+            .w(px(292.))
+            .p_3p5()
+            .gap_3()
+            .rounded_2xl()
+            .bg(rgb(hex(&active_theme.paper)).opacity(if is_dark { 0.90 } else { 0.94 }))
+            .border_1()
+            .border_color(if active {
+                Hsla::from(rgb(hex(&active_theme.accent)).opacity(0.75))
+            } else {
+                self.border_subtle()
+            })
+            .shadow_sm()
+            .hover(|style| {
+                style
+                    .border_color(rgb(hex(&active_theme.accent)).opacity(0.62))
+                    .shadow_md()
+            })
+            .when(is_prism_card || active, |this| {
+                this.child(div().absolute().top_0().left_0().right_0().child(
+                    prism::prism_beam_horizontal(
+                        snap.clone(),
+                        2.0,
+                        i as f32 * 0.9,
+                        is_prism_card,
+                    ),
+                ))
+            })
+            .child(
+                div()
+                    .relative()
+                    .rounded_xl()
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(rgb(hex(&t.text)).opacity(0.12))
+                    .child(preview_inner)
+                    .child(div().absolute().right(px(8.)).top(px(8.)).child(swatches))
+                    .when_some(poster_badge, |this, badge| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .left(px(8.))
+                                .bottom(px(8.))
+                                .px_2()
+                                .py_0p5()
+                                .rounded_full()
+                                .bg(badge_bg)
+                                .border_1()
+                                .border_color(badge_border)
+                                .text_size(px(9.))
+                                .font_family(self.ui_font())
+                                .text_color(badge_fg)
+                                .child(badge),
+                        )
+                    })
+                    .when(is_prism_card, |this| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .bottom_0()
+                                .left_0()
+                                .right_0()
+                                .child(prism::prism_beam_horizontal(snap, 2.0, 1.2, true)),
+                        )
+                    }),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                v_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        div()
+                                            .text_size(px(16.5))
+                                            .font_family(self.display_font())
+                                            .text_color(rgb(hex(&active_theme.text)))
+                                            .child(t.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(9.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&active_theme.muted)))
+                                            .child(subtitle),
+                                    ),
+                            )
+                            .when(active, |style| {
+                                style.child(
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_full()
+                                        .bg(rgb(hex(&active_theme.accent)).opacity(0.14))
+                                        .text_size(px(9.5))
+                                        .font_family(self.ui_font())
+                                        .text_color(rgb(hex(&active_theme.accent)))
+                                        .child(
+                                            Icon::new(IconName::Check)
+                                                .size(px(10.))
+                                                .text_color(rgb(hex(&active_theme.accent))),
+                                        )
+                                        .child("使用中"),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&active_theme.muted)))
+                            .child(mood_note),
+                    ),
+            )
+            .child(if active {
+                self.button_with_icon("正在使用", IconName::Check, Action::PickTheme(i), cx)
+                    .primary()
+                    .w_full()
+            } else {
+                self.button_with_icon("使用此主题", IconName::Sparkles, Action::PickTheme(i), cx)
+                    .outline()
+                    .w_full()
+            });
+        if active {
+            card.border_2()
+                .border_color(rgb(hex(&t.accent)))
+                .shadow_md()
+        } else {
+            card
+        }
+    }
     fn theme_page(&self, cx: &Context<Self>) -> AnyElement {
         let active_theme = self.theme();
         let is_dark = self.is_dark();
+        let all = self.all_themes();
         let mut view = v_flex()
             .id("themes-scroll")
             .overflow_y_scroll()
@@ -5651,7 +5996,7 @@ impl ReadingApp {
                     .child(self.heading(
                         "MAKE YOURSELF AT HOME · 空间与声景调音台",
                         "把这里，变成喜欢的样子。",
-                        "从一张纸、一种颜色，到窗外的风景。主题包不包含你的书和日记。",
+                        "从宫崎骏水彩海报般的温柔光影，到素纸静夜与流光棱镜；主题包不包含你的书和日记。",
                     ))
                     .child(
                         h_flex()
@@ -5670,244 +6015,110 @@ impl ReadingApp {
                             )),
                     ),
             );
-        let mut choices = h_flex().gap_4().flex_wrap();
-        for (i, t) in self.all_themes().iter().enumerate() {
-            let active = active_theme.id == t.id;
-            let swatches = h_flex()
-                .gap_1()
-                .items_center()
-                .px_2()
-                .py_1()
-                .rounded_full()
-                .bg(rgb(0x0b1512).opacity(0.66))
-                .child(
-                    div()
-                        .size(px(9.))
-                        .rounded_full()
-                        .bg(rgb(hex(&t.background)))
-                        .border_1()
-                        .border_color(rgb(0xffffff).opacity(0.35)),
-                )
-                .child(
-                    div()
-                        .size(px(9.))
-                        .rounded_full()
-                        .bg(rgb(hex(&t.paper)))
-                        .border_1()
-                        .border_color(rgb(0xffffff).opacity(0.35)),
-                )
-                .child(
-                    div()
-                        .size(px(9.))
-                        .rounded_full()
-                        .bg(rgb(hex(&t.accent)))
-                        .border_1()
-                        .border_color(rgb(0xffffff).opacity(0.35)),
-                )
-                .child(
-                    div()
-                        .size(px(9.))
-                        .rounded_full()
-                        .bg(rgb(hex(&t.text)))
-                        .border_1()
-                        .border_color(rgb(0xffffff).opacity(0.35)),
-                );
-            let snap = self.motion_snapshot();
-            let preview_inner = if matches!(t.id.as_str(), "forest" | "night" | "prism") {
-                img(match t.id.as_str() {
-                    "prism" => "scene-prism.png",
-                    "night" => "scene-night.png",
-                    _ => "scene.png",
-                })
-                .w_full()
-                .h(px(132.))
-                .object_fit(ObjectFit::Cover)
-                .into_any_element()
-            } else if let Some(image) = &t.image {
-                img(self.store.root.join("themes").join(&t.id).join(image))
-                    .w_full()
-                    .h(px(132.))
-                    .object_fit(ObjectFit::Cover)
-                    .into_any_element()
+        let mut ghibli_row = h_flex().gap_4().flex_wrap();
+        let mut classic_row = h_flex().gap_4().flex_wrap();
+        let mut custom_row = h_flex().gap_4().flex_wrap();
+        let mut custom_count = 0usize;
+        for (i, t) in all.iter().enumerate() {
+            let card = self.theme_card(i, t, active_theme, is_dark, cx);
+            if Self::is_ghibli_id(&t.id) {
+                ghibli_row = ghibli_row.child(card);
+            } else if matches!(t.id.as_str(), "paper" | "night" | "prism") {
+                classic_row = classic_row.child(card);
             } else {
+                custom_count += 1;
+                custom_row = custom_row.child(card);
+            }
+        }
+        view = view
+            .child(
                 v_flex()
-                    .w_full()
-                    .h(px(132.))
-                    .p_4()
-                    .justify_between()
-                    .bg(rgb(hex(&t.background)))
+                    .gap_3()
                     .child(
                         h_flex()
-                            .gap_1p5()
-                            .items_center()
+                            .justify_between()
+                            .items_end()
+                            .flex_wrap()
+                            .gap_2()
                             .child(
-                                Icon::new(IconName::Sun)
-                                    .size(px(15.))
-                                    .text_color(rgb(hex(&t.accent))),
+                                v_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        div()
+                                            .text_size(px(10.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&active_theme.accent)))
+                                            .child("GHIBLI WATERCOLOR GALLERY · 宫崎骏手绘海报"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(18.5))
+                                            .font_family(self.display_font())
+                                            .text_color(rgb(hex(&active_theme.text)))
+                                            .child("温柔治愈画廊"),
+                                    ),
                             )
                             .child(
                                 div()
-                                    .text_size(px(9.))
+                                    .text_size(px(11.5))
                                     .font_family(self.ui_font())
-                                    .text_color(rgb(hex(&t.muted)))
-                                    .child("EDITORIAL PAPER"),
+                                    .text_color(rgb(hex(&active_theme.muted)))
+                                    .child("龙猫、千与千寻、天空之城、哈尔花原与魔女海镇 · 均满足高对比度护眼阅读"),
                             ),
                     )
+                    .child(ghibli_row),
+            )
+            .child(
+                v_flex()
+                    .gap_3()
+                    .pt_1()
                     .child(
                         v_flex()
-                            .gap_1p5()
-                            .child(div().w(px(34.)).h(px(2.)).bg(rgb(hex(&t.accent))))
+                            .gap_0p5()
                             .child(
                                 div()
-                                    .text_size(px(15.5))
-                                    .font_family(self.display_font())
-                                    .line_height(relative(1.48))
-                                    .text_color(rgb(hex(&t.text)))
-                                    .child("风吹过微黄纸页，\n把心绪轻轻放下。"),
-                            ),
-                    )
-                    .into_any_element()
-            };
-            let is_prism_card = t.id == "prism";
-            let card = v_flex()
-                .relative()
-                .overflow_hidden()
-                .w(px(228.))
-                .p_3p5()
-                .gap_3()
-                .rounded_2xl()
-                .bg(rgb(hex(&active_theme.paper)).opacity(if is_dark { 0.90 } else { 0.94 }))
-                .border_1()
-                .border_color(if active {
-                    Hsla::from(rgb(hex(&active_theme.accent)).opacity(0.75))
-                } else {
-                    self.border_subtle()
-                })
-                .shadow_sm()
-                .hover(|style| {
-                    style
-                        .border_color(rgb(hex(&active_theme.accent)).opacity(0.62))
-                        .shadow_md()
-                })
-                .when(is_prism_card || active, |this| {
-                    this.child(div().absolute().top_0().left_0().right_0().child(
-                        prism::prism_beam_horizontal(
-                            snap.clone(),
-                            2.0,
-                            i as f32 * 0.9,
-                            is_prism_card,
-                        ),
-                    ))
-                })
-                .child(
-                    div()
-                        .relative()
-                        .rounded_xl()
-                        .overflow_hidden()
-                        .border_1()
-                        .border_color(rgb(hex(&t.text)).opacity(0.12))
-                        .child(preview_inner)
-                        .child(div().absolute().right(px(8.)).top(px(8.)).child(swatches))
-                        .when(is_prism_card, |this| {
-                            this.child(
-                                div()
-                                    .absolute()
-                                    .left(px(8.))
-                                    .bottom(px(8.))
-                                    .px_2()
-                                    .py_0p5()
-                                    .rounded_full()
-                                    .bg(rgb(0x090a0f).opacity(0.82))
-                                    .border_1()
-                                    .border_color(rgb(0xc4b5fd).opacity(0.42))
-                                    .text_size(px(9.))
-                                    .font_family(self.ui_font())
-                                    .text_color(rgb(0xe9d5ff))
-                                    .child("✦ 鼠标流光"),
-                            )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .bottom_0()
-                                    .left_0()
-                                    .right_0()
-                                    .child(prism::prism_beam_horizontal(snap, 2.0, 1.2, true)),
-                            )
-                        }),
-                )
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .items_center()
-                        .child(
-                            v_flex()
-                                .gap_0p5()
-                                .child(
-                                    div()
-                                        .text_size(px(16.5))
-                                        .font_family(self.display_font())
-                                        .text_color(rgb(hex(&active_theme.text)))
-                                        .child(t.name.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(9.))
-                                        .font_family(self.ui_font())
-                                        .text_color(rgb(hex(&active_theme.muted)))
-                                        .child(match t.id.as_str() {
-                                            "forest" => "LAPUTA SKY · 蓝天白云 · 88.6 FM",
-                                            "paper" => "QUIET PAPER · 92.4 FM",
-                                            "night" => "NIGHT GARDEN · 101.7 FM",
-                                            "prism" => "OBSIDIAN PRISM · 108.0 FM",
-                                            _ => "PERSONAL THEME · 96.0 FM",
-                                        }),
-                                ),
-                        )
-                        .when(active, |style| {
-                            style.child(
-                                h_flex()
-                                    .gap_1()
-                                    .items_center()
-                                    .px_2()
-                                    .py_0p5()
-                                    .rounded_full()
-                                    .bg(rgb(hex(&active_theme.accent)).opacity(0.14))
-                                    .text_size(px(9.5))
+                                    .text_size(px(10.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&active_theme.accent)))
-                                    .child(
-                                        Icon::new(IconName::Check)
-                                            .size(px(10.))
-                                            .text_color(rgb(hex(&active_theme.accent))),
-                                    )
-                                    .child("使用中"),
+                                    .child("CLASSIC & AMBIENT · 经典与夜读"),
                             )
-                        }),
-                )
-                .child(if active {
-                    self.button_with_icon("正在使用", IconName::Check, Action::PickTheme(i), cx)
-                        .primary()
-                        .w_full()
-                } else {
-                    self.button_with_icon(
-                        "使用此主题",
-                        IconName::Sparkles,
-                        Action::PickTheme(i),
-                        cx,
+                            .child(
+                                div()
+                                    .text_size(px(17.5))
+                                    .font_family(self.display_font())
+                                    .text_color(rgb(hex(&active_theme.text)))
+                                    .child("经典与光影空间"),
+                            ),
                     )
-                    .outline()
-                    .w_full()
-                });
-            let card = if active {
-                card.border_2()
-                    .border_color(rgb(hex(&t.accent)))
-                    .shadow_md()
-            } else {
-                card
-            };
-            choices = choices.child(card);
+                    .child(classic_row),
+            );
+        if custom_count > 0 {
+            view = view.child(
+                v_flex()
+                    .gap_3()
+                    .pt_1()
+                    .child(
+                        v_flex()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .text_size(px(10.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&active_theme.accent)))
+                                    .child("PERSONAL THEMES · 自定义"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(17.5))
+                                    .font_family(self.display_font())
+                                    .text_color(rgb(hex(&active_theme.text)))
+                                    .child("我的私藏主题"),
+                            ),
+                    )
+                    .child(custom_row),
+            );
         }
-        view = view.child(choices).child(
+        view = view.child(
             h_flex()
                 .justify_between()
                 .items_center()
@@ -6327,6 +6538,53 @@ impl ReadingApp {
                 if let Ok(image) = window.render_to_image() {
                     let _ = image.save(self.store.root.join("prism-mood.png"));
                 }
+                self.motion = MotionEngine::new();
+                self.act(Action::PickTheme(4), window, cx);
+                self.act(Action::Page(Page::Shelf), window, cx);
+                self.smoke_step = 43;
+                self.smoke_started = Instant::now();
+            }
+            43 if self.smoke_started.elapsed() > Duration::from_millis(500) => {
+                #[cfg(feature = "ui-test")]
+                if let Ok(image) = window.render_to_image() {
+                    let _ = image.save(self.store.root.join("totoro-shelf.png"));
+                }
+                self.act(Action::PickTheme(5), window, cx);
+                self.smoke_step = 44;
+                self.smoke_started = Instant::now();
+            }
+            44 if self.smoke_started.elapsed() > Duration::from_millis(500) => {
+                #[cfg(feature = "ui-test")]
+                if let Ok(image) = window.render_to_image() {
+                    let _ = image.save(self.store.root.join("spirited-shelf.png"));
+                }
+                self.act(Action::PickTheme(8), window, cx);
+                self.smoke_step = 45;
+                self.smoke_started = Instant::now();
+            }
+            45 if self.smoke_started.elapsed() > Duration::from_millis(500) => {
+                #[cfg(feature = "ui-test")]
+                if let Ok(image) = window.render_to_image() {
+                    let _ = image.save(self.store.root.join("lantern-shelf.png"));
+                }
+                self.act(Action::PickTheme(6), window, cx);
+                self.smoke_step = 46;
+                self.smoke_started = Instant::now();
+            }
+            46 if self.smoke_started.elapsed() > Duration::from_millis(450) => {
+                #[cfg(feature = "ui-test")]
+                if let Ok(image) = window.render_to_image() {
+                    let _ = image.save(self.store.root.join("howl-shelf.png"));
+                }
+                self.act(Action::PickTheme(7), window, cx);
+                self.smoke_step = 47;
+                self.smoke_started = Instant::now();
+            }
+            47 if self.smoke_started.elapsed() > Duration::from_millis(450) => {
+                #[cfg(feature = "ui-test")]
+                if let Ok(image) = window.render_to_image() {
+                    let _ = image.save(self.store.root.join("kiki-shelf.png"));
+                }
                 self.act(Action::PickTheme(3), window, cx);
                 self.act(Action::Page(Page::Reader), window, cx);
                 self.smoke_step = 5;
@@ -6403,7 +6661,7 @@ impl ReadingApp {
         let dark = self.is_dark();
         let is_prism = self.is_prism();
         let freq = Self::frequency_for_theme(&t.id);
-        let mut quick_swatches = h_flex().gap_1p5().items_center();
+        let mut quick_swatches = h_flex().gap(px(3.5)).items_center().justify_between();
         for (idx, preset) in themes().iter().enumerate() {
             let selected = t.id == preset.id;
             let dot_color = if preset.id == "prism" {
@@ -6415,7 +6673,7 @@ impl ReadingApp {
                 div()
                     .id(SharedString::from(format!("quick-theme-{idx}")))
                     .cursor_pointer()
-                    .p(px(2.))
+                    .p(px(1.5))
                     .rounded_full()
                     .border_1()
                     .border_color(if selected {
@@ -6429,7 +6687,7 @@ impl ReadingApp {
                             this.act(Action::PickTheme(idx), window, cx);
                         }),
                     )
-                    .child(div().size(px(10.)).rounded_full().bg(rgb(dot_color))),
+                    .child(div().size(px(8.5)).rounded_full().bg(rgb(dot_color))),
             );
         }
         let mut sidebar = v_flex()
@@ -6506,6 +6764,8 @@ impl ReadingApp {
                                     .text_color(rgb(hex(&t.muted)))
                                     .child(if is_prism {
                                         "OBSIDIAN PRISM STATION"
+                                    } else if self.is_ghibli() {
+                                        "GHIBLI READING STATION"
                                     } else {
                                         "AMBIENT READING STATION"
                                     }),
@@ -6697,14 +6957,14 @@ impl ReadingApp {
                             .gap_1p5()
                             .items_center()
                             .child(
-                                Icon::new(if is_prism {
-                                    IconName::Sparkles
-                                } else if t.id == "night" {
-                                    IconName::Moon
-                                } else if self.is_sky() {
-                                    IconName::Cloud
-                                } else {
-                                    IconName::Sun
+                                Icon::new(match t.id.as_str() {
+                                    "prism" | "spirited" => IconName::Sparkles,
+                                    "night" => IconName::Moon,
+                                    "forest" => IconName::Cloud,
+                                    "totoro" => IconName::Leaf,
+                                    "howl" => IconName::Wind,
+                                    "lantern" => IconName::Flame,
+                                    _ => IconName::Sun,
                                 })
                                 .size(px(13.))
                                 .text_color(rgb(hex(&t.accent))),
@@ -6894,16 +7154,27 @@ impl ReadingApp {
                     ),
             )
             .child(
-                h_flex()
-                    .justify_between()
-                    .items_center()
-                    .px_1()
+                v_flex()
+                    .gap_1p5()
                     .child(
-                        div()
-                            .text_size(px(8.5))
-                            .font_family(self.ui_font())
-                            .text_color(rgb(hex(&t.muted)))
-                            .child("快速切换主题"),
+                        h_flex()
+                            .px_1()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_size(px(8.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child("快速切换主题"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(8.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)).opacity(0.76))
+                                    .child(format!("{} 套", themes().len())),
+                            ),
                     )
                     .child(quick_swatches),
             )
@@ -6981,10 +7252,31 @@ impl ReadingApp {
                                     .child("选择初始空间："),
                             )
                             .child(self.pill_button(
-                                "林间暖光 · 蓝天白云",
+                                "林间暖光 · 天空之城",
                                 Some(IconName::Cloud),
                                 t.id == "forest",
                                 Action::PickTheme(0),
+                                cx,
+                            ))
+                            .child(self.pill_button(
+                                "龙猫林荫 · 森林",
+                                Some(IconName::Leaf),
+                                t.id == "totoro",
+                                Action::PickTheme(4),
+                                cx,
+                            ))
+                            .child(self.pill_button(
+                                "千寻海轨 · 海上电车",
+                                Some(IconName::Sparkles),
+                                t.id == "spirited",
+                                Action::PickTheme(5),
+                                cx,
+                            ))
+                            .child(self.pill_button(
+                                "汤屋灯夜 · 暖灯",
+                                Some(IconName::Flame),
+                                t.id == "lantern",
+                                Action::PickTheme(8),
                                 cx,
                             ))
                             .child(self.pill_button(
@@ -7081,6 +7373,46 @@ impl ReadingApp {
                 0x4f6e8eu32,
                 0x2573b8u32,
                 "GLOW · 天空云境书摘",
+            ),
+            QuoteCardStyle::Totoro => (
+                0xb7d9b8u32,
+                0xf9fcf6u32,
+                0x1f3626u32,
+                0x4e6b56u32,
+                0x3d7a52u32,
+                "GLOW · 龙猫林荫书摘",
+            ),
+            QuoteCardStyle::Spirited => (
+                0xeec4b8u32,
+                0xfff9f5u32,
+                0x3b2427u32,
+                0x745458u32,
+                0xb84b42u32,
+                "GLOW · 海上电车书摘",
+            ),
+            QuoteCardStyle::Howl => (
+                0xc8c2efu32,
+                0xfcfbf7u32,
+                0x2b2740u32,
+                0x5f5a7au32,
+                0x63549eu32,
+                "GLOW · 秘密花原书摘",
+            ),
+            QuoteCardStyle::Kiki => (
+                0xead4b7u32,
+                0xfffdf7u32,
+                0x3b2a1eu32,
+                0x755d4au32,
+                0xae572au32,
+                "GLOW · 魔女海镇书摘",
+            ),
+            QuoteCardStyle::Lantern => (
+                0x17141fu32,
+                0x201b26u32,
+                0xf5e9d6u32,
+                0xbca895u32,
+                0xe69f52u32,
+                "GLOW · 汤屋灯夜书摘",
             ),
             QuoteCardStyle::Prism => (
                 0x090c16u32,
@@ -7327,9 +7659,39 @@ impl ReadingApp {
         let mut commands: Vec<(&'static str, &'static str, IconName, Action)> = vec![
             (
                 "主题 · 林间暖光（天空之城蓝白）",
-                "蓝天白云默认手绘主题",
+                "宫崎骏天空之城蓝天白云手绘主题",
                 IconName::Cloud,
                 Action::PickTheme(0),
+            ),
+            (
+                "主题 · 龙猫林荫（龙猫森林）",
+                "宫崎骏龙猫古樟树荫与林间晴雨 · 护眼治愈绿",
+                IconName::Leaf,
+                Action::PickTheme(4),
+            ),
+            (
+                "主题 · 千寻海轨（千与千寻海上电车）",
+                "宫崎骏千与千寻浅海黄昏电车 · 温柔暖杏玫红",
+                IconName::Sparkles,
+                Action::PickTheme(5),
+            ),
+            (
+                "主题 · 哈尔花原（哈尔的移动城堡）",
+                "宫崎骏哈尔秘密花海与雪山微风 · 柔和丁香紫",
+                IconName::Wind,
+                Action::PickTheme(6),
+            ),
+            (
+                "主题 · 魔女海镇（魔女宅急便）",
+                "宫崎骏魔女宅急便红瓦海港与暖阳窗台 · 温柔陶土金",
+                IconName::Sun,
+                Action::PickTheme(7),
+            ),
+            (
+                "主题 · 汤屋灯夜（千与千寻夜灯）",
+                "宫崎骏千与千寻红桥暖灯与暮川萤火 · 深色治愈夜读",
+                IconName::Flame,
+                Action::PickTheme(8),
             ),
             (
                 "主题 · 素纸",
@@ -8012,22 +8374,26 @@ impl Render for ReadingApp {
                 );
         }
         // Preload builtin scenic textures so theme switching has zero first-frame blanking
-        root = root
-            .child(
-                img("scene-night.png")
-                    .absolute()
-                    .size(px(1.))
-                    .opacity(0.001),
-            )
-            .child(
-                img("scene-prism.png")
+        for preload in [
+            "scene.png",
+            "scene-totoro.png",
+            "scene-spirited.png",
+            "scene-howl.png",
+            "scene-kiki.png",
+            "scene-lantern.png",
+            "scene-night.png",
+            "scene-prism.png",
+        ] {
+            root = root.child(
+                img(preload)
                     .absolute()
                     .size(px(1.))
                     .opacity(0.001),
             );
-        if matches!(t.id.as_str(), "forest" | "night" | "prism") {
+        }
+        if let Some(scene) = Self::scene_asset_for(&t.id) {
             root = root.child(
-                img(self.scene_asset())
+                img(scene)
                     .absolute()
                     .size_full()
                     .object_fit(ObjectFit::Cover)
@@ -8036,9 +8402,9 @@ impl Render for ReadingApp {
                     } else if is_prism {
                         0.16
                     } else if dark {
-                        0.10
+                        0.11
                     } else {
-                        0.07
+                        0.075
                     }),
             );
         }
@@ -8935,5 +9301,119 @@ mod tests {
                 "正在编辑中的新批注"
             );
         });
+    }
+
+    #[gpui::test]
+    fn miyazaki_themes_switch_render_pair_soundscapes_and_filter_in_palette(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.bind_keys(bindings());
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let mut store = Store::open(data.clone()).unwrap();
+        store.install_sample().unwrap();
+        store.state.privacy_seen = true;
+        let (app, cx) = cx.add_window_view(|window, cx| test_app(store, window, cx));
+
+        let specs: &[(usize, &str, bool, &str, SoundscapePreset, QuoteCardStyle)] = &[
+            (
+                4,
+                "totoro",
+                false,
+                "scene-totoro.png",
+                SoundscapePreset::Rain,
+                QuoteCardStyle::Totoro,
+            ),
+            (
+                5,
+                "spirited",
+                false,
+                "scene-spirited.png",
+                SoundscapePreset::Cosmos,
+                QuoteCardStyle::Spirited,
+            ),
+            (
+                6,
+                "howl",
+                false,
+                "scene-howl.png",
+                SoundscapePreset::Breeze,
+                QuoteCardStyle::Howl,
+            ),
+            (
+                7,
+                "kiki",
+                false,
+                "scene-kiki.png",
+                SoundscapePreset::Fireplace,
+                QuoteCardStyle::Kiki,
+            ),
+            (
+                8,
+                "lantern",
+                true,
+                "scene-lantern.png",
+                SoundscapePreset::Fireplace,
+                QuoteCardStyle::Lantern,
+            ),
+        ];
+
+        for &(idx, id, dark, asset, preset, card_style) in specs {
+            let bytes = platform::Assets
+                .load(asset)
+                .unwrap()
+                .expect("embedded scene PNG exists");
+            assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+            app.update_in(cx, |app, window, cx| {
+                app.act(Action::PickTheme(idx), window, cx);
+                assert_eq!(app.theme().id, id);
+                assert!(app.is_ghibli());
+                assert_eq!(app.is_dark(), dark);
+                assert_eq!(app.scene_asset(), asset);
+                assert_eq!(app.active_soundscape_preset(), preset);
+                assert_eq!(QuoteCardStyle::from_theme_id(id), card_style);
+                app.act(Action::Page(Page::Shelf), window, cx);
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.simulate_mouse_move(point(px(460.), px(240.)), None, Modifiers::default());
+            cx.simulate_click(point(px(460.), px(240.)), Modifiers::default());
+            app.update_in(cx, |app, window, cx| {
+                app.act(Action::Page(Page::Mood), window, cx);
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            app.update_in(cx, |app, window, cx| {
+                app.act(Action::Page(Page::Themes), window, cx);
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        }
+
+        // Command palette search resolves every new Miyazaki theme accurately
+        for &(query, expected_id) in &[
+            ("龙猫", "totoro"),
+            ("海上电车", "spirited"),
+            ("哈尔", "howl"),
+            ("魔女", "kiki"),
+            ("汤屋", "lantern"),
+        ] {
+            app.update_in(cx, |app, window, cx| {
+                app.act(Action::TogglePalette, window, cx);
+                app.palette_input
+                    .update(cx, |s, cx| s.set_value(query, window, cx));
+                cx.notify();
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.simulate_keystrokes("enter");
+            app.read_with(cx, |app, _| {
+                assert!(!app.palette_open);
+                assert_eq!(app.theme().id, expected_id);
+            });
+        }
+
+        // Persisted state reloads the selected Miyazaki theme cleanly
+        let reopened = Store::open(data).unwrap();
+        assert_eq!(reopened.state.theme.id, "lantern");
     }
 }

@@ -140,6 +140,56 @@ pub fn themes() -> Vec<Theme> {
             accent: "#9B87FF".into(),
             ..Theme::default()
         },
+        Theme {
+            id: "totoro".into(),
+            name: "龙猫林荫".into(),
+            background: "#E1ECDF".into(),
+            paper: "#F9FCF6".into(),
+            text: "#1F3626".into(),
+            muted: "#4E6B56".into(),
+            accent: "#3D7A52".into(),
+            ..Theme::default()
+        },
+        Theme {
+            id: "spirited".into(),
+            name: "千寻海轨".into(),
+            background: "#F3E4DE".into(),
+            paper: "#FFF9F5".into(),
+            text: "#3B2427".into(),
+            muted: "#745458".into(),
+            accent: "#B84B42".into(),
+            ..Theme::default()
+        },
+        Theme {
+            id: "howl".into(),
+            name: "哈尔花原".into(),
+            background: "#EAE6F5".into(),
+            paper: "#FCFBF7".into(),
+            text: "#2B2740".into(),
+            muted: "#5F5A7A".into(),
+            accent: "#63549E".into(),
+            ..Theme::default()
+        },
+        Theme {
+            id: "kiki".into(),
+            name: "魔女海镇".into(),
+            background: "#F4E9D8".into(),
+            paper: "#FFFDF7".into(),
+            text: "#3B2A1E".into(),
+            muted: "#755D4A".into(),
+            accent: "#AE572A".into(),
+            ..Theme::default()
+        },
+        Theme {
+            id: "lantern".into(),
+            name: "汤屋灯夜".into(),
+            background: "#15121D".into(),
+            paper: "#201B26".into(),
+            text: "#F5E9D6".into(),
+            muted: "#BCA895".into(),
+            accent: "#E69F52".into(),
+            ..Theme::default()
+        },
     ]
 }
 
