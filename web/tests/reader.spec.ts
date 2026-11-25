@@ -305,3 +305,54 @@ test('reading progress advances as the reader moves to a later chapter',async({p
  await command(page,{version:1,session:'test',request_id:2,kind:'locate',href:entries.at(-1).href});
  await expect.poll(()=>page.evaluate(()=>(window as any).__events.filter((event:any)=>event.kind==='location').at(-1)?.progress)).toBeGreaterThan(before);
 });
+
+test('floating pill supports direct multi-color highlight, note, copy and warm filter',async({page})=>{
+ await open(page,'scrolled','/book.epub',{...theme,id:'forest',reduced_motion:false,warm_filter:true});
+ await expect(page.locator('html')).toHaveAttribute('data-warm-filter','yes');
+ const frame=page.frames().find(f=>f.parentFrame()!==null)!;
+ const selectFirst=()=>frame.evaluate(()=>{
+  const p=document.querySelector('p')!;
+  const range=document.createRange();range.selectNodeContents(p);
+  const selection=getSelection()!;selection.removeAllRanges();selection.addRange(range);
+  p.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
+ });
+
+ await selectFirst();
+ await expect(page.locator('#selection-pill')).toBeVisible();
+ await page.locator('.hl-dot[data-color="rose"]').click();
+ await expect(page.locator('#selection-pill')).toBeHidden();
+ await expect(page.locator('[ref="glow-highlight"]')).toHaveCount(1);
+ const hlEvent=await page.evaluate(()=>(window as any).__events.find((e:any)=>e.kind==='highlight'));
+ expect(hlEvent.color).toBe('rose');
+ expect(hlEvent.open_note).toBe(false);
+ expect(await page.evaluate(()=>(window as any).__events.filter((e:any)=>e.kind==='echo'))).toEqual([]);
+
+ await selectFirst();
+ await page.locator('#note-btn').click();
+ const noteEvent=await page.evaluate(()=>(window as any).__events.filter((e:any)=>e.kind==='highlight').at(-1));
+ expect(noteEvent.open_note).toBe(true);
+ // Clicking 批注 on an existing rose highlight must preserve rose instead of clobbering to amber
+ expect(noteEvent.color).toBe('rose');
+
+ await selectFirst();
+ await page.locator('#copy-btn').click();
+ const copyEvent=await page.evaluate(()=>(window as any).__events.find((e:any)=>e.kind==='copy'));
+ expect(copyEvent.text).toContain('疲惫');
+
+ // Ctrl+K inside book iframe forwards palette command to native host
+ await frame.locator('p').first().click();
+ await page.keyboard.press('Control+k');
+ await expect.poll(()=>page.evaluate(()=>(window as any).__events.some((e:any)=>e.kind==='palette'))).toBe(true);
+
+ // Zen edge hysteresis: top trigger stays active across mouseleave onto toolbar, clears in center band
+ await page.mouse.move(300, 18);
+ await expect.poll(()=>page.evaluate(()=>(window as any).__events.filter((e:any)=>e.kind==='edge').at(-1)?.text)).toBe('top');
+ await page.evaluate(()=>document.dispatchEvent(new MouseEvent('mouseleave')));
+ expect(await page.evaluate(()=>(window as any).__events.filter((e:any)=>e.kind==='edge').at(-1)?.text)).toBe('top');
+ await page.mouse.move(300, 260);
+ await expect.poll(()=>page.evaluate(()=>(window as any).__events.filter((e:any)=>e.kind==='edge').at(-1)?.text)).toBe('none');
+
+ await command(page,{version:1,session:'test',request_id:2,kind:'configure',theme:{...theme,reduced_motion:true,warm_filter:false},mode:'scrolled'});
+ await expect(page.locator('html')).toHaveAttribute('data-reduced-motion','yes');
+ await expect(page.locator('html')).toHaveAttribute('data-warm-filter','no');
+});

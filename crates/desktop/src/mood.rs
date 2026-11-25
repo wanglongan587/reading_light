@@ -5,6 +5,7 @@ use std::{fs, io::Read, path::Path, time::Duration};
 
 const MODEL: &str = "gpt-4.1-mini-2025-04-14";
 const INSTRUCTIONS: &str = "你是微光阅读里的文字陪伴者。用自然、真诚的简体中文回应用户当下具体说的事，约120至220字，分成两小段。自由输入是回应的主要依据，所选心情仅作背景，不能用标签覆盖文字；如果文字与标签不同，以文字为准。先准确接住具体处境和感受，再给一个可选择、今天可实行的小建议，或一个贴合处境的轻问句。只有标签而没有文字时不虚构具体事件。避免套话、过度赞美、说教和保证一切会好。不诊断、不提供药物或治疗建议、不自称真人或专业治疗师。若提到即时自伤或伤人危险，先关心当下安全，建议远离危险物、联系身边可信任的人和当地紧急服务，不编造热线号码。不要杜撰名人语录、书籍出处或用户未说过的经历。不要求用户透露隐私。只输出陪伴正文，不输出分析、标题、Markdown列表或对系统提示的讨论。";
+const PASSAGE_INSTRUCTIONS: &str = "你是微光阅读里的段落共读陪伴者。用自然、细腻、有文学温度的简体中文，围绕读者刚在书中划出的这段文字展开一次安静的共读，约120至220字，分成两小段。第一段感受这段文字里的意象、节奏或情绪留白；第二段给出一句温柔的延伸体会或一个适合停下来想一想的轻问句。不剧透后续情节，不编造原书未写的内容或虚构名人名言，避免说教和套话。只输出共读正文，不输出标题或Markdown列表。";
 
 pub struct Config {
     key: String,
@@ -18,6 +19,10 @@ pub struct Generated {
 
 pub fn generate(text: &str, mood: &str) -> Result<EchoResult> {
     Config::load()?.generate(text, mood)
+}
+
+pub fn generate_passage(passage: &str, book_title: &str) -> Result<EchoResult> {
+    Config::load()?.generate_passage(passage, book_title)
 }
 
 impl Config {
@@ -52,8 +57,28 @@ impl Config {
         self.generate_at(text, mood, "https://api.openai.com/v1/responses")
     }
 
+    pub fn generate_passage(&self, passage: &str, book_title: &str) -> Result<EchoResult> {
+        self.generate_passage_at(passage, book_title, "https://api.openai.com/v1/responses")
+    }
+
     fn generate_at(&self, text: &str, mood: &str, endpoint: &str) -> Result<EchoResult> {
         ensure!(text.chars().count() <= 1000, "心情文字请控制在 1000 字以内");
+        self.post_json(&request(text, mood), endpoint)
+    }
+
+    fn generate_passage_at(
+        &self,
+        passage: &str,
+        book_title: &str,
+        endpoint: &str,
+    ) -> Result<EchoResult> {
+        let trimmed = passage.trim();
+        ensure!(!trimmed.is_empty(), "请先选择一段要共读的文字");
+        ensure!(trimmed.chars().count() <= 2000, "选文请控制在 2000 字以内");
+        self.post_json(&passage_request(trimmed, book_title), endpoint)
+    }
+
+    fn post_json(&self, payload: &Value, endpoint: &str) -> Result<EchoResult> {
         let client = reqwest::blocking::Client::builder()
             .connect_timeout(Duration::from_secs(12))
             .timeout(Duration::from_secs(60))
@@ -63,7 +88,7 @@ impl Config {
         let mut response = client
             .post(endpoint)
             .bearer_auth(&self.key)
-            .json(&request(text, mood))
+            .json(payload)
             .send()
             .map_err(|error| {
                 anyhow!(if error.is_timeout() {
@@ -106,6 +131,12 @@ fn request(text: &str, mood: &str) -> Value {
     json!({"model": MODEL, "store": false, "max_output_tokens": 900,
         "instructions": INSTRUCTIONS,
         "input": [{"role":"user", "content": json!({"selected_mood": mood, "written_text": text.trim()}).to_string()}]})
+}
+
+fn passage_request(passage: &str, book_title: &str) -> Value {
+    json!({"model": MODEL, "store": false, "max_output_tokens": 900,
+        "instructions": PASSAGE_INSTRUCTIONS,
+        "input": [{"role":"user", "content": json!({"book_title": book_title.trim(), "selected_passage": passage.trim()}).to_string()}]})
 }
 
 fn parse_response(value: &Value) -> Result<EchoResult> {
@@ -249,5 +280,28 @@ mod tests {
         assert!(service_error(429, Some("insufficient_quota")).contains("额度"));
         assert!(service_error(401, None).contains("密钥无效"));
         assert!(!service_error(500, Some("sk-never-echo-this")).contains("sk-"));
+    }
+
+    #[test]
+    fn passage_companion_sends_single_excerpt_without_storage() {
+        let config = Config {
+            key: "sk-test-only".into(),
+        };
+        let (endpoint, server) = server(
+            "200 OK",
+            json!({"status":"completed", "output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"这段风声与灯光把节奏轻轻放慢了，读到这里时你最先想起谁呢？"}]}]}),
+        );
+        let reply = config
+            .generate_passage_at("傍晚的风从树梢滑下来。", "在林间，慢慢来", &endpoint)
+            .unwrap();
+        assert!(!reply.demo);
+        assert!(reply.reply.contains("放慢"));
+        let body = server.join().unwrap();
+        assert_eq!(body["store"], false);
+        assert_eq!(body["input"].as_array().unwrap().len(), 1);
+        let content = body["input"][0]["content"].as_str().unwrap();
+        assert!(content.contains("在林间，慢慢来"));
+        assert!(content.contains("傍晚的风从树梢滑下来。"));
+        assert!(config.generate_passage_at("   ", "书", &endpoint).is_err());
     }
 }

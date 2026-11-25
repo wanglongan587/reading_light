@@ -13,6 +13,10 @@ pub struct ReaderEvent {
     #[serde(default)]
     pub cfi: String,
     #[serde(default)]
+    pub color: String,
+    #[serde(default)]
+    pub open_note: bool,
+    #[serde(default)]
     pub entries: Vec<TocEntry>,
     #[serde(default)]
     pub progress: Option<f32>,
@@ -48,6 +52,10 @@ pub fn parse_event(input: &str, session: &str) -> Result<ReaderEvent> {
             "opened",
             "selection",
             "echo",
+            "highlight",
+            "copy",
+            "edge",
+            "palette",
             "location",
             "toc",
             "search",
@@ -64,6 +72,14 @@ pub fn parse_event(input: &str, session: &str) -> Result<ReaderEvent> {
     ensure!(
         event.cfi.is_empty() || crate::model::valid_cfi(&event.cfi),
         "无效阅读位置"
+    );
+    ensure!(
+        event.color.is_empty() || crate::model::valid_highlight_color(&event.color),
+        "无效划线颜色"
+    );
+    ensure!(
+        event.kind != "edge" || matches!(event.text.as_str(), "top" | "bottom" | "none"),
+        "无效边缘状态"
     );
     ensure!(
         event
@@ -131,6 +147,48 @@ mod tests {
         assert!(
             parse_event(
                 r#"{"version":1,"session":"s","request_id":1,"kind":"ready"}"#,
+                "s"
+            )
+            .is_ok()
+        );
+        assert!(
+            parse_event(
+                r#"{"version":1,"session":"s","request_id":2,"kind":"highlight","text":"句子","cfi":"epubcfi(/6/2!/4/2)","color":"amber","open_note":true}"#,
+                "s"
+            )
+            .is_ok()
+        );
+        assert!(
+            parse_event(
+                r#"{"version":1,"session":"s","request_id":3,"kind":"highlight","text":"句子","cfi":"epubcfi(/6/2!/4/2)","color":"bad"}"#,
+                "s"
+            )
+            .is_err()
+        );
+        assert!(
+            parse_event(
+                r#"{"version":1,"session":"s","request_id":4,"kind":"copy","text":"摘录"}"#,
+                "s"
+            )
+            .is_ok()
+        );
+        assert!(
+            parse_event(
+                r#"{"version":1,"session":"s","request_id":5,"kind":"edge","text":"top"}"#,
+                "s"
+            )
+            .is_ok()
+        );
+        assert!(
+            parse_event(
+                r#"{"version":1,"session":"s","request_id":6,"kind":"edge","text":"evil"}"#,
+                "s"
+            )
+            .is_err()
+        );
+        assert!(
+            parse_event(
+                r#"{"version":1,"session":"s","request_id":7,"kind":"palette"}"#,
                 "s"
             )
             .is_ok()

@@ -310,5 +310,285 @@
       "希望"
     ],
     "spoiler": false
+  },
+  {
+    "id": "q25",
+    "text": "无可奈何花落去，似曾相识燕归来。",
+    "author": "晏殊",
+    "work": "浣溪沙·一曲新词酒一杯",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "词正文",
+    "source": "https://zh.wikisource.org/wiki/浣溪沙_(一曲新詞酒一杯)",
+    "tags": [
+      "时间"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q26",
+    "text": "惟江上之清风，与山间之明月，耳得之而为声，目遇之而成色。",
+    "author": "苏轼",
+    "work": "前赤壁赋",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "赋正文",
+    "source": "https://zh.wikisource.org/wiki/前赤壁賦",
+    "tags": [
+      "时间",
+      "海风"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q27",
+    "text": "人生代代无穷已，江月年年望相似。",
+    "author": "张若虚",
+    "work": "春江花月夜",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/春江花月夜_(張若虛)",
+    "tags": [
+      "时间",
+      "夜晚"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q28",
+    "text": "春江潮水连海平，海上明月共潮生。",
+    "author": "张若虚",
+    "work": "春江花月夜",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/春江花月夜_(張若虛)",
+    "tags": [
+      "海风"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q29",
+    "text": "明月松间照，清泉石上流。",
+    "author": "王维",
+    "work": "山居秋暝",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/山居秋暝",
+    "tags": [
+      "海风",
+      "自然"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q30",
+    "text": "两岸猿声啼不住，轻舟已过万重山。",
+    "author": "李白",
+    "work": "早发白帝城",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/早發白帝城",
+    "tags": [
+      "海风",
+      "旅途"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q31",
+    "text": "深林人不知，明月来相照。",
+    "author": "王维",
+    "work": "竹里馆",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/竹里館",
+    "tags": [
+      "夜晚"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q32",
+    "text": "随风潜入夜，润物细无声。",
+    "author": "杜甫",
+    "work": "春夜喜雨",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/春夜喜雨",
+    "tags": [
+      "夜晚",
+      "自然"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q33",
+    "text": "天阶夜色凉如水，卧看牵牛织女星。",
+    "author": "杜牧",
+    "work": "秋夕",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/秋夕",
+    "tags": [
+      "夜晚"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q34",
+    "text": "好读书，不求甚解；每有会意，便欣然忘食。",
+    "author": "陶渊明",
+    "work": "五柳先生传",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "正文",
+    "source": "https://zh.wikisource.org/wiki/五柳先生傳",
+    "tags": [
+      "阅读"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q35",
+    "text": "烽火连三月，家书抵万金。",
+    "author": "杜甫",
+    "work": "春望",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/春望",
+    "tags": [
+      "阅读"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q36",
+    "text": "问渠那得清如许？为有源头活水来。",
+    "author": "朱熹",
+    "work": "观书有感",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "其一",
+    "source": "https://zh.wikisource.org/wiki/觀書有感",
+    "tags": [
+      "阅读"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q37",
+    "text": "但愿人长久，千里共婵娟。",
+    "author": "苏轼",
+    "work": "水调歌头·明月几时有",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "词正文",
+    "source": "https://zh.wikisource.org/wiki/水調歌頭_(明月幾時有)",
+    "tags": [
+      "爱别"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q38",
+    "text": "海内存知己，天涯若比邻。",
+    "author": "王勃",
+    "work": "送杜少府之任蜀州",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/送杜少府之任蜀州",
+    "tags": [
+      "爱别"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q39",
+    "text": "两情若是久长时，又岂在朝朝暮暮。",
+    "author": "秦观",
+    "work": "鹊桥仙·纤云弄巧",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "词正文",
+    "source": "https://zh.wikisource.org/wiki/鵲橋仙_(纖雲弄巧)",
+    "tags": [
+      "爱别"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q40",
+    "text": "云无心以出岫，鸟倦飞而知还。",
+    "author": "陶渊明",
+    "work": "归去来兮辞",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "正文",
+    "source": "https://zh.wikisource.org/wiki/歸去來兮辭",
+    "tags": [
+      "旅途",
+      "自然"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q41",
+    "text": "绿蚁新醅酒，红泥小火炉。晚来天欲雪，能饮一杯无？",
+    "author": "白居易",
+    "work": "问刘十九",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/問劉十九",
+    "tags": [
+      "旅途"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q42",
+    "text": "行到水穷处，坐看云起时。",
+    "author": "王维",
+    "work": "终南别业",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/終南別業",
+    "tags": [
+      "旅途",
+      "海风"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q43",
+    "text": "久在樊笼里，复得返自然。",
+    "author": "陶渊明",
+    "work": "归园田居",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "其一",
+    "source": "https://zh.wikisource.org/wiki/歸園田居",
+    "tags": [
+      "自然"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q44",
+    "text": "春眠不觉晓，处处闻啼鸟。夜来风雨声，花落知多少。",
+    "author": "孟浩然",
+    "work": "春晓",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/春曉",
+    "tags": [
+      "自然"
+    ],
+    "spoiler": false
+  },
+  {
+    "id": "q45",
+    "text": "空山新雨后，天气晚来秋。",
+    "author": "王维",
+    "work": "山居秋暝",
+    "edition": "古典原文；展示转为简体并统一标点，无现代译文",
+    "chapter": "全诗",
+    "source": "https://zh.wikisource.org/wiki/山居秋暝",
+    "tags": [
+      "自然"
+    ],
+    "spoiler": false
   }
 ]

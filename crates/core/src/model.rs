@@ -38,6 +38,18 @@ pub struct Highlight {
     pub text: String,
     pub cfi: String,
     pub created_at: String,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+pub fn valid_highlight_color(value: &str) -> bool {
+    matches!(value, "amber" | "sage" | "rose" | "prism")
+}
+
+pub fn valid_soundscape_preset(value: &str) -> bool {
+    matches!(value, "rain" | "fireplace" | "breeze" | "cosmos")
 }
 
 pub fn valid_cfi(value: &str) -> bool {
@@ -76,11 +88,11 @@ impl Default for Theme {
             version: 1,
             id: "forest".into(),
             name: "林间暖光".into(),
-            background: "#E8EDE6".into(),
-            paper: "#FAF7EE".into(),
-            text: "#26332B".into(),
-            muted: "#5A6B60".into(),
-            accent: "#3B664C".into(),
+            background: "#DCEBF8".into(),
+            paper: "#F8FCFF".into(),
+            text: "#1A324C".into(),
+            muted: "#4F6E8E".into(),
+            accent: "#2573B8".into(),
             font: "SimSun, Songti SC, Noto Serif CJK SC, serif".into(),
             font_size: 20.0,
             line_height: 1.9,
@@ -180,6 +192,14 @@ pub struct State {
     pub reader_line_height: Option<f32>,
     #[serde(default)]
     pub reader_width: Option<u32>,
+    #[serde(default)]
+    pub soundscape_preset: Option<String>,
+    #[serde(default)]
+    pub warm_filter: bool,
+    #[serde(default)]
+    pub reading_minutes_today: u32,
+    #[serde(default)]
+    pub reading_minutes_date: Option<String>,
 }
 
 impl Default for State {
@@ -196,6 +216,10 @@ impl Default for State {
             reader_font_size: None,
             reader_line_height: None,
             reader_width: None,
+            soundscape_preset: None,
+            warm_filter: false,
+            reading_minutes_today: 0,
+            reading_minutes_date: None,
         }
     }
 }

@@ -6,6 +6,8 @@ mod app;
 mod mood;
 mod platform;
 mod prism;
+mod quotecard;
+mod soundscape;
 #[cfg(all(test, feature = "ui-test"))]
 extern crate gpui_kit as gpui;
 use gpui_kit::*;

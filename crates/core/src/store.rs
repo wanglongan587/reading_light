@@ -16,13 +16,35 @@ impl Store {
         fs::create_dir_all(root.join("books"))?;
         fs::create_dir_all(root.join("themes"))?;
         let path = root.join("state.json");
-        let state: State = if path.exists() {
+        let mut state: State = if path.exists() {
             serde_json::from_slice(&fs::read(&path)?)
                 .context("本地数据无法读取；原文件已保留，请先备份后修复。")?
         } else {
             State::default()
         };
+        let is_legacy_forest = state.theme.id == "forest"
+            && ((state.theme.background.eq_ignore_ascii_case("#E8EDE6")
+                && state.theme.paper.eq_ignore_ascii_case("#FAF7EE")
+                && state.theme.accent.eq_ignore_ascii_case("#3B664C"))
+                || (state.theme.background.eq_ignore_ascii_case("#EDEEE5")
+                    && state.theme.paper.eq_ignore_ascii_case("#FAF6EA")
+                    && state.theme.accent.eq_ignore_ascii_case("#536A49")));
+        if is_legacy_forest {
+            let refreshed = Theme::default();
+            state.theme.background = refreshed.background;
+            state.theme.paper = refreshed.paper;
+            state.theme.text = refreshed.text;
+            state.theme.muted = refreshed.muted;
+            state.theme.accent = refreshed.accent;
+        }
         ensure!(state.version == 1, "不支持的本地数据版本");
+        ensure!(
+            state
+                .soundscape_preset
+                .as_deref()
+                .is_none_or(crate::model::valid_soundscape_preset),
+            "声景频道设置损坏"
+        );
         ensure!(
             state
                 .reader_font_size
@@ -64,7 +86,15 @@ impl Store {
                         && highlight.id.len() <= 80
                         && !highlight.text.trim().is_empty()
                         && highlight.text.len() <= 16_384
-                        && crate::model::valid_cfi(&highlight.cfi),
+                        && crate::model::valid_cfi(&highlight.cfi)
+                        && highlight
+                            .color
+                            .as_deref()
+                            .is_none_or(crate::model::valid_highlight_color)
+                        && highlight
+                            .note
+                            .as_ref()
+                            .is_none_or(|note| note.chars().count() <= 1000),
                     "划线数据损坏"
                 );
             }
@@ -160,11 +190,39 @@ impl Store {
         text: String,
         cfi: String,
     ) -> Result<(crate::model::Highlight, bool)> {
+        self.add_highlight_styled(book_id, text, cfi, None, None)
+    }
+
+    pub fn add_highlight_styled(
+        &mut self,
+        book_id: &str,
+        text: String,
+        cfi: String,
+        color: Option<String>,
+        note: Option<String>,
+    ) -> Result<(crate::model::Highlight, bool)> {
         let text = text.trim().to_owned();
         ensure!(!text.is_empty(), "请先选择要划线的文字");
         ensure!(text.chars().count() <= 4000, "划线文字过长");
         ensure!(crate::model::valid_cfi(&cfi), "阅读位置无效");
-        let highlight = {
+        let color = color.filter(|c| !c.trim().is_empty());
+        if let Some(c) = &color {
+            ensure!(crate::model::valid_highlight_color(c), "不支持的划线颜色");
+        }
+        let note = note.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty());
+        if let Some(n) = &note {
+            ensure!(n.chars().count() <= 1000, "批注请控制在 1000 字以内");
+        }
+        let previous = {
+            let book = self
+                .state
+                .books
+                .iter()
+                .find(|book| book.id == book_id)
+                .context("书籍已不在书架中")?;
+            book.highlights.clone()
+        };
+        let (highlight, inserted) = {
             let book = self
                 .state
                 .books
@@ -173,29 +231,119 @@ impl Store {
                 .context("书籍已不在书架中")?;
             if let Some(existing) = book
                 .highlights
-                .iter()
+                .iter_mut()
                 .find(|highlight| highlight.cfi == cfi)
             {
-                return Ok((existing.clone(), false));
+                let mut changed = false;
+                if let Some(new_color) = color
+                    && existing.color.as_deref() != Some(new_color.as_str())
+                {
+                    existing.color = Some(new_color);
+                    changed = true;
+                }
+                if let Some(new_note) = note
+                    && existing.note.as_deref() != Some(new_note.as_str())
+                {
+                    existing.note = Some(new_note);
+                    changed = true;
+                }
+                if !changed {
+                    return Ok((existing.clone(), false));
+                }
+                (existing.clone(), false)
+            } else {
+                let highlight = crate::model::Highlight {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    text,
+                    cfi,
+                    created_at: now(),
+                    color,
+                    note,
+                };
+                book.highlights.push(highlight.clone());
+                (highlight, true)
             }
-            let highlight = crate::model::Highlight {
-                id: uuid::Uuid::new_v4().to_string(),
-                text,
-                cfi,
-                created_at: now(),
-            };
-            book.highlights.push(highlight.clone());
-            highlight
         };
-        let inserted_id = highlight.id.clone();
         if let Err(error) = self.save() {
             if let Some(book) = self.state.books.iter_mut().find(|book| book.id == book_id) {
-                book.highlights
-                    .retain(|highlight| highlight.id != inserted_id);
+                book.highlights = previous;
             }
             return Err(error);
         }
-        Ok((highlight, true))
+        Ok((highlight, inserted))
+    }
+
+    pub fn update_highlight(
+        &mut self,
+        book_id: &str,
+        highlight_id: &str,
+        color: Option<Option<String>>,
+        note: Option<Option<String>>,
+    ) -> Result<Option<crate::model::Highlight>> {
+        if let Some(Some(ref c)) = color {
+            ensure!(crate::model::valid_highlight_color(c), "不支持的划线颜色");
+        }
+        let normalized_note = match note {
+            Some(Some(raw)) => {
+                let trimmed = raw.trim().to_owned();
+                ensure!(trimmed.chars().count() <= 1000, "批注请控制在 1000 字以内");
+                Some(if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                })
+            }
+            Some(None) => Some(None),
+            None => None,
+        };
+        let previous = {
+            let Some(book) = self.state.books.iter().find(|book| book.id == book_id) else {
+                return Ok(None);
+            };
+            book.highlights.clone()
+        };
+        let updated = {
+            let Some(book) = self.state.books.iter_mut().find(|book| book.id == book_id) else {
+                return Ok(None);
+            };
+            let Some(item) = book
+                .highlights
+                .iter_mut()
+                .find(|highlight| highlight.id == highlight_id)
+            else {
+                return Ok(None);
+            };
+            if let Some(next_color) = color {
+                item.color = next_color;
+            }
+            if let Some(next_note) = normalized_note {
+                item.note = next_note;
+            }
+            item.clone()
+        };
+        if let Err(error) = self.save() {
+            if let Some(book) = self.state.books.iter_mut().find(|book| book.id == book_id) {
+                book.highlights = previous;
+            }
+            return Err(error);
+        }
+        Ok(Some(updated))
+    }
+
+    pub fn add_reading_minutes(&mut self, minutes: u32, today: &str) -> Result<u32> {
+        let prev_mins = self.state.reading_minutes_today;
+        let prev_date = self.state.reading_minutes_date.clone();
+        if self.state.reading_minutes_date.as_deref() != Some(today) {
+            self.state.reading_minutes_today = 0;
+            self.state.reading_minutes_date = Some(today.to_owned());
+        }
+        self.state.reading_minutes_today = self.state.reading_minutes_today.saturating_add(minutes);
+        if let Err(error) = self.save() {
+            self.state.reading_minutes_today = prev_mins;
+            self.state.reading_minutes_date = prev_date;
+            return Err(error);
+        }
+        Ok(self.state.reading_minutes_today)
     }
 
     pub fn remove_highlight(
@@ -367,5 +515,133 @@ mod tests {
             .unwrap();
         assert_eq!(removed.cfi, cfi);
         assert!(store.state.books[0].highlights.is_empty());
+    }
+
+    #[test]
+    fn legacy_state_deserializes_and_migrates_forest_palette_and_supports_colored_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("data");
+        fs::create_dir_all(&root).unwrap();
+        let book_id = "0".repeat(64);
+        let legacy_json = serde_json::json!({
+            "version": 1,
+            "books": [{
+                "id": book_id,
+                "title": "旧版书",
+                "author": "作者",
+                "format": "epub",
+                "imported_at": "2026-01-01T00:00:00Z",
+                "cover": null,
+                "location": null,
+                "bookmarks": [],
+                "highlights": [{
+                    "id": "hl-legacy",
+                    "text": "旧版无颜色划线",
+                    "cfi": "epubcfi(/6/2!/4/2,/1:0,/1:6)",
+                    "created_at": "2026-01-01T00:00:00Z"
+                }]
+            }],
+            "journal": [],
+            "theme": {
+                "version": 1,
+                "id": "forest",
+                "name": "林间暖光",
+                "background": "#E8EDE6",
+                "paper": "#FAF7EE",
+                "text": "#26332B",
+                "muted": "#5A6B60",
+                "accent": "#3B664C",
+                "font": "serif",
+                "font_size": 21.0,
+                "line_height": 1.9,
+                "width": 720,
+                "overlay": 0.86,
+                "volume": 0.35,
+                "reduced_motion": false
+            },
+            "custom_themes": [],
+            "mode": "scrolled",
+            "last_book": null,
+            "privacy_seen": true
+        });
+        fs::write(
+            root.join("state.json"),
+            serde_json::to_vec_pretty(&legacy_json).unwrap(),
+        )
+        .unwrap();
+
+        let mut store = Store::open(root.clone()).unwrap();
+        assert_eq!(store.state.theme.paper, "#F8FCFF");
+        assert_eq!(store.state.theme.accent, "#2573B8");
+        assert_eq!(store.state.theme.font_size, 21.0);
+        assert_eq!(store.state.books[0].highlights[0].color, None);
+        assert_eq!(store.state.books[0].highlights[0].note, None);
+        assert!(!store.state.warm_filter);
+        assert_eq!(store.state.reading_minutes_today, 0);
+
+        let updated = store
+            .update_highlight(
+                &book_id,
+                "hl-legacy",
+                Some(Some("amber".into())),
+                Some(Some("  读到这里突然安静下来  ".into())),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.color.as_deref(), Some("amber"));
+        assert_eq!(updated.note.as_deref(), Some("读到这里突然安静下来"));
+        assert!(
+            store
+                .update_highlight(&book_id, "hl-legacy", Some(Some("neon".into())), None)
+                .is_err()
+        );
+        assert!(
+            store
+                .update_highlight(&book_id, "hl-legacy", None, Some(Some("字".repeat(1001))))
+                .is_err()
+        );
+        assert_eq!(store.add_reading_minutes(25, "2026-11-25").unwrap(), 25);
+        assert_eq!(store.add_reading_minutes(15, "2026-11-25").unwrap(), 40);
+        assert_eq!(store.add_reading_minutes(10, "2026-11-26").unwrap(), 10);
+
+        let reopened = Store::open(root).unwrap();
+        assert_eq!(
+            reopened.state.books[0].highlights[0].color.as_deref(),
+            Some("amber")
+        );
+        assert_eq!(
+            reopened.state.books[0].highlights[0].note.as_deref(),
+            Some("读到这里突然安静下来")
+        );
+        assert_eq!(reopened.state.reading_minutes_today, 10);
+
+        // v0.1.5 initial forest palette (#EDEEE5 / #FAF6EA / #536A49) also migrates,
+        // while a user-customized forest palette is left untouched.
+        let v015_root = dir.path().join("v015");
+        fs::create_dir_all(&v015_root).unwrap();
+        let mut v015_json = legacy_json.clone();
+        v015_json["theme"]["background"] = serde_json::json!("#EDEEE5");
+        v015_json["theme"]["paper"] = serde_json::json!("#FAF6EA");
+        v015_json["theme"]["accent"] = serde_json::json!("#536A49");
+        fs::write(
+            v015_root.join("state.json"),
+            serde_json::to_vec_pretty(&v015_json).unwrap(),
+        )
+        .unwrap();
+        let migrated_v015 = Store::open(v015_root).unwrap();
+        assert_eq!(migrated_v015.state.theme.paper, "#F8FCFF");
+        assert_eq!(migrated_v015.state.theme.accent, "#2573B8");
+
+        let custom_root = dir.path().join("custom-forest");
+        fs::create_dir_all(&custom_root).unwrap();
+        let mut custom_json = legacy_json;
+        custom_json["theme"]["accent"] = serde_json::json!("#1F5A44");
+        fs::write(
+            custom_root.join("state.json"),
+            serde_json::to_vec_pretty(&custom_json).unwrap(),
+        )
+        .unwrap();
+        let kept_custom = Store::open(custom_root).unwrap();
+        assert_eq!(kept_custom.state.theme.accent, "#1F5A44");
     }
 }

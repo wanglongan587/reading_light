@@ -1,26 +1,56 @@
 import ePub from 'epubjs';
 
-type Theme = { id?:string;paper:string;text:string;accent:string;font:string;font_size:number;line_height:number;width:number;font_url?:string;reduced_motion:boolean };
-type Highlight = { id:string;cfi:string;text?:string };
+type Theme = { id?:string;paper:string;text:string;accent:string;font:string;font_size:number;line_height:number;width:number;font_url?:string;reduced_motion:boolean;warm_filter?:boolean };
+type Highlight = { id:string;cfi:string;text?:string;color?:string };
 type Command = { version:number;session:string;request_id:number;kind:string;url?:string;cfi?:string;href?:string;mode?:string;theme?:Theme;query?:string;highlight?:Highlight;highlights?:Highlight[] };
 declare global { interface Window { ipc?:{postMessage:(s:string)=>void}; glowReceive:(cmd:Command)=>void; __events?:unknown[] } }
+
+const HIGHLIGHT_COLORS: Record<string, string> = {
+ amber: '#F59E0B',
+ sage: '#34D399',
+ rose: '#FB7185',
+ prism: '#A855F7',
+};
+
 const session = new URLSearchParams(location.search).get('session') || 'test';
 let book:any, rendition:any, currentCfi='', mode='scrolled', theme:Theme;
 let counter=0, lastCommand=0, selectedCfi='', selectedText='', disposed=false;
 let queue=Promise.resolve(); let relocating=false; let generation=0;
 let tocEntries:{label:string;href:string}[]=[], currentHref='', locationsReady=false, searchGeneration=0;
-let bookHighlights:Highlight[]=[]; const appliedHighlights=new Set<string>();
+let bookHighlights:Highlight[]=[]; const appliedHighlights=new Map<string,string>();
 let openWatchdog:ReturnType<typeof setTimeout>|undefined;
 let readerFailed=false;
+let lastEdge:'top'|'bottom'|'none'='none';
+
 const reader=document.querySelector<HTMLElement>('#reader')!;
 const status=document.querySelector<HTMLElement>('#status')!;
+const pill=document.querySelector<HTMLElement>('#selection-pill')!;
 const echo=document.querySelector<HTMLButtonElement>('#echo')!;
+const noteBtn=document.querySelector<HTMLButtonElement>('#note-btn')!;
+const copyBtn=document.querySelector<HTMLButtonElement>('#copy-btn')!;
+const hlDots=Array.from(document.querySelectorAll<HTMLButtonElement>('.hl-dot'));
+
 function send(kind:string, extra:Record<string,unknown>={}) {
  const event={version:1,session,request_id:++counter,kind,...extra};
  if(window.ipc) window.ipc.postMessage(JSON.stringify(event));
  else (window.__events??=[]).push(event);
 }
-function hideEcho(){echo.hidden=true;selectedText='';selectedCfi='';}
+function hideEcho(){
+ pill.hidden=true;
+ echo.hidden=true;
+ selectedText='';
+ selectedCfi='';
+}
+function isDarkTheme(){
+ if(!theme)return false;
+ if(theme.id==='night'||theme.id==='prism')return true;
+ const hex=theme.paper?.replace('#','');
+ if(hex&&hex.length===6){
+  const r=parseInt(hex.slice(0,2),16),g=parseInt(hex.slice(2,4),16),b=parseInt(hex.slice(4,6),16);
+  return (0.299*r+0.587*g+0.114*b)<120;
+ }
+ return false;
+}
 function clearOpenWatchdog(){if(openWatchdog!==undefined){clearTimeout(openWatchdog);openWatchdog=undefined;}}
 function failure(reason?:unknown){
  readerFailed=true;
@@ -31,6 +61,11 @@ function failure(reason?:unknown){
 }
 function recoverNavigation(){
  if(readerFailed){readerFailed=false;status.textContent='';send('opened');}
+}
+function triggerPageTransition(){
+ if(theme?.reduced_motion)return;
+ reader.classList.add('page-settling');
+ requestAnimationFrame(()=>requestAnimationFrame(()=>reader.classList.remove('page-settling')));
 }
 async function withTimeout<T>(task:Promise<T>,milliseconds:number,label:string):Promise<T>{
  let timer:ReturnType<typeof setTimeout>|undefined;
@@ -82,10 +117,24 @@ function firstReadableHref(entries:{label:string;href:string}[],book:any){
  return content?.href||entries[0]?.href||book.spine?.get(0)?.href;
 }
 function addHighlight(item:Highlight){
- if(!rendition||!item?.cfi||appliedHighlights.has(item.cfi))return;
+ if(!rendition||!item?.cfi)return;
+ const fill=(item.color&&HIGHLIGHT_COLORS[item.color])||theme?.accent||'#F59E0B';
+ const dark=isDarkTheme();
+ const signature=`${fill}|${dark?'d':'l'}`;
+ if(appliedHighlights.get(item.cfi)===signature)return;
+ if(appliedHighlights.has(item.cfi)){
+  try{rendition.annotations.remove(item.cfi,'highlight');}catch{}
+  appliedHighlights.delete(item.cfi);
+ }
  try{
-  rendition.annotations.highlight(item.cfi,{id:item.id},undefined,'glow-highlight',{fill:theme.accent,'fill-opacity':'0.22','mix-blend-mode':'multiply'});
-  appliedHighlights.add(item.cfi);
+  rendition.annotations.highlight(
+   item.cfi,
+   {id:item.id,color:item.color||''},
+   undefined,
+   'glow-highlight',
+   {fill,'fill-opacity':dark?'0.32':'0.26','mix-blend-mode':dark?'screen':'multiply'}
+  );
+  appliedHighlights.set(item.cfi,signature);
  }catch(error){
   if(error instanceof Error)console.error(`[GLOW_READER] ${error.message}`);
  }
@@ -105,15 +154,20 @@ function progressFor(cfi:string){
   return Number.isFinite(value)?Math.max(0,Math.min(1,value)):undefined;
  }catch{return undefined;}
 }
+function updateProgressBar(progress?:number){
+ if(progress===undefined)return;
+ document.documentElement.style.setProperty('--progress',`${(progress*100).toFixed(2)}%`);
+}
 function sendLocation(){
  if(!currentCfi)return;
  const progress=progressFor(currentCfi);
+ updateProgressBar(progress);
  send('location',{cfi:currentCfi,chapter:chapterForHref(currentHref),...(progress===undefined?{}:{progress})});
 }
 function styles(){
  const value:Record<string,Record<string,string>>={
  'html':{'background':`${theme.paper} !important`,'scrollbar-color':`${theme.accent}99 ${theme.paper}`,'scrollbar-width':'thin'},
- 'body':{'color':`${theme.text} !important`,'background':`${theme.paper} !important`,'font-family':`${theme.font} !important`,'font-size':`${theme.font_size}px !important`,'line-height':`${theme.line_height} !important`,'padding':'28px 36px !important','max-width':`${theme.width}px`,'margin':'0 auto !important','overflow-wrap':'anywhere'},
+ 'body':{'color':`${theme.text} !important`,'background':`${theme.paper} !important`,'font-family':`${theme.font} !important`,'font-size':`${theme.font_size}px !important`,'line-height':`${theme.line_height}px !important`,'padding':'28px 36px !important','max-width':`${theme.width}px`,'margin':'0 auto !important','overflow-wrap':'anywhere'},
  'body *':{'color':`${theme.text} !important`,'background-color':'transparent !important','font-family':'inherit !important'},
  'p':{'line-height':`${theme.line_height} !important`,'margin-bottom':'0.95em !important'},
  'h1':{'font-size':'1.35em !important','font-weight':'500','margin':'1.6em 0 !important'},
@@ -125,6 +179,7 @@ function styles(){
  '::-webkit-scrollbar-thumb':{'background':`${theme.accent}80 !important`,'border-radius':'999px','border':`2px solid ${theme.paper}`},
  '::selection':{'background':`${theme.accent}40`}
  };
+ value['body']['line-height']=`${theme.line_height} !important`;
  if(theme.reduced_motion)value['*']={'animation':'none !important','transition':'none !important'};
  return value;
 }
@@ -132,7 +187,18 @@ function styleText(){
  return Object.entries(styles()).map(([selector,declarations])=>`${selector}{${Object.entries(declarations).map(([name,value])=>`${name}:${value}`).join(';')}}`).join('\n');
 }
 let glowRaf=0, pendingX=0, pendingY=0;
+function reportEdge(y:number){
+ let edge:'top'|'bottom'|'none'=lastEdge;
+ if(y<=40)edge='top';
+ else if(y>=innerHeight-40)edge='bottom';
+ else if(y>84&&y<innerHeight-84)edge='none';
+ if(edge!==lastEdge){
+  lastEdge=edge;
+  send('edge',{text:edge});
+ }
+}
 function updateCursorGlow(x:number,y:number){
+ reportEdge(y);
  if(theme?.reduced_motion)return;
  pendingX=x;pendingY=y;
  if(glowRaf)return;
@@ -152,17 +218,21 @@ function spawnRipple(x:number,y:number){
  setTimeout(()=>el.remove(),700);
 }
 document.addEventListener('mousemove',e=>updateCursorGlow(e.clientX,e.clientY),{passive:true});
-document.addEventListener('mouseleave',()=>document.documentElement.style.setProperty('--glow-op','0'));
+document.addEventListener('mouseleave',()=>{
+ document.documentElement.style.setProperty('--glow-op','0');
+});
 async function applyTheme(){
  if(!theme)return;
  document.documentElement.dataset.theme=theme.id||'forest';
  document.documentElement.dataset.reducedMotion=theme.reduced_motion?'yes':'no';
+ document.documentElement.dataset.warmFilter=theme.warm_filter?'yes':'no';
  document.documentElement.style.setProperty('--paper',theme.paper);
  document.documentElement.style.setProperty('--ink',theme.text);
  document.documentElement.style.setProperty('--accent',theme.accent);
  if(theme.reduced_motion)document.documentElement.style.setProperty('--glow-op','0');
  if(rendition){
    for(const content of rendition.getContents()) await prepareContent(content);
+   applyHighlights(bookHighlights);
  }
 }
 async function prepareContent(content:any){
@@ -206,23 +276,69 @@ async function prepareContent(content:any){
   if(!text||text.length>4000){hideEcho();return;}
   const bounds=range.getBoundingClientRect();const frame=(content.window.frameElement as HTMLElement).getBoundingClientRect();
   selectedText=text;selectedCfi=content.cfiFromRange(range);
-  echo.style.left=`${Math.max(10,Math.min(innerWidth-110,frame.left+bounds.left+bounds.width/2-45))}px`;
-  echo.style.top=`${Math.max(10,Math.min(innerHeight-55,frame.top+bounds.bottom+10))}px`;
-  echo.hidden=false;send('selection',{text:selectedText,cfi:selectedCfi});
+  pill.hidden=false;
+  echo.hidden=false;
+  const pillW=pill.offsetWidth||310;
+  const pillH=pill.offsetHeight||40;
+  const centerX=frame.left+bounds.left+bounds.width/2-pillW/2;
+  const belowY=frame.top+bounds.bottom+10;
+  const aboveY=frame.top+bounds.top-pillH-10;
+  const top=belowY+pillH>innerHeight-10&&aboveY>10?aboveY:belowY;
+  pill.style.left=`${Math.max(10,Math.min(innerWidth-pillW-10,centerX))}px`;
+  pill.style.top=`${Math.max(10,Math.min(innerHeight-pillH-10,top))}px`;
+  send('selection',{text:selectedText,cfi:selectedCfi});
  },20));
 }
 function onKey(e:KeyboardEvent){
  if(e.key==='Escape'){hideEcho();send('escape');return;}
+ if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();hideEcho();send('palette');return;}
  if((e.ctrlKey||e.metaKey)&&e.key==='Enter'&&selectedText){e.preventDefault();requestEcho();return;}
  if(mode==='paginated'&&['ArrowLeft','ArrowRight','PageUp','PageDown'].includes(e.key)){
   e.preventDefault();queue=queue.then(async()=>{
+   triggerPageTransition();
    await (e.key==='ArrowLeft'||e.key==='PageUp'?rendition.prev():rendition.next());
    await captureLocation();
   }).catch(failure);
  }
 }
+function clearIframeSelections(){
+ if(!rendition)return;
+ for(const content of rendition.getContents()){
+  try{content.document?.getSelection()?.removeAllRanges();}catch{}
+ }
+}
 function requestEcho(){if(selectedText&&selectedCfi){send('echo',{text:selectedText,cfi:selectedCfi});hideEcho();}}
-echo.addEventListener('mousedown',e=>e.preventDefault());echo.addEventListener('click',requestEcho);
+function requestHighlight(color:string|null,openNote:boolean){
+ if(!selectedText||!selectedCfi)return;
+ const existingIdx=bookHighlights.findIndex(h=>h.cfi===selectedCfi);
+ const resolvedColor=color||(existingIdx>=0&&bookHighlights[existingIdx].color)||'amber';
+ const item:Highlight={id:`local-${Date.now()}`,cfi:selectedCfi,text:selectedText,color:resolvedColor};
+ if(existingIdx>=0)bookHighlights[existingIdx]={...bookHighlights[existingIdx],color:resolvedColor};
+ else bookHighlights.push(item);
+ addHighlight(item);
+ send('highlight',{text:selectedText,cfi:selectedCfi,color:resolvedColor,open_note:openNote});
+ clearIframeSelections();
+ hideEcho();
+}
+function requestCopy(){
+ if(!selectedText)return;
+ const text=selectedText;
+ const cfi=selectedCfi;
+ if(!window.ipc){
+  try{void navigator.clipboard?.writeText(text).catch(()=>{});}catch{}
+ }
+ send('copy',{text,cfi});
+ clearIframeSelections();
+ hideEcho();
+}
+
+pill.addEventListener('mousedown',e=>e.preventDefault());
+echo.addEventListener('click',requestEcho);
+noteBtn.addEventListener('click',()=>requestHighlight(null,true));
+copyBtn.addEventListener('click',requestCopy);
+for(const dot of hlDots){
+ dot.addEventListener('click',()=>requestHighlight(dot.dataset.color||'amber',false));
+}
 document.addEventListener('keydown',onKey);
 
 async function open(cmd:Command){
@@ -230,6 +346,7 @@ async function open(cmd:Command){
  const own=++generation;searchGeneration++;clearOpenWatchdog();
  openWatchdog=setTimeout(()=>failure(new Error('打开书籍超时')),75000);
  status.textContent='正在铺开这一页…';hideEcho();
+ document.documentElement.style.setProperty('--progress','0%');
  rendition?.destroy();book?.destroy();reader.replaceChildren();currentCfi='';currentHref='';selectedText='';selectedCfi='';locationsReady=false;appliedHighlights.clear();
  theme=cmd.theme!;mode=cmd.mode||'scrolled';
  const response=await withTimeout(fetch(cmd.url!),15000,'书籍文件');if(!response.ok)throw new Error('book load');
@@ -377,21 +494,23 @@ window.glowReceive=(cmd)=>{
    case 'open':await open(cmd);break;
    case 'configure':await reflow(cmd);break;
    case 'locate':
-    if(rendition){await displayChapter(cmd.cfi||cmd.href);await captureLocation();recoverNavigation();}
+    if(rendition){triggerPageTransition();await displayChapter(cmd.cfi||cmd.href);await captureLocation();recoverNavigation();}
     break;
    case 'next':
     hideEcho();
-    if(rendition){await rendition.next();await captureLocation();recoverNavigation();}
+    if(rendition){triggerPageTransition();await rendition.next();await captureLocation();recoverNavigation();}
     break;
    case 'prev':
     hideEcho();
-    if(rendition){await rendition.prev();await captureLocation();recoverNavigation();}
+    if(rendition){triggerPageTransition();await rendition.prev();await captureLocation();recoverNavigation();}
     break;
    case 'restore':await reflow(cmd);break;
    case 'search':void searchBook(cmd.query||'');break;
    case 'highlight':
     if(cmd.highlight){
-     if(!bookHighlights.some(item=>item.cfi===cmd.highlight!.cfi))bookHighlights.push(cmd.highlight);
+     const idx=bookHighlights.findIndex(item=>item.cfi===cmd.highlight!.cfi);
+     if(idx>=0)bookHighlights[idx]=cmd.highlight;
+     else bookHighlights.push(cmd.highlight);
      addHighlight(cmd.highlight);
     }
     break;
@@ -403,8 +522,15 @@ window.glowReceive=(cmd)=>{
  }).catch(failure);
 };
 let resizeTimer:ReturnType<typeof setTimeout>;
+let lastObservedW=0, lastObservedH=0;
 new ResizeObserver(()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{
- if(rendition&&reader.clientWidth>0)queue=queue.then(()=>reflow({version:1,session,request_id:0,kind:'restore'})).catch(failure);
+ const w=reader.clientWidth, h=reader.clientHeight;
+ if(!rendition||w<=0)return;
+ const widthChanged=w!==lastObservedW;
+ const heightChanged=h!==lastObservedH;
+ lastObservedW=w; lastObservedH=h;
+ if(!widthChanged&&(mode==='scrolled'||!heightChanged))return;
+ queue=queue.then(()=>reflow({version:1,session,request_id:0,kind:'restore'})).catch(failure);
 },150);}).observe(reader);
 window.addEventListener('beforeunload',()=>{disposed=true;clearTimeout(resizeTimer);rendition?.destroy();book?.destroy();});
 send('ready');

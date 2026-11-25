@@ -1,10 +1,12 @@
 use crate::{
     mood, platform,
     prism::{self, MotionEngine, MotionSnapshot},
+    quotecard::{self, QuoteCardDraft, QuoteCardStyle},
+    soundscape::{ChimeSource, SoundscapeHandle, SoundscapePreset, SoundscapeSource},
 };
 use anyhow::Context as _;
 use glow_core::{
-    Bookmark, EchoResult, Location, Store, Theme as ReadingTheme,
+    Bookmark, EchoResult, JournalEntry, Location, Store, Theme as ReadingTheme,
     bridge::{ReaderEvent, SearchHit, TocEntry},
     echo,
     model::themes,
@@ -15,7 +17,7 @@ use gpui_kit::component::{
     Icon, Theme as KitTheme, ThemeMode,
     button::{Button, ButtonCustomVariant, ButtonVariants},
     h_flex,
-    input::{Input, InputState, Textarea, TextareaState},
+    input::{Escape as InputEscape, Input, InputEvent, InputState, Textarea, TextareaState},
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -31,7 +33,27 @@ use std::{
     time::{Duration, Instant},
 };
 
-actions!(glow, [Escape, Import, Previous, Next, Search]);
+actions!(glow, [Escape, Import, Previous, Next, Search, Palette]);
+
+type RediscoveryTarget = (String, String);
+type RediscoveryItem = (String, String, Option<RediscoveryTarget>);
+type DailyRediscovery = (String, String, Option<RediscoveryTarget>, usize);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShelfFilter {
+    All,
+    Reading,
+    Unread,
+    Finished,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum JournalFilter {
+    All,
+    Favorite,
+    Mood,
+    Selection,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 enum Page {
@@ -46,6 +68,7 @@ enum Action {
     Page(Page),
     Import,
     Open(String),
+    OpenAt(Box<(String, String)>),
     Remove(String),
     ConfirmRemove,
     Cancel,
@@ -58,11 +81,20 @@ enum Action {
     SubmitSearch,
     Highlights,
     Highlight,
+    HighlightColor(String),
+    RecolorHighlight(Box<(String, String)>),
+    EditHighlightNote(String),
+    SaveHighlightNote,
+    CancelHighlightNote,
     DeleteHighlight(String),
+    SaveEchoToJournal,
+    AskAiPassage,
+    CancelAiPassage,
     Typography,
     TypeSize(i8),
     TypeLeading(i8),
     TypeWidth(i16),
+    ToggleWarmFilter,
     ResetTypography,
     Bookmarks,
     Bookmark,
@@ -71,10 +103,25 @@ enum Action {
     Mood(String),
     SubmitMood,
     CancelMood,
+    ToggleBreathing,
+    ToggleTimerPicker,
+    StartFocusTimer(u32),
+    StopFocusTimer,
     Favorite(String),
     DeleteEntry(String),
     ClearJournal,
     ConfirmClear,
+    ShelfFilter(ShelfFilter),
+    NextRediscovery,
+    JournalFilter(JournalFilter),
+    ExportJournalMarkdown,
+    OpenQuoteCard(Box<QuoteCardDraft>),
+    QuoteCardStyle(QuoteCardStyle),
+    SaveQuoteCardPng,
+    CopyQuoteCardText,
+    CloseQuoteCard,
+    TogglePalette,
+    ClosePalette,
     PickTheme(usize),
     EditTheme,
     PreviewTheme,
@@ -85,12 +132,21 @@ enum Action {
     ExportTheme,
     Asset(String),
     Audio,
+    Soundscape(SoundscapePreset),
+    AudioVolume(i8),
     ReducedMotion,
     ToggleFlow,
     PetInteract(Point<Pixels>),
     RevealSpoiler(String),
     Privacy,
     Encoding(String),
+}
+
+struct PassageGenerated {
+    book_id: Option<String>,
+    passage: String,
+    cfi: String,
+    result: EchoResult,
 }
 
 pub struct ReadingApp {
@@ -106,12 +162,20 @@ pub struct ReadingApp {
     toc: Vec<TocEntry>,
     drawer: String,
     focus_mode: bool,
+    zen_reveal_top: bool,
+    zen_reveal_bottom: bool,
+    zen_revealed_at: Option<Instant>,
     search_input: Entity<InputState>,
     search_results: Vec<SearchHit>,
     searching: bool,
     echo: Option<EchoResult>,
     echo_input: String,
     echo_cfi: String,
+    echo_saved: bool,
+    echo_ai_rx: Option<mpsc::Receiver<anyhow::Result<PassageGenerated>>>,
+    echo_ai_worker: fn(&str, &str) -> anyhow::Result<EchoResult>,
+    highlight_note_target: Option<String>,
+    highlight_note_input: Entity<TextareaState>,
     mood_reply: Option<(String, EchoResult)>,
     mood_rx: Option<mpsc::Receiver<anyhow::Result<mood::Generated>>>,
     mood_unsaved: Option<mood::Generated>,
@@ -119,6 +183,19 @@ pub struct ReadingApp {
     mood_scroll: ScrollHandle,
     mood: String,
     mood_input: Entity<TextareaState>,
+    breathing_started: Option<Instant>,
+    focus_timer_started: Option<Instant>,
+    focus_timer_total_secs: u32,
+    focus_timer_picker_open: bool,
+    shelf_search: Entity<InputState>,
+    shelf_filter: ShelfFilter,
+    rediscovery_offset: usize,
+    journal_search: Entity<InputState>,
+    journal_filter: JournalFilter,
+    quote_card: Option<QuoteCardDraft>,
+    palette_open: bool,
+    palette_selected: usize,
+    palette_input: Entity<InputState>,
     error: Option<String>,
     notice: Option<String>,
     confirm: Option<String>,
@@ -127,7 +204,9 @@ pub struct ReadingApp {
     preview: Option<ReadingTheme>,
     fields: Vec<Entity<InputState>>,
     spoilers: HashSet<String>,
-    audio: Option<(rodio::OutputStream, rodio::Sink)>,
+    audio: Option<(rodio::OutputStream, rodio::Sink, Option<SoundscapeHandle>)>,
+    fading_audio: Vec<(rodio::OutputStream, rodio::Sink)>,
+    chime_audio: Option<(rodio::OutputStream, rodio::Sink)>,
     dirty: bool,
     last_save: Instant,
     reader_load_started: Option<Instant>,
@@ -148,8 +227,51 @@ impl ReadingApp {
                 .auto_grow(4, 8)
         });
         cx.observe(&mood_input, |_, _, cx| cx.notify()).detach();
+        let highlight_note_input = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .placeholder("写下读到这一句时的想法（最多 1000 字）")
+                .auto_grow(3, 6)
+        });
+        cx.observe(&highlight_note_input, |_, _, cx| cx.notify())
+            .detach();
         let search_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("搜索书名、人物或书中一句话"));
+        cx.subscribe_in(
+            &search_input,
+            window,
+            |this, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) && this.drawer == "search" {
+                    this.act(Action::SubmitSearch, window, cx);
+                }
+            },
+        )
+        .detach();
+        let shelf_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("按书名或作者筛选藏书…"));
+        cx.observe(&shelf_search, |_, _, cx| cx.notify()).detach();
+        let journal_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("检索日记中的句子、心情或回响…"));
+        cx.observe(&journal_search, |_, _, cx| cx.notify()).detach();
+        let palette_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("输入指令：切主题、开声景、呼吸放松、静读、导出…")
+        });
+        cx.subscribe_in(
+            &palette_input,
+            window,
+            |this, _, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => {
+                    this.palette_selected = 0;
+                    cx.notify();
+                }
+                InputEvent::PressEnter { .. } if this.palette_open => {
+                    this.execute_selected_palette_command(window, cx);
+                }
+                _ => {}
+            },
+        )
+        .detach();
+        cx.observe(&palette_input, |_, _, cx| cx.notify()).detach();
         let fields = (0..13)
             .map(|_| cx.new(|cx| InputState::new(window, cx)))
             .collect();
@@ -167,12 +289,20 @@ impl ReadingApp {
             toc: vec![],
             drawer: String::new(),
             focus_mode: false,
+            zen_reveal_top: false,
+            zen_reveal_bottom: false,
+            zen_revealed_at: None,
             search_input,
             search_results: vec![],
             searching: false,
             echo: None,
             echo_input: String::new(),
             echo_cfi: String::new(),
+            echo_saved: false,
+            echo_ai_rx: None,
+            echo_ai_worker: mood::generate_passage,
+            highlight_note_target: None,
+            highlight_note_input,
             mood_reply: None,
             mood_rx: None,
             mood_unsaved: None,
@@ -180,6 +310,19 @@ impl ReadingApp {
             mood_scroll: ScrollHandle::new(),
             mood: "疲惫".into(),
             mood_input,
+            breathing_started: None,
+            focus_timer_started: None,
+            focus_timer_total_secs: 25 * 60,
+            focus_timer_picker_open: false,
+            shelf_search,
+            shelf_filter: ShelfFilter::All,
+            rediscovery_offset: 0,
+            journal_search,
+            journal_filter: JournalFilter::All,
+            quote_card: None,
+            palette_open: false,
+            palette_selected: 0,
+            palette_input,
             error: None,
             notice: None,
             confirm: None,
@@ -189,6 +332,8 @@ impl ReadingApp {
             fields,
             spoilers: HashSet::new(),
             audio: None,
+            fading_audio: vec![],
+            chime_audio: None,
             dirty: false,
             last_save: Instant::now(),
             reader_load_started: None,
@@ -327,7 +472,109 @@ impl ReadingApp {
         if let Some(font) = &t.font_asset {
             value["font_url"] = json!(format!("{}/theme/{}/{}", platform::origin(), t.id, font));
         }
+        value["warm_filter"] = json!(self.store.state.warm_filter);
         value
+    }
+    fn active_soundscape_preset(&self) -> SoundscapePreset {
+        self.store
+            .state
+            .soundscape_preset
+            .as_deref()
+            .and_then(SoundscapePreset::from_id)
+            .unwrap_or_else(|| SoundscapePreset::for_theme(&self.theme().id))
+    }
+    fn stop_audio_smoothly(&mut self) {
+        if let Some((stream, sink, handle)) = self.audio.take() {
+            if let Some(handle) = handle {
+                handle.trigger_fade_out();
+                self.fading_audio.retain(|(_, s)| !s.empty());
+                if self.fading_audio.len() >= 3 {
+                    self.fading_audio.remove(0);
+                }
+                self.fading_audio.push((stream, sink));
+            } else {
+                sink.set_volume(0.0);
+                sink.stop();
+            }
+        }
+    }
+    fn start_audio(&mut self, prefer_preset: bool) -> anyhow::Result<String> {
+        let vol = self.theme().volume.clamp(0.05, 1.0);
+        if !prefer_preset && let Some(path) = &self.theme().audio {
+            let source = rodio::Decoder::new(std::io::BufReader::new(fs::File::open(
+                self.store
+                    .root
+                    .join("themes")
+                    .join(&self.theme().id)
+                    .join(path),
+            )?))?;
+            let (stream, handle) = rodio::OutputStream::try_default()
+                .map_err(|_| anyhow::anyhow!("未检测到可用的音频输出设备"))?;
+            let sink = rodio::Sink::try_new(&handle)?;
+            sink.set_volume(vol);
+            sink.append(source.repeat_infinite());
+            self.stop_audio_smoothly();
+            self.audio = Some((stream, sink, None));
+            return Ok("自定义环境音".into());
+        }
+        let preset = self.active_soundscape_preset();
+        let (stream, handle) = rodio::OutputStream::try_default()
+            .map_err(|_| anyhow::anyhow!("未检测到可用的音频输出设备"))?;
+        let sink = rodio::Sink::try_new(&handle)?;
+        sink.set_volume(vol);
+        let (src, stop_handle) = SoundscapeSource::with_handle(preset);
+        sink.append(src);
+        self.stop_audio_smoothly();
+        self.audio = Some((stream, sink, Some(stop_handle)));
+        Ok(preset.label().into())
+    }
+    fn play_chime(&mut self) {
+        if let Ok((stream, handle)) = rodio::OutputStream::try_default()
+            && let Ok(sink) = rodio::Sink::try_new(&handle)
+        {
+            sink.set_volume((self.theme().volume * 0.9).clamp(0.18, 0.7));
+            sink.append(ChimeSource::new());
+            self.chime_audio = Some((stream, sink));
+        }
+    }
+    fn pet_celebration_origin(&self, window: &Window) -> Point<Pixels> {
+        let sz = window.viewport_size();
+        let w = f32::from(sz.width).max(320.0);
+        let h = f32::from(sz.height).max(240.0);
+        match self.page {
+            Page::Reader => point(px((w - 220.0).max(160.0)), px((h - 32.0).max(80.0))),
+            Page::Mood => point(px(580.0_f32.min(w - 80.0)), px(150.0)),
+            _ => point(px((w - 92.0).max(160.0)), px(44.0)),
+        }
+    }
+    fn is_narrow_reader(&self, window: &Window) -> bool {
+        f32::from(window.viewport_size().width) - if self.focus_mode { 0. } else { 224. } - 364.
+            < 480.
+    }
+    fn handle_escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.palette_open {
+            self.palette_open = false;
+            window.focus(&self.focus, cx);
+            cx.notify();
+        } else if self.quote_card.is_some() {
+            self.quote_card = None;
+            window.focus(&self.focus, cx);
+            cx.notify();
+        } else if self.confirm.is_some() {
+            self.confirm = None;
+            cx.notify();
+        } else if self.highlight_note_target.is_some() {
+            self.highlight_note_target = None;
+            window.focus(&self.focus, cx);
+            cx.notify();
+        } else if !self.drawer.is_empty() {
+            self.act(Action::CloseEcho, window, cx);
+            window.focus(&self.focus, cx);
+        } else if self.focus_mode {
+            self.act(Action::Focus, window, cx);
+        } else {
+            self.act(Action::CloseEcho, window, cx);
+        }
     }
     fn configure(&mut self, cx: &App) {
         self.send(
@@ -385,7 +632,14 @@ impl ReadingApp {
         self.search_results.clear();
         self.searching = false;
         self.echo = None;
+        self.echo_input.clear();
         self.echo_cfi.clear();
+        self.echo_saved = false;
+        self.echo_ai_rx = None;
+        self.highlight_note_target = None;
+        self.zen_reveal_top = false;
+        self.zen_reveal_bottom = false;
+        self.zen_revealed_at = None;
         self.toc.clear();
         self.search_input
             .update(cx, |state, cx| state.set_value("", window, cx));
@@ -394,6 +648,14 @@ impl ReadingApp {
         Ok(())
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.fading_audio.retain(|(_, sink)| !sink.empty());
+        if self
+            .chime_audio
+            .as_ref()
+            .is_some_and(|(_, sink)| sink.empty())
+        {
+            self.chime_audio = None;
+        }
         if let Some(result) = self.mood_rx.as_ref().map(|rx| rx.try_recv()) {
             match result {
                 Ok(result) => {
@@ -408,6 +670,49 @@ impl ReadingApp {
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
+        if let Some(result) = self.echo_ai_rx.as_ref().map(|rx| rx.try_recv()) {
+            match result {
+                Ok(result) => {
+                    self.echo_ai_rx = None;
+                    self.finish_ai_passage(result, cx);
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.echo_ai_rx = None;
+                    self.error = Some("AI 共读任务已中断，可以稍后重试。".into());
+                    cx.notify();
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if let Some(started) = self.breathing_started {
+            if started.elapsed() >= Duration::from_secs(60) {
+                self.breathing_started = None;
+                let origin = self.pet_celebration_origin(window);
+                self.motion
+                    .trigger_pet_celebration(origin, self.theme().reduced_motion);
+                self.notice = Some("已完成 1 分钟 4-7-8 呼吸放松，愿此刻慢下来。".into());
+            }
+            cx.notify();
+        }
+        if let Some(started) = self.focus_timer_started {
+            if started.elapsed().as_secs() >= self.focus_timer_total_secs as u64 {
+                self.focus_timer_started = None;
+                let mins = (self.focus_timer_total_secs / 60).max(1);
+                let today = today_ymd();
+                let total_today = self
+                    .store
+                    .add_reading_minutes(mins, &today)
+                    .unwrap_or(self.store.state.reading_minutes_today);
+                self.play_chime();
+                let origin = self.pet_celebration_origin(window);
+                self.motion
+                    .trigger_pet_celebration(origin, self.theme().reduced_motion);
+                self.notice = Some(format!(
+                    "棱镜喵：静读光瓶已蓄满 {mins} 分钟，今天共静心阅读 {total_today} 分钟。"
+                ));
+            }
+            cx.notify();
+        }
         let messages = self
             .rx
             .as_ref()
@@ -420,7 +725,40 @@ impl ReadingApp {
                     continue;
                 }
                 self.last_event = event.request_id;
+                if event.kind == "palette" {
+                    self.act(Action::TogglePalette, window, cx);
+                    continue;
+                }
+                if event.kind == "escape" {
+                    self.handle_escape(window, cx);
+                    continue;
+                }
+                let open_note = event.kind == "highlight" && event.open_note;
+                let celebrated_highlight = event.kind == "highlight";
                 self.event(event, cx);
+                if celebrated_highlight && self.error.is_none() {
+                    let origin = self.pet_celebration_origin(window);
+                    self.motion
+                        .trigger_pet_celebration(origin, self.theme().reduced_motion);
+                }
+                if open_note
+                    && self.error.is_none()
+                    && let Some(target_id) = self.highlight_note_target.clone()
+                {
+                    let existing = self
+                        .store
+                        .state
+                        .books
+                        .iter()
+                        .find(|b| Some(&b.id) == self.active_book.as_ref())
+                        .and_then(|b| b.highlights.iter().find(|h| h.id == target_id))
+                        .and_then(|h| h.note.clone())
+                        .unwrap_or_default();
+                    self.highlight_note_input
+                        .update(cx, |s, cx| s.set_value(existing, window, cx));
+                    let focus = self.highlight_note_input.read(cx).focus_handle(cx).clone();
+                    window.focus(&focus, cx);
+                }
             }
         }
         if self.dirty && self.last_save.elapsed() > Duration::from_millis(800) {
@@ -486,7 +824,12 @@ impl ReadingApp {
                             book.highlights
                                 .iter()
                                 .map(|highlight| {
-                                    json!({"id":highlight.id,"cfi":highlight.cfi,"text":highlight.text})
+                                    json!({
+                                        "id": highlight.id,
+                                        "cfi": highlight.cfi,
+                                        "text": highlight.text,
+                                        "color": highlight.color,
+                                    })
                                 })
                                 .collect::<Vec<_>>(),
                         )
@@ -524,20 +867,117 @@ impl ReadingApp {
             }
             "echo" => {
                 let result = echo::respond(&event.text, None);
-                self.echo_input = event.text.clone();
-                self.echo_cfi = event.cfi.clone();
-                self.echo = Some(result.clone());
+                self.echo_input = event.text;
+                self.echo_cfi = event.cfi;
+                self.echo = Some(result);
+                self.echo_saved = false;
+                self.echo_ai_rx = None;
                 self.drawer = "echo".into();
                 self.spoilers.clear();
-                let location = self.active_book.as_ref().map(|id| Location {
-                    book_id: id.clone(),
-                    cfi: event.cfi,
-                });
-                if let Err(e) = self
+            }
+            "highlight" => {
+                let Some(book_id) = self.active_book.clone() else {
+                    return;
+                };
+                let cfi = event.cfi.clone();
+                let previous = self
                     .store
-                    .record("selection", event.text, None, result, location)
-                {
-                    self.error = Some(e.to_string());
+                    .state
+                    .books
+                    .iter()
+                    .find(|b| b.id == book_id)
+                    .and_then(|b| b.highlights.iter().find(|h| h.cfi == cfi))
+                    .cloned();
+                let color = (!event.color.is_empty()).then_some(event.color);
+                match self.store.add_highlight_styled(
+                    &book_id,
+                    event.text,
+                    cfi.clone(),
+                    color,
+                    None,
+                ) {
+                    Ok((highlight, inserted)) => {
+                        self.error = None;
+                        self.send(
+                            json!({
+                                "kind": "highlight",
+                                "highlight": {
+                                    "id": highlight.id,
+                                    "cfi": highlight.cfi,
+                                    "text": highlight.text,
+                                    "color": highlight.color,
+                                }
+                            }),
+                            cx,
+                        );
+                        if event.open_note {
+                            self.drawer = "highlights".into();
+                            self.highlight_note_target = Some(highlight.id);
+                            self.notice = Some("棱镜喵：已为你定位划线，写下此刻想法吧。".into());
+                        } else if inserted {
+                            self.notice = Some("棱镜喵：这句微光已经悄悄划下来啦。".into());
+                        } else {
+                            self.notice = Some("已更新这条划线的颜色。".into());
+                        }
+                    }
+                    Err(e) => {
+                        self.error = Some(e.to_string());
+                        // Roll back any optimistic highlight rendered by the WebView
+                        if let Some(prev) = previous {
+                            self.send(
+                                json!({
+                                    "kind": "highlight",
+                                    "highlight": {
+                                        "id": prev.id,
+                                        "cfi": prev.cfi,
+                                        "text": prev.text,
+                                        "color": prev.color,
+                                    }
+                                }),
+                                cx,
+                            );
+                        } else if !cfi.is_empty() {
+                            self.send(json!({"kind": "unhighlight", "cfi": cfi}), cx);
+                        }
+                    }
+                }
+            }
+            "copy" => {
+                let title = self
+                    .store
+                    .state
+                    .books
+                    .iter()
+                    .find(|b| Some(&b.id) == self.active_book.as_ref())
+                    .map(|b| b.title.as_str())
+                    .unwrap_or("微光藏书");
+                let excerpt = format!("“{}”\n——《{}》", event.text.trim(), title);
+                cx.write_to_clipboard(ClipboardItem::new_string(excerpt));
+                self.notice = Some("已复制带书名出处的摘录到剪贴板。".into());
+            }
+            "edge" => {
+                if self.focus_mode && self.page == Page::Reader {
+                    match event.text.as_str() {
+                        "top" => {
+                            self.zen_reveal_top = true;
+                            self.zen_reveal_bottom = false;
+                            self.zen_revealed_at = Some(Instant::now());
+                        }
+                        "bottom" => {
+                            self.zen_reveal_bottom = true;
+                            self.zen_reveal_top = false;
+                            self.zen_revealed_at = Some(Instant::now());
+                        }
+                        _ => {
+                            if self
+                                .zen_revealed_at
+                                .is_none_or(|t| t.elapsed() >= Duration::from_millis(320))
+                            {
+                                self.zen_reveal_top = false;
+                                self.zen_reveal_bottom = false;
+                            }
+                        }
+                    }
                 }
             }
             "search" => {
@@ -545,8 +985,19 @@ impl ReadingApp {
                 self.search_results = event.results;
             }
             "escape" => {
-                self.drawer.clear();
-                self.focus_mode = false;
+                if self.palette_open {
+                    self.palette_open = false;
+                } else if self.quote_card.is_some() {
+                    self.quote_card = None;
+                } else if self.highlight_note_target.is_some() {
+                    self.highlight_note_target = None;
+                } else if !self.drawer.is_empty() {
+                    self.drawer.clear();
+                } else {
+                    self.focus_mode = false;
+                    self.zen_reveal_top = false;
+                    self.zen_reveal_bottom = false;
+                }
             }
             "error" => {
                 self.error = Some(event.text);
@@ -609,6 +1060,16 @@ impl ReadingApp {
                 .detach();
             }
             Action::Open(id) => self.open(&id, window, cx)?,
+            Action::OpenAt(target) => {
+                let (id, cfi) = *target;
+                if let Some(book) = self.store.state.books.iter_mut().find(|b| b.id == id) {
+                    book.location = Some(Location {
+                        book_id: id.clone(),
+                        cfi,
+                    });
+                }
+                self.open(&id, window, cx)?;
+            }
             Action::Remove(id) => self.confirm = Some(format!("book:{id}")),
             Action::ConfirmRemove => {
                 if let Some(value) = self.confirm.take()
@@ -635,7 +1096,12 @@ impl ReadingApp {
             }
             Action::Prev => self.send(json!({"kind":"prev"}), cx),
             Action::Next => self.send(json!({"kind":"next"}), cx),
-            Action::Focus => self.focus_mode = !self.focus_mode,
+            Action::Focus => {
+                self.focus_mode = !self.focus_mode;
+                self.zen_reveal_top = false;
+                self.zen_reveal_bottom = false;
+                self.zen_revealed_at = None;
+            }
             Action::Toc => self.drawer = if self.drawer == "toc" { "" } else { "toc" }.into(),
             Action::Search => {
                 if self.drawer == "search" {
@@ -656,6 +1122,7 @@ impl ReadingApp {
                 self.send(json!({"kind":"search","query":query}), cx);
             }
             Action::Highlights => {
+                self.highlight_note_target = None;
                 self.drawer = if self.drawer == "highlights" {
                     ""
                 } else {
@@ -699,10 +1166,21 @@ impl ReadingApp {
                 self.configure(cx);
                 self.save();
             }
+            Action::ToggleWarmFilter => {
+                self.store.state.warm_filter = !self.store.state.warm_filter;
+                self.configure(cx);
+                self.save();
+                self.notice = Some(if self.store.state.warm_filter {
+                    "已开启夜间暖光护眼滤镜。".into()
+                } else {
+                    "已关闭暖光护眼滤镜。".into()
+                });
+            }
             Action::ResetTypography => {
                 self.store.state.reader_font_size = None;
                 self.store.state.reader_line_height = None;
                 self.store.state.reader_width = None;
+                self.store.state.warm_filter = false;
                 self.configure(cx);
                 self.save();
                 self.notice = Some("已恢复当前主题的默认排版。".into());
@@ -713,29 +1191,184 @@ impl ReadingApp {
                     .clone()
                     .context("请先打开一本可以划线的书")?;
                 anyhow::ensure!(!self.echo_cfi.is_empty(), "请先选择一段文字");
-                let (highlight, inserted) = self.store.add_highlight(
+                let (highlight, inserted) = self.store.add_highlight_styled(
                     &book_id,
                     self.echo_input.clone(),
                     self.echo_cfi.clone(),
+                    Some("amber".into()),
+                    None,
                 )?;
+                self.send(
+                    json!({
+                        "kind": "highlight",
+                        "highlight": {
+                            "id": highlight.id,
+                            "cfi": highlight.cfi,
+                            "text": highlight.text,
+                            "color": highlight.color,
+                        }
+                    }),
+                    cx,
+                );
                 if inserted {
-                    self.send(
-                        json!({"kind":"highlight","highlight":{"id":highlight.id,"cfi":highlight.cfi,"text":highlight.text}}),
-                        cx,
-                    );
+                    let origin = self.pet_celebration_origin(window);
+                    self.motion
+                        .trigger_pet_celebration(origin, self.theme().reduced_motion);
                     self.notice = Some("已留下划线，之后可以在「划线」里找回。".into());
                 } else {
                     self.notice = Some("这段文字已经留过划线。".into());
                 }
             }
+            Action::HighlightColor(color) => {
+                let book_id = self
+                    .active_book
+                    .clone()
+                    .context("请先打开一本可以划线的书")?;
+                anyhow::ensure!(!self.echo_cfi.is_empty(), "请先选择一段文字");
+                let (highlight, inserted) = self.store.add_highlight_styled(
+                    &book_id,
+                    self.echo_input.clone(),
+                    self.echo_cfi.clone(),
+                    Some(color),
+                    None,
+                )?;
+                self.send(
+                    json!({
+                        "kind": "highlight",
+                        "highlight": {
+                            "id": highlight.id,
+                            "cfi": highlight.cfi,
+                            "text": highlight.text,
+                            "color": highlight.color,
+                        }
+                    }),
+                    cx,
+                );
+                let origin = self.pet_celebration_origin(window);
+                self.motion
+                    .trigger_pet_celebration(origin, self.theme().reduced_motion);
+                self.notice = Some(if inserted {
+                    "棱镜喵：已按你挑选的颜色留住这句微光。".into()
+                } else {
+                    "已更新这条划线的颜色。".into()
+                });
+            }
+            Action::RecolorHighlight(pair) => {
+                let (id, color) = *pair;
+                let Some(book_id) = self.active_book.clone() else {
+                    return Ok(());
+                };
+                if let Some(highlight) =
+                    self.store
+                        .update_highlight(&book_id, &id, Some(Some(color)), None)?
+                {
+                    self.send(
+                        json!({
+                            "kind": "highlight",
+                            "highlight": {
+                                "id": highlight.id,
+                                "cfi": highlight.cfi,
+                                "text": highlight.text,
+                                "color": highlight.color,
+                            }
+                        }),
+                        cx,
+                    );
+                    self.notice = Some("已更新划线颜色。".into());
+                }
+            }
+            Action::EditHighlightNote(id) => {
+                let existing = self
+                    .store
+                    .state
+                    .books
+                    .iter()
+                    .find(|b| Some(&b.id) == self.active_book.as_ref())
+                    .and_then(|b| b.highlights.iter().find(|h| h.id == id))
+                    .and_then(|h| h.note.clone())
+                    .unwrap_or_default();
+                self.highlight_note_target = Some(id);
+                self.highlight_note_input
+                    .update(cx, |s, cx| s.set_value(existing, window, cx));
+                let focus = self.highlight_note_input.read(cx).focus_handle(cx).clone();
+                window.focus(&focus, cx);
+            }
+            Action::SaveHighlightNote => {
+                let Some(book_id) = self.active_book.clone() else {
+                    return Ok(());
+                };
+                let Some(target_id) = self.highlight_note_target.clone() else {
+                    return Ok(());
+                };
+                let note = self.highlight_note_input.read(cx).value().to_string();
+                self.store
+                    .update_highlight(&book_id, &target_id, None, Some(Some(note)))?;
+                self.highlight_note_target = None;
+                self.notice = Some("批注已保存。".into());
+            }
+            Action::CancelHighlightNote => {
+                self.highlight_note_target = None;
+            }
             Action::DeleteHighlight(id) => {
                 let Some(book_id) = self.active_book.clone() else {
                     return Ok(());
                 };
+                if self.highlight_note_target.as_deref() == Some(id.as_str()) {
+                    self.highlight_note_target = None;
+                }
                 if let Some(highlight) = self.store.remove_highlight(&book_id, &id)? {
                     self.send(json!({"kind":"unhighlight","cfi":highlight.cfi}), cx);
                     self.notice = Some("已删除这条划线，书页内容不受影响。".into());
                 }
+            }
+            Action::SaveEchoToJournal => {
+                let echo = self.echo.clone().context("当前没有可保存的回响")?;
+                anyhow::ensure!(!self.echo_saved, "这条回响已经存入私人日记了");
+                let location = self
+                    .active_book
+                    .as_ref()
+                    .filter(|_| glow_core::model::valid_cfi(&self.echo_cfi))
+                    .map(|id| Location {
+                        book_id: id.clone(),
+                        cfi: self.echo_cfi.clone(),
+                    });
+                self.store
+                    .record("selection", self.echo_input.clone(), None, echo, location)?;
+                self.echo_saved = true;
+                self.notice = Some("已存入私人微光手账。".into());
+            }
+            Action::AskAiPassage => {
+                if self.echo_ai_rx.is_some() {
+                    return Ok(());
+                }
+                let passage = self.echo_input.trim().to_owned();
+                anyhow::ensure!(!passage.is_empty(), "请先在书中选中一段文字");
+                let book_id = self.active_book.clone();
+                let cfi = self.echo_cfi.clone();
+                let book_title = self
+                    .store
+                    .state
+                    .books
+                    .iter()
+                    .find(|b| Some(&b.id) == book_id.as_ref())
+                    .map(|b| b.title.clone())
+                    .unwrap_or_else(|| "微光藏书".into());
+                let worker = self.echo_ai_worker;
+                let (sender, receiver) = mpsc::channel();
+                self.echo_ai_rx = Some(receiver);
+                std::thread::spawn(move || {
+                    let outcome = worker(&passage, &book_title).map(|result| PassageGenerated {
+                        book_id,
+                        passage,
+                        cfi,
+                        result,
+                    });
+                    let _ = sender.send(outcome);
+                });
+            }
+            Action::CancelAiPassage => {
+                self.echo_ai_rx = None;
+                self.notice = Some("已停止等待 AI 段落共读。已发出的请求可能仍会计费。".into());
             }
             Action::Bookmarks => {
                 self.drawer = if self.drawer == "bookmarks" {
@@ -760,7 +1393,10 @@ impl ReadingApp {
                         location: location.clone(),
                     });
                     self.save();
-                    self.notice = Some("已留下书签。".into());
+                    let origin = self.pet_celebration_origin(window);
+                    self.motion
+                        .trigger_pet_celebration(origin, self.theme().reduced_motion);
+                    self.notice = Some("棱镜喵：已替你折好这一页的书签。".into());
                 }
             }
             Action::Locate(target) => {
@@ -775,6 +1411,7 @@ impl ReadingApp {
                 self.drawer.clear();
             }
             Action::CloseEcho => {
+                self.highlight_note_target = None;
                 self.drawer.clear();
                 self.send(json!({"kind":"restore"}), cx);
             }
@@ -809,6 +1446,50 @@ impl ReadingApp {
                     let _ = sender.send(result);
                 });
             }
+            Action::ToggleBreathing => {
+                if self.breathing_started.is_some() {
+                    self.breathing_started = None;
+                    self.notice = Some("已结束呼吸引导，随时可以再坐一会儿。".into());
+                } else {
+                    self.breathing_started = Some(Instant::now());
+                    self.schedule_motion_frame(window, cx);
+                    self.notice =
+                        Some("已开启 4-7-8 呼吸光环：吸气 4 秒 · 屏息 7 秒 · 呼气 8 秒。".into());
+                }
+            }
+            Action::ToggleTimerPicker => {
+                self.focus_timer_picker_open = !self.focus_timer_picker_open;
+            }
+            Action::StartFocusTimer(minutes) => {
+                let mins = minutes.clamp(1, 120);
+                self.focus_timer_total_secs = mins * 60;
+                self.focus_timer_started = Some(Instant::now());
+                self.focus_timer_picker_open = false;
+                self.schedule_motion_frame(window, cx);
+                self.notice = Some(format!(
+                    "棱镜喵：已开启 {mins} 分钟静读光瓶，不急不躁，慢慢读吧。"
+                ));
+            }
+            Action::StopFocusTimer => {
+                let elapsed_mins = self
+                    .focus_timer_started
+                    .take()
+                    .map(|started| (started.elapsed().as_secs() / 60) as u32)
+                    .unwrap_or(0);
+                self.focus_timer_picker_open = false;
+                if elapsed_mins > 0 {
+                    let today = today_ymd();
+                    let total_today = self
+                        .store
+                        .add_reading_minutes(elapsed_mins, &today)
+                        .unwrap_or(self.store.state.reading_minutes_today);
+                    self.notice = Some(format!(
+                        "已温柔收起光瓶，为你记下刚才静读的 {elapsed_mins} 分钟（今日共 {total_today} 分钟）。"
+                    ));
+                } else {
+                    self.notice = Some("已结束本次静读光瓶。".into());
+                }
+            }
             Action::Favorite(id) => {
                 self.store.edit_journal(|entries| {
                     if let Some(entry) = entries.iter_mut().find(|entry| entry.id == id) {
@@ -825,14 +1506,101 @@ impl ReadingApp {
                 self.store.edit_journal(Vec::clear)?;
                 self.confirm = None;
             }
+            Action::ShelfFilter(filter) => self.shelf_filter = filter,
+            Action::NextRediscovery => {
+                self.rediscovery_offset = self.rediscovery_offset.wrapping_add(1);
+            }
+            Action::JournalFilter(filter) => self.journal_filter = filter,
+            Action::ExportJournalMarkdown => {
+                anyhow::ensure!(
+                    !self.store.state.journal.is_empty(),
+                    "日记还是空的，先留下几条回响吧"
+                );
+                self.hide(cx);
+                let markdown = format_journal_markdown(&self.store.state.journal);
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_parent(window)
+                    .set_title("导出微光手账 (Markdown)")
+                    .set_file_name("微光手账.md")
+                    .add_filter("Markdown", &["md"])
+                    .save_file()
+                {
+                    glow_core::store::atomic_write(&path, markdown.as_bytes())?;
+                    self.notice = Some("已导出为 Markdown 手账文件。".into());
+                }
+            }
+            Action::OpenQuoteCard(draft) => {
+                self.palette_open = false;
+                self.quote_card = Some(*draft);
+            }
+            Action::QuoteCardStyle(style) => {
+                if let Some(card) = &mut self.quote_card {
+                    card.style = style;
+                }
+            }
+            Action::SaveQuoteCardPng => {
+                let draft = self.quote_card.clone().context("请先选择要生成的书摘")?;
+                self.hide(cx);
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_parent(window)
+                    .set_title("保存高清微光书摘卡")
+                    .set_file_name("微光书摘卡.png")
+                    .add_filter("PNG 图片", &["png"])
+                    .save_file()
+                {
+                    quotecard::save_png(&draft, &path)?;
+                    self.notice = Some("微光书摘卡已保存为高清 PNG 图片。".into());
+                }
+            }
+            Action::CopyQuoteCardText => {
+                if let Some(card) = &self.quote_card {
+                    let mut text =
+                        format!("“{}”\n—— {}", card.text.trim(), card.attribution.trim());
+                    if let Some(note) = card
+                        .note
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|n| !n.is_empty())
+                    {
+                        text.push_str(&format!("\n批注：{note}"));
+                    }
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    self.notice = Some("已复制书摘文字到剪贴板。".into());
+                }
+            }
+            Action::CloseQuoteCard => {
+                self.quote_card = None;
+                window.focus(&self.focus, cx);
+            }
+            Action::TogglePalette => {
+                self.palette_open = !self.palette_open;
+                self.palette_selected = 0;
+                if self.palette_open {
+                    self.palette_input
+                        .update(cx, |s, cx| s.set_value("", window, cx));
+                    let focus = self.palette_input.read(cx).focus_handle(cx).clone();
+                    window.focus(&focus, cx);
+                } else {
+                    window.focus(&self.focus, cx);
+                }
+            }
+            Action::ClosePalette => {
+                self.palette_open = false;
+                window.focus(&self.focus, cx);
+            }
             Action::PickTheme(index) => {
                 let all = self.all_themes();
                 if let Some(t) = all.get(index) {
+                    let was_playing = self.audio.is_some();
                     self.store.state.theme = t.clone();
-                    self.audio = None;
+                    self.store.state.soundscape_preset = None;
+                    self.stop_audio_smoothly();
                     self.preview = None;
                     self.install_native_theme(cx);
                     self.configure(cx);
+                    if was_playing {
+                        let _ = self.start_audio(false);
+                    }
                     self.save();
                 }
             }
@@ -851,7 +1619,7 @@ impl ReadingApp {
             Action::SaveTheme => {
                 let t = self.read_fields(cx)?;
                 self.store.save_theme(t)?;
-                self.audio = None;
+                self.stop_audio_smoothly();
                 self.draft = None;
                 self.preview = None;
                 self.install_native_theme(cx);
@@ -881,7 +1649,7 @@ impl ReadingApp {
                     .pick_file()
                 {
                     self.store.import_theme(&path)?;
-                    self.audio = None;
+                    self.stop_audio_smoothly();
                     self.install_native_theme(cx);
                     self.configure(cx);
                 }
@@ -919,23 +1687,32 @@ impl ReadingApp {
             }
             Action::Audio => {
                 if self.audio.is_some() {
-                    self.audio = None;
-                } else if let Some(path) = &self.theme().audio {
-                    let source = rodio::Decoder::new(std::io::BufReader::new(fs::File::open(
-                        self.store
-                            .root
-                            .join("themes")
-                            .join(&self.theme().id)
-                            .join(path),
-                    )?))?;
-                    let (stream, handle) = rodio::OutputStream::try_default()?;
-                    let sink = rodio::Sink::try_new(&handle)?;
-                    sink.set_volume(self.theme().volume);
-                    sink.append(source.repeat_infinite());
-                    self.audio = Some((stream, sink));
+                    self.stop_audio_smoothly();
+                    self.notice = Some("已轻声关闭环境声景。".into());
                 } else {
-                    self.notice = Some("可在主题编辑器中添加自己的环境音。".into());
+                    let label = self.start_audio(false)?;
+                    self.schedule_motion_frame(window, cx);
+                    self.notice = Some(format!("已开启环境声景：{label}。"));
                 }
+            }
+            Action::Soundscape(preset) => {
+                self.store.state.soundscape_preset = Some(preset.id().into());
+                self.save();
+                let label = self.start_audio(true)?;
+                self.schedule_motion_frame(window, cx);
+                self.notice = Some(format!("声景频道已调频至：{label}。"));
+            }
+            Action::AudioVolume(delta) => {
+                let steps = (self.store.state.theme.volume * 20.0).round() as i32 + delta as i32;
+                let clamped = (steps as f32 / 20.0).clamp(0.05, 1.0);
+                self.store.state.theme.volume = clamped;
+                if let Some(preview) = &mut self.preview {
+                    preview.volume = clamped;
+                }
+                if let Some((_, sink, _)) = &self.audio {
+                    sink.set_volume(clamped);
+                }
+                self.save();
             }
             Action::ReducedMotion => {
                 if let Some(t) = &mut self.draft {
@@ -992,6 +1769,55 @@ impl ReadingApp {
             }
         }
         Ok(())
+    }
+    fn finish_ai_passage(
+        &mut self,
+        result: anyhow::Result<PassageGenerated>,
+        cx: &mut Context<Self>,
+    ) {
+        match result {
+            Err(error) => self.error = Some(error.to_string()),
+            Ok(mut generated) => {
+                let same_passage = self.echo_input.trim() == generated.passage;
+                // Keep any matched classical quotes alongside the fresh AI companion reflection
+                if same_passage && let Some(existing) = &self.echo {
+                    generated.result.quotes = existing.quotes.clone();
+                }
+                if same_passage {
+                    self.echo = Some(generated.result.clone());
+                }
+                let location = generated
+                    .book_id
+                    .as_ref()
+                    .filter(|id| {
+                        glow_core::model::valid_cfi(&generated.cfi)
+                            && self.store.state.books.iter().any(|b| &b.id == *id)
+                    })
+                    .map(|id| Location {
+                        book_id: id.clone(),
+                        cfi: generated.cfi.clone(),
+                    });
+                match self.store.record(
+                    "selection",
+                    generated.passage,
+                    None,
+                    generated.result,
+                    location,
+                ) {
+                    Ok(()) => {
+                        if same_passage {
+                            self.echo_saved = true;
+                        }
+                        self.error = None;
+                        self.notice = Some("AI 段落共读已送达，并为你收入私人手账。".into());
+                    }
+                    Err(error) => {
+                        self.error = Some(format!("AI 共读已生成，但日记保存失败：{error}"));
+                    }
+                }
+            }
+        }
+        cx.notify();
     }
     fn finish_mood(
         &mut self,
@@ -1143,6 +1969,9 @@ impl ReadingApp {
     fn is_prism(&self) -> bool {
         self.theme().id == "prism"
     }
+    fn is_sky(&self) -> bool {
+        self.theme().id == "forest"
+    }
     fn schedule_motion_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.frame_scheduled || self.theme().reduced_motion || cfg!(test) || self.smoke {
             return;
@@ -1162,14 +1991,38 @@ impl ReadingApp {
     }
     fn motion_snapshot(&self) -> MotionSnapshot {
         let t = self.theme();
+        let active_mood = if self.page == Page::Mood {
+            Some(self.mood.clone())
+        } else {
+            self.store
+                .state
+                .journal
+                .first()
+                .and_then(|entry| entry.mood.clone())
+        };
         self.motion.snapshot(
             self.is_prism(),
+            self.is_sky(),
             hex(&t.accent),
             self.is_dark(),
             t.reduced_motion,
+            active_mood,
         )
     }
+    fn focus_timer_progress(&self) -> Option<(f32, u32)> {
+        let started = self.focus_timer_started?;
+        let elapsed = started.elapsed().as_secs_f32();
+        let total = (self.focus_timer_total_secs as f32).max(1.0);
+        let ratio = (elapsed / total).clamp(0.0, 1.0);
+        let remaining_secs = (self.focus_timer_total_secs as f32 - elapsed)
+            .max(0.0)
+            .ceil() as u32;
+        Some((ratio, remaining_secs))
+    }
     fn overall_reading_progress(&self) -> f32 {
+        if let Some((ratio, _)) = self.focus_timer_progress() {
+            return ratio.clamp(0.0, 1.0);
+        }
         if let Some(active_id) = self
             .active_book
             .as_ref()
@@ -1177,20 +2030,63 @@ impl ReadingApp {
             && let Some(book) = self.store.state.books.iter().find(|b| &b.id == active_id)
             && let Some(p) = book.progress
         {
-            return p.clamp(0.18, 0.94);
+            return p.clamp(0.0, 1.0);
         }
-        let max_p = self
-            .store
+        self.store
             .state
             .books
             .iter()
             .filter_map(|b| b.progress)
-            .fold(0.0_f32, f32::max);
-        if max_p > 0.01 {
-            max_p.clamp(0.18, 0.94)
-        } else {
-            0.34
+            .fold(0.0_f32, f32::max)
+            .clamp(0.0, 1.0)
+    }
+    fn daily_rediscovery(&self) -> Option<DailyRediscovery> {
+        let mut pool: Vec<RediscoveryItem> = Vec::new();
+        for book in &self.store.state.books {
+            for hl in &book.highlights {
+                pool.push((
+                    hl.text.clone(),
+                    format!("《{}》", book.title),
+                    Some((book.id.clone(), hl.cfi.clone())),
+                ));
+            }
         }
+        if pool.is_empty() {
+            for entry in self.store.state.journal.iter().filter(|e| e.favorite) {
+                let text = if !entry.input.trim().is_empty() {
+                    entry.input.clone()
+                } else {
+                    entry.echo.reply.clone()
+                };
+                let target = entry
+                    .location
+                    .as_ref()
+                    .filter(|loc| {
+                        glow_core::model::valid_cfi(&loc.cfi)
+                            && self.store.state.books.iter().any(|b| b.id == loc.book_id)
+                    })
+                    .map(|loc| (loc.book_id.clone(), loc.cfi.clone()));
+                pool.push((
+                    text,
+                    entry
+                        .mood
+                        .as_ref()
+                        .map(|m| format!("收藏心情 · {m}"))
+                        .unwrap_or_else(|| "收藏回响".into()),
+                    target,
+                ));
+            }
+        }
+        let total = pool.len();
+        if total == 0 {
+            return None;
+        }
+        let day = time::OffsetDateTime::now_local()
+            .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+            .ordinal() as usize;
+        let idx = (day + self.rediscovery_offset) % total;
+        let (text, source, target) = pool.into_iter().nth(idx)?;
+        Some((text, source, target, total))
     }
     fn pet_dock(&self, id: &'static str, cx: &Context<Self>) -> impl IntoElement {
         let snap = self.motion_snapshot();
@@ -1241,6 +2137,9 @@ impl ReadingApp {
         }
     }
     fn waveform_bars(&self, active: bool, heights: &[f32]) -> Div {
+        self.waveform_bars_tinted(active, heights, None)
+    }
+    fn waveform_bars_tinted(&self, active: bool, heights: &[f32], tint: Option<u32>) -> Div {
         let t = self.theme();
         let prism = self.is_prism();
         let animate = !t.reduced_motion && (active || prism);
@@ -1261,13 +2160,15 @@ impl ReadingApp {
             } else {
                 0.24
             };
-            let bar_bg: Hsla = if prism {
+            let bar_bg: Hsla = if prism && tint.is_none() {
                 prism::spectral_color(
                     (idx as f32 / heights.len().max(1) as f32) + self.motion.phase * 0.06,
                     opacity,
                 )
             } else {
-                rgb(hex(&t.accent)).opacity(opacity).into()
+                rgb(tint.unwrap_or_else(|| hex(&t.accent)))
+                    .opacity(opacity)
+                    .into()
             };
             row = row.child(div().w(px(2.5)).h(px(dyn_h)).rounded_full().bg(bar_bg));
         }
@@ -1326,6 +2227,63 @@ impl ReadingApp {
         cx: &Context<Self>,
     ) -> Button {
         self.button(label, action, cx).icon(icon)
+    }
+    fn pill_button(
+        &self,
+        label: &str,
+        icon: Option<IconName>,
+        active: bool,
+        action: Action,
+        cx: &Context<Self>,
+    ) -> Div {
+        let t = self.theme();
+        let style = ButtonCustomVariant::new(cx)
+            .color(if active {
+                rgb(hex(&t.paper)).opacity(0.0).into()
+            } else {
+                rgb(hex(&t.paper))
+                    .opacity(if self.is_dark() { 0.45 } else { 0.72 })
+                    .into()
+            })
+            .foreground(if active {
+                rgb(hex(&t.paper)).into()
+            } else {
+                rgb(hex(&t.text)).into()
+            })
+            .hover(if active {
+                rgb(hex(&t.accent)).opacity(0.90).into()
+            } else {
+                rgb(hex(&t.accent)).opacity(0.14).into()
+            })
+            .active(rgb(hex(&t.accent)).opacity(0.24).into());
+        let mut button = Button::new(SharedString::from(format!("pill-{label}-{action:?}")))
+            .label(label.to_owned())
+            .custom(style)
+            .rounded(px(18.))
+            .h(px(32.))
+            .px_3()
+            .font_family(self.ui_font())
+            .text_size(px(12.))
+            .toggled(active)
+            .disabled(self.busy)
+            .debug_selector({
+                let label = label.to_owned();
+                move || label.clone()
+            })
+            .on_click(cx.listener(move |this, _, window, cx| this.act(action.clone(), window, cx)));
+        if let Some(icon) = icon {
+            button = button.icon(icon);
+        }
+        div()
+            .rounded(px(18.))
+            .border_1()
+            .border_color(if active {
+                Hsla::from(rgb(hex(&t.accent)).opacity(0.92))
+            } else {
+                self.border_subtle()
+            })
+            .when(active, |this| this.bg(rgb(hex(&t.accent))).shadow_sm())
+            .child(button)
     }
     fn nav_button(
         &self,
@@ -1469,6 +2427,7 @@ impl ReadingApp {
     fn shelf(&self, cx: &Context<Self>) -> AnyElement {
         let t = self.theme();
         let is_dark = self.is_dark();
+        let is_sky = self.is_sky();
         let total_highlights: usize = self
             .store
             .state
@@ -1477,9 +2436,38 @@ impl ReadingApp {
             .map(|b| b.highlights.len())
             .sum();
         let total_journal = self.store.state.journal.len();
+        let query = self.shelf_search.read(cx).value().trim().to_lowercase();
+        let filtered_books: Vec<(usize, &glow_core::Book)> = self
+            .store
+            .state
+            .books
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| {
+                let status_ok = match self.shelf_filter {
+                    ShelfFilter::All => true,
+                    ShelfFilter::Finished => b.progress.is_some_and(|p| p >= 0.95),
+                    ShelfFilter::Reading => {
+                        b.location.is_some() && !b.progress.is_some_and(|p| p >= 0.95)
+                    }
+                    ShelfFilter::Unread => b.location.is_none(),
+                };
+                if !status_ok {
+                    return false;
+                }
+                if query.is_empty() {
+                    return true;
+                }
+                b.title.to_lowercase().contains(&query) || b.author.to_lowercase().contains(&query)
+            })
+            .collect();
         let mut books = h_flex().flex_wrap().gap_5().items_start();
-        for (i, b) in self.store.state.books.iter().enumerate() {
-            let colors = [0x385043, 0x69503d, 0x364d56, 0x524656];
+        for (i, b) in filtered_books.iter().copied() {
+            let colors = if is_sky {
+                [0x2b6294, 0x3b729c, 0x385e82, 0x4b6b8e]
+            } else {
+                [0x385043, 0x69503d, 0x364d56, 0x524656]
+            };
             let reading_label = if let Some(progress) = b.progress {
                 format!("已读 {:.0}%", progress * 100.0)
             } else if b.location.is_some() {
@@ -1625,7 +2613,7 @@ impl ReadingApp {
                                 .px_2()
                                 .py_0p5()
                                 .rounded_full()
-                                .bg(rgb(0x0c1613).opacity(0.76))
+                                .bg(rgb(if is_sky { 0x133352 } else { 0x0c1613 }).opacity(0.78))
                                 .border_1()
                                 .border_color(rgb(0xffffff).opacity(0.18))
                                 .text_size(px(10.))
@@ -1642,7 +2630,7 @@ impl ReadingApp {
                                 .px_1p5()
                                 .py_0p5()
                                 .rounded(px(5.))
-                                .bg(rgb(0x0c1613).opacity(0.68))
+                                .bg(rgb(if is_sky { 0x133352 } else { 0x0c1613 }).opacity(0.72))
                                 .text_size(px(9.))
                                 .font_family(self.ui_font())
                                 .text_color(rgb(0xe8efe9))
@@ -1813,6 +2801,7 @@ impl ReadingApp {
                         .primary(),
                 ),
         );
+        let (circ_kicker, circ_title, circ_sub, is_late_night) = circadian_greeting();
         let resume = self
             .store
             .state
@@ -1831,18 +2820,181 @@ impl ReadingApp {
                 .map(|progress| format!(" · 已读 {:.0}%", progress * 100.0))
                 .unwrap_or_default();
             (
-                "CONTINUE YOUR STORY · 续读波段",
+                circ_kicker,
                 "回到故事里，\n那盏灯还亮着。".to_owned(),
                 format!("《{}》 · {chapter}{progress}", book.title),
             )
         } else {
-            (
-                "A LITTLE LIGHT · 慢读时刻",
-                "让心慢下来，\n读几页吧。".to_owned(),
-                "这里没有读完的期限。故事和微光，都会等你。".to_owned(),
-            )
+            (circ_kicker, circ_title.to_owned(), circ_sub.to_owned())
         };
+        let rediscovery = self.daily_rediscovery();
         let snap = self.motion_snapshot();
+        let mut hero_actions = h_flex()
+            .gap_2p5()
+            .items_center()
+            .flex_wrap()
+            .child(
+                self.button_with_icon(
+                    if resume.is_some() {
+                        "继续上次阅读"
+                    } else {
+                        "导入一本书"
+                    },
+                    if resume.is_some() {
+                        IconName::BookOpen
+                    } else {
+                        IconName::Plus
+                    },
+                    if let Some(book) = resume {
+                        Action::Open(book.id.clone())
+                    } else {
+                        Action::Import
+                    },
+                    cx,
+                )
+                .primary(),
+            )
+            .child(self.button_with_icon(
+                "此刻的心情",
+                IconName::MessageCircleHeart,
+                Action::Page(Page::Mood),
+                cx,
+            ));
+        if is_late_night && !is_dark {
+            hero_actions = hero_actions
+                .child(self.button_with_icon("切到静夜", IconName::Moon, Action::PickTheme(2), cx))
+                .child(self.button_with_icon(
+                    "黑曜棱镜",
+                    IconName::Sparkles,
+                    Action::PickTheme(3),
+                    cx,
+                ));
+        }
+        let hud_bg = if is_sky {
+            rgb(0x133352).opacity(0.72)
+        } else {
+            rgb(0x0b1512).opacity(0.70)
+        };
+        let hud_gold = if is_sky { rgb(0xbae6fd) } else { rgb(0xf5dc9c) };
+        let hud_wave_tint = if is_sky {
+            Some(0x93c5fd)
+        } else {
+            Some(0xf5dc9c)
+        };
+        let rediscovery_card =
+            if let Some((quote_text, source_label, target, pool_len)) = rediscovery {
+                let short_quote: String = if quote_text.chars().count() > 42 {
+                    format!(
+                        "{}…",
+                        quote_text.chars().take(42).collect::<String>().trim_end()
+                    )
+                } else {
+                    quote_text
+                };
+                let mut card = v_flex()
+                    .max_w(px(330.))
+                    .px_4()
+                    .py_2p5()
+                    .gap_1()
+                    .items_end()
+                    .rounded_xl()
+                    .bg(hud_bg)
+                    .border_1()
+                    .border_color(rgb(0xffffff).opacity(0.22))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .items_center()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_size(px(9.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(hud_gold)
+                                    .child(format!("今日重逢 · {source_label}")),
+                            )
+                            .when(pool_len > 1, |this| {
+                                this.child(
+                                    div()
+                                        .id("next-rediscovery")
+                                        .cursor_pointer()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_full()
+                                        .bg(rgb(0xffffff).opacity(0.14))
+                                        .text_size(px(9.))
+                                        .font_family(self.ui_font())
+                                        .text_color(rgb(0xffffff))
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(|this, _, window, cx| {
+                                                this.act(Action::NextRediscovery, window, cx);
+                                            }),
+                                        )
+                                        .child("换一句"),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(14.5))
+                            .font_family(self.display_font())
+                            .line_height(relative(1.45))
+                            .text_color(rgb(0xfffdf7))
+                            .child(format!("“{short_quote}”")),
+                    );
+                if let Some((book_id, cfi)) = target {
+                    card = card.child(
+                        div()
+                            .id("open-rediscovery")
+                            .cursor_pointer()
+                            .text_size(px(10.))
+                            .font_family(self.ui_font())
+                            .text_color(hud_gold)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, window, cx| {
+                                    this.act(
+                                        Action::OpenAt(Box::new((book_id.clone(), cfi.clone()))),
+                                        window,
+                                        cx,
+                                    );
+                                }),
+                            )
+                            .child("点击回到书中这一段 →"),
+                    );
+                }
+                card
+            } else {
+                v_flex()
+                    .px_4()
+                    .py_2p5()
+                    .gap_0p5()
+                    .items_end()
+                    .rounded_xl()
+                    .bg(hud_bg)
+                    .border_1()
+                    .border_color(rgb(0xffffff).opacity(0.20))
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .font_family(self.ui_font())
+                            .text_color(hud_gold)
+                            .child(if is_sky {
+                                "云端晴空 · 今天的一小段"
+                            } else {
+                                "今天的一小段"
+                            }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(17.))
+                            .font_family(self.display_font())
+                            .text_color(rgb(0xfffdf7))
+                            .child("也足够让风停一会儿"),
+                    )
+            };
         let hero = h_flex()
             .relative()
             .w_full()
@@ -1868,44 +3020,13 @@ impl ReadingApp {
                     .h_full()
                     .p_6()
                     .justify_between()
-                    .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.88 } else { 0.90 }))
+                    .bg(rgb(hex(&t.paper)).opacity(0.88))
                     .border_r_1()
                     .border_color(self.border_subtle())
                     .child(self.heading(hero_kicker, &hero_title, &hero_sub))
-                    .child(
-                        h_flex()
-                            .gap_3()
-                            .items_center()
-                            .child(
-                                self.button_with_icon(
-                                    if resume.is_some() {
-                                        "继续上次阅读"
-                                    } else {
-                                        "导入一本书"
-                                    },
-                                    if resume.is_some() {
-                                        IconName::BookOpen
-                                    } else {
-                                        IconName::Plus
-                                    },
-                                    if let Some(book) = resume {
-                                        Action::Open(book.id.clone())
-                                    } else {
-                                        Action::Import
-                                    },
-                                    cx,
-                                )
-                                .primary(),
-                            )
-                            .child(self.button_with_icon(
-                                "此刻的心情",
-                                IconName::MessageCircleHeart,
-                                Action::Page(Page::Mood),
-                                cx,
-                            )),
-                    ),
+                    .child(hero_actions),
             )
-            // Right-side MineRadio Floating Telemetry & Poetic Stage HUD
+            // Right-side MineRadio Floating Telemetry & Daily Rediscovery HUD
             .child(
                 v_flex()
                     .absolute()
@@ -1921,10 +3042,14 @@ impl ReadingApp {
                             .px_3p5()
                             .py_2()
                             .rounded_xl()
-                            .bg(rgb(0x0b1512).opacity(0.68))
+                            .bg(hud_bg)
                             .border_1()
-                            .border_color(rgb(0xffffff).opacity(0.16))
-                            .child(self.waveform_bars(true, &[5., 11., 15., 8., 13., 7.]))
+                            .border_color(rgb(0xffffff).opacity(0.20))
+                            .child(self.waveform_bars_tinted(
+                                true,
+                                &[5., 11., 15., 8., 13., 7.],
+                                hud_wave_tint,
+                            ))
                             .child(
                                 v_flex()
                                     .gap_0p5()
@@ -1932,10 +3057,11 @@ impl ReadingApp {
                                         div()
                                             .text_size(px(9.))
                                             .font_family(self.ui_font())
-                                            .text_color(rgb(0xf5dc9c))
+                                            .text_color(hud_gold)
                                             .child(format!(
-                                                "{}  ·  AMBIENT STAGE",
-                                                Self::frequency_for_theme(&t.id)
+                                                "{}  ·  {}",
+                                                Self::frequency_for_theme(&t.id),
+                                                self.active_soundscape_preset().label()
                                             )),
                                     )
                                     .child(
@@ -1952,31 +3078,7 @@ impl ReadingApp {
                                     ),
                             ),
                     )
-                    .child(
-                        v_flex()
-                            .px_4()
-                            .py_2p5()
-                            .gap_0p5()
-                            .items_end()
-                            .rounded_xl()
-                            .bg(rgb(0x0b1512).opacity(0.68))
-                            .border_1()
-                            .border_color(rgb(0xffffff).opacity(0.16))
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .font_family(self.ui_font())
-                                    .text_color(rgb(0xf5dc9c))
-                                    .child("今天的一小段"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(17.))
-                                    .font_family(self.display_font())
-                                    .text_color(rgb(0xfffdf7))
-                                    .child("也足够让风停一会儿"),
-                            ),
-                    ),
+                    .child(rediscovery_card),
             )
             // Signature Obsidian Prism mouse-tracking top & bottom edge beams
             .child(
@@ -2008,6 +3110,27 @@ impl ReadingApp {
                     .right(px(24.))
                     .child(self.pet_dock("shelf-pet", cx)),
             );
+        let mut filter_pills = h_flex().gap_1p5().items_center().flex_wrap();
+        for (label, filter) in [
+            ("全部", ShelfFilter::All),
+            ("在读", ShelfFilter::Reading),
+            ("未开始", ShelfFilter::Unread),
+            ("已读完", ShelfFilter::Finished),
+        ] {
+            let active = self.shelf_filter == filter;
+            filter_pills = filter_pills.child(self.pill_button(
+                label,
+                None,
+                active,
+                Action::ShelfFilter(filter),
+                cx,
+            ));
+        }
+        let today_mins = if self.store.state.reading_minutes_date.as_deref() == Some(&today_ymd()) {
+            self.store.state.reading_minutes_today
+        } else {
+            0
+        };
         v_flex()
             .id("shelf-scroll")
             .overflow_y_scroll()
@@ -2021,6 +3144,8 @@ impl ReadingApp {
                 h_flex()
                     .justify_between()
                     .items_end()
+                    .flex_wrap()
+                    .gap_3()
                     .child(
                         v_flex()
                             .gap_1()
@@ -2052,31 +3177,39 @@ impl ReadingApp {
                                             .text_size(px(11.))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&t.accent)))
-                                            .child(format!("{} 本", self.store.state.books.len())),
-                                    ),
+                                            .child(format!(
+                                                "{} / {} 本",
+                                                filtered_books.len(),
+                                                self.store.state.books.len()
+                                            )),
+                                    )
+                                    .when(today_mins > 0, |this| {
+                                        this.child(
+                                            div()
+                                                .px_2p5()
+                                                .py_0p5()
+                                                .rounded_full()
+                                                .bg(rgb(hex(&t.paper)).opacity(0.84))
+                                                .border_1()
+                                                .border_color(self.border_subtle())
+                                                .text_size(px(10.5))
+                                                .font_family(self.ui_font())
+                                                .text_color(rgb(hex(&t.muted)))
+                                                .child(format!("今日静读 {today_mins} 分钟")),
+                                        )
+                                    }),
                             ),
                     )
                     .child(
                         h_flex()
-                            .gap_1p5()
+                            .gap_2()
                             .items_center()
-                            .px_3()
-                            .py_1()
-                            .rounded_full()
-                            .bg(rgb(hex(&t.paper)).opacity(0.76))
-                            .border_1()
-                            .border_color(self.border_subtle())
-                            .child(
-                                Icon::new(IconName::Leaf)
-                                    .size(px(12.))
-                                    .text_color(rgb(hex(&t.accent))),
-                            )
+                            .flex_wrap()
+                            .child(filter_pills)
                             .child(
                                 div()
-                                    .text_size(px(11.))
-                                    .font_family(self.ui_font())
-                                    .text_color(rgb(hex(&t.muted)))
-                                    .child("支持将 EPUB / TXT 拖入窗口直接阅读"),
+                                    .w(px(220.))
+                                    .child(Input::new(&self.shelf_search).w_full()),
                             ),
                     ),
             )
@@ -2419,10 +3552,7 @@ impl ReadingApp {
             )
             .child(div().flex_1())
             .child(controls);
-        let narrow = f32::from(window.viewport_size().width)
-            - if self.focus_mode { 0. } else { 224. }
-            - 364.
-            < 480.;
+        let narrow = self.is_narrow_reader(window);
         let mut body = h_flex().flex_1().min_h_0().w_full();
         if (self.drawer.is_empty() || !narrow)
             && let Some(view) = &self.webview
@@ -2566,6 +3696,7 @@ impl ReadingApp {
         };
         bottom = bottom
             .child(hint)
+            .child(self.pet_dock("reader-pet", cx))
             .child(
                 self.button_with_icon("排版", IconName::AArrowDown, Action::Typography, cx)
                     .toggled(self.drawer == "type"),
@@ -2582,14 +3713,44 @@ impl ReadingApp {
                 .child(self.button("UTF-8", Action::Encoding("UTF-8".into()), cx))
                 .child(self.button("GB18030", Action::Encoding("GB18030".into()), cx));
         }
-        v_flex()
-            .size_full()
-            .bg(rgb(hex(&t.paper)))
-            .child(toolbar)
-            .child(body)
-            .child(bottom)
-            .into_any_element()
+        let show_top = !self.focus_mode || self.zen_reveal_top || !self.drawer.is_empty();
+        let show_bottom = !self.focus_mode || self.zen_reveal_bottom || !self.drawer.is_empty();
+        let mut stage = v_flex().relative().size_full().bg(rgb(hex(&t.paper)));
+        if show_top {
+            stage = stage.child(toolbar);
+        } else {
+            // Whisper-quiet Zen top strip: keeps screen pure while offering an effortless hover/click exit
+            stage = stage.child(
+                h_flex()
+                    .h(px(30.))
+                    .px_4()
+                    .justify_between()
+                    .items_center()
+                    .bg(rgb(hex(&t.paper)).opacity(0.86))
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&t.muted)).opacity(0.68))
+                            .child(format!(
+                                "{title}  ·  禅意专注中（移至边缘显露工具栏 · Esc 退出）"
+                            )),
+                    )
+                    .child(self.button_with_icon(
+                        "退出专注",
+                        IconName::Minimize2,
+                        Action::Focus,
+                        cx,
+                    )),
+            );
+        }
+        stage = stage.child(body);
+        if show_bottom {
+            stage = stage.child(bottom);
+        }
+        stage.into_any_element()
     }
+    #[inline(never)]
     fn reader_drawer(&self, cx: &Context<Self>) -> AnyElement {
         let t = self.theme();
         let title = match self.drawer.as_str() {
@@ -2787,283 +3948,10 @@ impl ReadingApp {
                 }
             }
             "highlights" => {
-                if let Some(book) = self
-                    .store
-                    .state
-                    .books
-                    .iter()
-                    .find(|book| Some(&book.id) == self.active_book.as_ref())
-                {
-                    if book.highlights.is_empty() {
-                        content = content.child(
-                            v_flex()
-                                .p_5()
-                                .gap_3()
-                                .rounded_xl()
-                                .bg(rgb(hex(&t.background)).opacity(0.62))
-                                .border_1()
-                                .border_color(self.border_subtle())
-                                .child(
-                                    Icon::new(IconName::Feather)
-                                        .size(px(22.))
-                                        .text_color(rgb(hex(&t.accent))),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(13.))
-                                        .font_family(self.ui_font())
-                                        .line_height(relative(1.65))
-                                        .text_color(rgb(hex(&t.muted)))
-                                        .child("选中喜欢的句子并打开回响，就可以留下第一条划线。"),
-                                ),
-                        );
-                    }
-                    for highlight in book.highlights.iter().rev() {
-                        let excerpt = highlight.text.chars().take(180).collect::<String>();
-                        content = content.child(
-                            v_flex()
-                                .w_full()
-                                .p_4()
-                                .gap_3()
-                                .rounded_xl()
-                                .bg(rgb(hex(&t.background)).opacity(0.62))
-                                .border_1()
-                                .border_color(self.border_subtle())
-                                .child(
-                                    h_flex()
-                                        .justify_between()
-                                        .items_center()
-                                        .child(
-                                            div()
-                                                .px_2()
-                                                .py_0p5()
-                                                .rounded_full()
-                                                .bg(rgb(hex(&t.accent)).opacity(0.12))
-                                                .text_size(px(10.))
-                                                .font_family(self.ui_font())
-                                                .text_color(rgb(hex(&t.accent)))
-                                                .child("HIGHLIGHT · 原文摘录"),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(px(10.))
-                                                .font_family(self.ui_font())
-                                                .text_color(rgb(hex(&t.muted)))
-                                                .child(display_time(&highlight.created_at)),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .pl_3()
-                                        .border_l_2()
-                                        .border_color(rgb(hex(&t.accent)))
-                                        .text_size(px(15.5))
-                                        .font_family(self.display_font())
-                                        .line_height(relative(1.6))
-                                        .child(excerpt),
-                                )
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(self.button(
-                                            "回到原文",
-                                            Action::Locate(highlight.cfi.clone()),
-                                            cx,
-                                        ))
-                                        .child(self.button(
-                                            "删除",
-                                            Action::DeleteHighlight(highlight.id.clone()),
-                                            cx,
-                                        )),
-                                ),
-                        );
-                    }
-                }
+                content = content.child(self.drawer_highlights(cx));
             }
             "type" => {
-                let size = self
-                    .store
-                    .state
-                    .reader_font_size
-                    .unwrap_or_else(|| self.theme().font_size);
-                let leading = self
-                    .store
-                    .state
-                    .reader_line_height
-                    .unwrap_or_else(|| self.theme().line_height);
-                let width = self
-                    .store
-                    .state
-                    .reader_width
-                    .unwrap_or_else(|| self.theme().width);
-                let size_ratio = ((size - 14.0) / (36.0 - 14.0)).clamp(0.05, 1.0);
-                let leading_ratio = ((leading - 1.3) / (2.6 - 1.3)).clamp(0.05, 1.0);
-                let width_ratio = ((width as f32 - 400.0) / (1100.0 - 400.0)).clamp(0.05, 1.0);
-                content = content.child(
-                    v_flex()
-                        .p_4()
-                        .gap_4()
-                        .rounded_2xl()
-                        .bg(rgb(hex(&t.background)).opacity(0.62))
-                        .border_1()
-                        .border_color(self.border_subtle())
-                        .child(
-                            v_flex()
-                                .gap_2()
-                                .child(
-                                    h_flex()
-                                        .justify_between()
-                                        .items_center()
-                                        .child(
-                                            v_flex()
-                                                .gap_0p5()
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.5))
-                                                        .font_family(self.ui_font())
-                                                        .text_color(rgb(hex(&t.muted)))
-                                                        .child("正文字号 · FONT SIZE"),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(20.))
-                                                        .font_family(self.display_font())
-                                                        .child(format!("{size:.0} pt")),
-                                                ),
-                                        )
-                                        .child(
-                                            h_flex()
-                                                .gap_1p5()
-                                                .child(self.button("A−", Action::TypeSize(-1), cx))
-                                                .child(self.button("A+", Action::TypeSize(1), cx)),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .h(px(4.))
-                                        .rounded_full()
-                                        .bg(rgb(hex(&t.text)).opacity(0.10))
-                                        .child(
-                                            div()
-                                                .w(px(280.0 * size_ratio))
-                                                .h_full()
-                                                .rounded_full()
-                                                .bg(rgb(hex(&t.accent))),
-                                        ),
-                                ),
-                        )
-                        .child(
-                            v_flex()
-                                .gap_2()
-                                .child(
-                                    h_flex()
-                                        .justify_between()
-                                        .items_center()
-                                        .child(
-                                            v_flex()
-                                                .gap_0p5()
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.5))
-                                                        .font_family(self.ui_font())
-                                                        .text_color(rgb(hex(&t.muted)))
-                                                        .child("行距呼吸感 · LINE HEIGHT"),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(19.))
-                                                        .font_family(self.display_font())
-                                                        .child(format!("{leading:.1}")),
-                                                ),
-                                        )
-                                        .child(
-                                            h_flex()
-                                                .gap_1p5()
-                                                .child(self.button(
-                                                    "紧",
-                                                    Action::TypeLeading(-1),
-                                                    cx,
-                                                ))
-                                                .child(self.button(
-                                                    "松",
-                                                    Action::TypeLeading(1),
-                                                    cx,
-                                                )),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .h(px(4.))
-                                        .rounded_full()
-                                        .bg(rgb(hex(&t.text)).opacity(0.10))
-                                        .child(
-                                            div()
-                                                .w(px(280.0 * leading_ratio))
-                                                .h_full()
-                                                .rounded_full()
-                                                .bg(rgb(hex(&t.accent))),
-                                        ),
-                                ),
-                        )
-                        .child(
-                            v_flex()
-                                .gap_2()
-                                .child(
-                                    h_flex()
-                                        .justify_between()
-                                        .items_center()
-                                        .child(
-                                            v_flex()
-                                                .gap_0p5()
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.5))
-                                                        .font_family(self.ui_font())
-                                                        .text_color(rgb(hex(&t.muted)))
-                                                        .child("版心宽度 · MEASURE"),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(19.))
-                                                        .font_family(self.display_font())
-                                                        .child(format!("{width} px")),
-                                                ),
-                                        )
-                                        .child(
-                                            h_flex()
-                                                .gap_1p5()
-                                                .child(self.button("窄", Action::TypeWidth(-1), cx))
-                                                .child(self.button("宽", Action::TypeWidth(1), cx)),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .h(px(4.))
-                                        .rounded_full()
-                                        .bg(rgb(hex(&t.text)).opacity(0.10))
-                                        .child(
-                                            div()
-                                                .w(px(280.0 * width_ratio))
-                                                .h_full()
-                                                .rounded_full()
-                                                .bg(rgb(hex(&t.accent))),
-                                        ),
-                                ),
-                        ),
-                );
-                content = content
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .font_family(self.ui_font())
-                            .line_height(relative(1.65))
-                            .text_color(rgb(hex(&t.muted)))
-                            .child("调整会立即同步至当前书页，并对之后打开的书保留。"),
-                    )
-                    .child(self.button("恢复主题默认", Action::ResetTypography, cx));
+                content = content.child(self.drawer_type(cx));
             }
             "bookmarks" => {
                 if let Some(b) = self
@@ -3113,53 +4001,647 @@ impl ReadingApp {
                 }
             }
             _ => {
-                if let Some(echo) = &self.echo {
-                    let already_kept = self
-                        .store
-                        .state
-                        .books
-                        .iter()
-                        .find(|book| Some(&book.id) == self.active_book.as_ref())
-                        .is_some_and(|book| {
-                            book.highlights
-                                .iter()
-                                .any(|highlight| highlight.cfi == self.echo_cfi)
-                        });
-                    content = content.child(
-                        h_flex()
-                            .gap_2()
-                            .p_1p5()
-                            .rounded_xl()
-                            .bg(rgb(hex(&t.background)).opacity(0.55))
-                            .border_1()
-                            .border_color(self.border_subtle())
-                            .child(
-                                self.button_with_icon(
-                                    if already_kept {
-                                        "已留下划线"
-                                    } else {
-                                        "留下划线"
-                                    },
-                                    IconName::Feather,
-                                    Action::Highlight,
-                                    cx,
-                                )
-                                .disabled(already_kept),
-                            )
-                            .child(self.button_with_icon(
-                                "所有划线",
-                                IconName::Bookmark,
-                                Action::Highlights,
-                                cx,
-                            )),
-                    );
-                    content = content.child(self.echo_card(echo, &self.echo_input, cx));
-                }
+                content = content.child(self.drawer_echo(cx));
             }
         }
         content.into_any_element()
     }
-    fn echo_card(&self, echo: &EchoResult, input: &str, cx: &Context<Self>) -> AnyElement {
+    #[inline(never)]
+    fn drawer_highlights(&self, cx: &Context<Self>) -> AnyElement {
+        let t = self.theme();
+        let mut list = v_flex().gap_4();
+        if let Some(book) = self
+            .store
+            .state
+            .books
+            .iter()
+            .find(|book| Some(&book.id) == self.active_book.as_ref())
+        {
+            if book.highlights.is_empty() {
+                list = list.child(
+                    v_flex()
+                        .p_5()
+                        .gap_3()
+                        .rounded_xl()
+                        .bg(rgb(hex(&t.background)).opacity(0.62))
+                        .border_1()
+                        .border_color(self.border_subtle())
+                        .child(
+                            Icon::new(IconName::Feather)
+                                .size(px(22.))
+                                .text_color(rgb(hex(&t.accent))),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(13.))
+                                .font_family(self.ui_font())
+                                .line_height(relative(1.65))
+                                .text_color(rgb(hex(&t.muted)))
+                                .child("选中喜欢的句子后，在悬浮微光条里点任意色点即可直接划线并写下批注。"),
+                        ),
+                );
+            }
+            for highlight in book.highlights.iter().rev() {
+                let excerpt = highlight.text.chars().take(180).collect::<String>();
+                let hl_hex = highlight_color_hex_for(
+                    highlight.color.as_deref(),
+                    hex(&t.accent),
+                    self.is_dark(),
+                );
+                let hl_label = highlight_color_name(highlight.color.as_deref());
+                let is_editing =
+                    self.highlight_note_target.as_deref() == Some(highlight.id.as_str());
+                let mut color_dots = h_flex().gap_1p5().items_center();
+                for (cid, chex) in [
+                    ("amber", 0xf59e0bu32),
+                    ("sage", 0x34d399u32),
+                    ("rose", 0xfb7185u32),
+                    ("prism", 0xa855f7u32),
+                ] {
+                    let selected = highlight.color.as_deref() == Some(cid);
+                    let hid = highlight.id.clone();
+                    color_dots = color_dots.child(
+                        div()
+                            .id(SharedString::from(format!("hl-dot-{}-{cid}", highlight.id)))
+                            .cursor_pointer()
+                            .p(px(1.5))
+                            .rounded_full()
+                            .border_1()
+                            .border_color(if selected {
+                                rgb(chex)
+                            } else {
+                                rgb(0x000000).opacity(0.0)
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, window, cx| {
+                                    this.act(
+                                        Action::RecolorHighlight(Box::new((
+                                            hid.clone(),
+                                            cid.into(),
+                                        ))),
+                                        window,
+                                        cx,
+                                    );
+                                }),
+                            )
+                            .child(div().size(px(10.)).rounded_full().bg(rgb(chex))),
+                    );
+                }
+                let card_draft = QuoteCardDraft {
+                    text: highlight.text.clone(),
+                    attribution: format!("《{}》 · {}", book.title, book.author),
+                    note: highlight.note.clone(),
+                    style: QuoteCardStyle::from_theme_id(&t.id),
+                };
+                let mut hl_card = v_flex()
+                    .w_full()
+                    .p_4()
+                    .gap_3()
+                    .rounded_xl()
+                    .bg(rgb(hex(&t.background)).opacity(0.62))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_full()
+                                            .bg(rgb(hl_hex).opacity(0.18))
+                                            .text_size(px(10.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hl_hex))
+                                            .child(hl_label),
+                                    )
+                                    .child(color_dots),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child(display_time(&highlight.created_at)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .pl_3()
+                            .border_l_3()
+                            .border_color(rgb(hl_hex))
+                            .text_size(px(15.5))
+                            .font_family(self.display_font())
+                            .line_height(relative(1.6))
+                            .child(excerpt),
+                    );
+                if is_editing {
+                    let note_chars = self
+                        .highlight_note_input
+                        .read(cx)
+                        .value()
+                        .trim()
+                        .chars()
+                        .count();
+                    hl_card = hl_card.child(
+                        v_flex()
+                            .gap_2()
+                            .p_2p5()
+                            .rounded_lg()
+                            .bg(rgb(hex(&t.paper)).opacity(0.92))
+                            .border_1()
+                            .border_color(rgb(hl_hex).opacity(0.45))
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_size(px(10.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hl_hex))
+                                            .child("写下读时批注"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(10.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(if note_chars > 1000 {
+                                                0xb34f36
+                                            } else {
+                                                hex(&t.muted)
+                                            }))
+                                            .child(format!("{note_chars} / 1000 字")),
+                                    ),
+                            )
+                            .child(
+                                Textarea::new(&self.highlight_note_input)
+                                    .aria_label("划线批注")
+                                    .w_full(),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        self.button_with_icon(
+                                            "保存批注",
+                                            IconName::Check,
+                                            Action::SaveHighlightNote,
+                                            cx,
+                                        )
+                                        .primary(),
+                                    )
+                                    .child(self.button("取消", Action::CancelHighlightNote, cx)),
+                            ),
+                    );
+                } else if let Some(note) =
+                    highlight.note.as_deref().filter(|n| !n.trim().is_empty())
+                {
+                    hl_card = hl_card.child(
+                        v_flex()
+                            .p_2p5()
+                            .gap_1()
+                            .rounded_lg()
+                            .bg(rgb(hex(&t.paper)).opacity(0.75))
+                            .border_1()
+                            .border_color(self.border_subtle())
+                            .child(
+                                div()
+                                    .text_size(px(9.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hl_hex))
+                                    .child("读时批注 · NOTE"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.5))
+                                    .font_family(self.ui_font())
+                                    .line_height(relative(1.6))
+                                    .text_color(rgb(hex(&t.text)).opacity(0.9))
+                                    .child(note.to_owned()),
+                            ),
+                    );
+                }
+                hl_card = hl_card.child(
+                    h_flex()
+                        .gap_1p5()
+                        .flex_wrap()
+                        .child(self.button("回到原文", Action::Locate(highlight.cfi.clone()), cx))
+                        .child(self.button_with_icon(
+                            if highlight.note.is_some() {
+                                "编辑批注"
+                            } else {
+                                "批注"
+                            },
+                            IconName::PenLine,
+                            Action::EditHighlightNote(highlight.id.clone()),
+                            cx,
+                        ))
+                        .child(self.button_with_icon(
+                            "书摘卡",
+                            IconName::ImageDown,
+                            Action::OpenQuoteCard(Box::new(card_draft)),
+                            cx,
+                        ))
+                        .child(self.button(
+                            "删除",
+                            Action::DeleteHighlight(highlight.id.clone()),
+                            cx,
+                        )),
+                );
+                list = list.child(hl_card);
+            }
+        }
+        list.into_any_element()
+    }
+    #[inline(never)]
+    fn drawer_type(&self, cx: &Context<Self>) -> AnyElement {
+        let t = self.theme();
+        let size = self
+            .store
+            .state
+            .reader_font_size
+            .unwrap_or_else(|| self.theme().font_size);
+        let leading = self
+            .store
+            .state
+            .reader_line_height
+            .unwrap_or_else(|| self.theme().line_height);
+        let width = self
+            .store
+            .state
+            .reader_width
+            .unwrap_or_else(|| self.theme().width);
+        let size_ratio = ((size - 14.0) / (36.0 - 14.0)).clamp(0.05, 1.0);
+        let leading_ratio = ((leading - 1.3) / (2.6 - 1.3)).clamp(0.05, 1.0);
+        let width_ratio = ((width as f32 - 400.0) / (1100.0 - 400.0)).clamp(0.05, 1.0);
+        v_flex()
+            .gap_4()
+            .child(
+                v_flex()
+                    .p_4()
+                    .gap_4()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&t.background)).opacity(0.62))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(
+                                        v_flex()
+                                            .gap_0p5()
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.5))
+                                                    .font_family(self.ui_font())
+                                                    .text_color(rgb(hex(&t.muted)))
+                                                    .child("正文字号 · FONT SIZE"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(20.))
+                                                    .font_family(self.display_font())
+                                                    .child(format!("{size:.0} pt")),
+                                            ),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap_1p5()
+                                            .child(self.button("A−", Action::TypeSize(-1), cx))
+                                            .child(self.button("A+", Action::TypeSize(1), cx)),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(4.))
+                                    .rounded_full()
+                                    .bg(rgb(hex(&t.text)).opacity(0.10))
+                                    .child(
+                                        div()
+                                            .w(px(280.0 * size_ratio))
+                                            .h_full()
+                                            .rounded_full()
+                                            .bg(rgb(hex(&t.accent))),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(
+                                        v_flex()
+                                            .gap_0p5()
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.5))
+                                                    .font_family(self.ui_font())
+                                                    .text_color(rgb(hex(&t.muted)))
+                                                    .child("行距呼吸感 · LINE HEIGHT"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(19.))
+                                                    .font_family(self.display_font())
+                                                    .child(format!("{leading:.1}")),
+                                            ),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap_1p5()
+                                            .child(self.button("紧", Action::TypeLeading(-1), cx))
+                                            .child(self.button("松", Action::TypeLeading(1), cx)),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(4.))
+                                    .rounded_full()
+                                    .bg(rgb(hex(&t.text)).opacity(0.10))
+                                    .child(
+                                        div()
+                                            .w(px(280.0 * leading_ratio))
+                                            .h_full()
+                                            .rounded_full()
+                                            .bg(rgb(hex(&t.accent))),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(
+                                        v_flex()
+                                            .gap_0p5()
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.5))
+                                                    .font_family(self.ui_font())
+                                                    .text_color(rgb(hex(&t.muted)))
+                                                    .child("版心宽度 · MEASURE"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(19.))
+                                                    .font_family(self.display_font())
+                                                    .child(format!("{width} px")),
+                                            ),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap_1p5()
+                                            .child(self.button("窄", Action::TypeWidth(-1), cx))
+                                            .child(self.button("宽", Action::TypeWidth(1), cx)),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(4.))
+                                    .rounded_full()
+                                    .bg(rgb(hex(&t.text)).opacity(0.10))
+                                    .child(
+                                        div()
+                                            .w(px(280.0 * width_ratio))
+                                            .h_full()
+                                            .rounded_full()
+                                            .bg(rgb(hex(&t.accent))),
+                                    ),
+                            ),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .p_3p5()
+                    .rounded_xl()
+                    .bg(rgb(hex(&t.background)).opacity(0.62))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .child(
+                        v_flex()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .text_size(px(12.5))
+                                    .font_family(self.ui_font())
+                                    .child("护眼暖光滤镜"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child("柔和滤去屏幕冷蓝光，久读不累"),
+                            ),
+                    )
+                    .child(self.pill_button(
+                        if self.store.state.warm_filter {
+                            "暖光：开"
+                        } else {
+                            "暖光：关"
+                        },
+                        Some(IconName::Sun),
+                        self.store.state.warm_filter,
+                        Action::ToggleWarmFilter,
+                        cx,
+                    )),
+            )
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .font_family(self.ui_font())
+                    .line_height(relative(1.65))
+                    .text_color(rgb(hex(&t.muted)))
+                    .child("调整会立即同步至当前书页，并对之后打开的书保留。"),
+            )
+            .child(self.button("恢复主题默认", Action::ResetTypography, cx))
+            .into_any_element()
+    }
+    #[inline(never)]
+    fn drawer_echo(&self, cx: &Context<Self>) -> AnyElement {
+        let t = self.theme();
+        let mut box_el = v_flex().gap_4();
+        if let Some(echo) = &self.echo {
+            let book_ref = self
+                .store
+                .state
+                .books
+                .iter()
+                .find(|book| Some(&book.id) == self.active_book.as_ref());
+            let already_kept = book_ref.is_some_and(|book| {
+                book.highlights
+                    .iter()
+                    .any(|highlight| highlight.cfi == self.echo_cfi)
+            });
+            let book_attr = book_ref
+                .map(|b| format!("《{}》 · {}", b.title, b.author))
+                .unwrap_or_else(|| "微光阅读".into());
+            let card_draft = QuoteCardDraft {
+                text: self.echo_input.clone(),
+                attribution: book_attr,
+                note: None,
+                style: QuoteCardStyle::from_theme_id(&t.id),
+            };
+            let mut color_row = h_flex().gap_1p5().items_center();
+            for (cid, chex) in [
+                ("amber", 0xf59e0bu32),
+                ("sage", 0x34d399u32),
+                ("rose", 0xfb7185u32),
+                ("prism", 0xa855f7u32),
+            ] {
+                color_row = color_row.child(
+                    div()
+                        .id(SharedString::from(format!("echo-color-{cid}")))
+                        .cursor_pointer()
+                        .p(px(2.))
+                        .rounded_full()
+                        .border_1()
+                        .border_color(rgb(chex).opacity(0.45))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, window, cx| {
+                                this.act(Action::HighlightColor(cid.into()), window, cx);
+                            }),
+                        )
+                        .child(div().size(px(11.)).rounded_full().bg(rgb(chex))),
+                );
+            }
+            box_el = box_el
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .p_2p5()
+                        .rounded_xl()
+                        .bg(rgb(hex(&t.background)).opacity(0.55))
+                        .border_1()
+                        .border_color(self.border_subtle())
+                        .child(
+                            h_flex()
+                                .gap_1p5()
+                                .flex_wrap()
+                                .items_center()
+                                .child(
+                                    self.button_with_icon(
+                                        if already_kept {
+                                            "已留下划线"
+                                        } else {
+                                            "留下划线"
+                                        },
+                                        IconName::Feather,
+                                        Action::Highlight,
+                                        cx,
+                                    )
+                                    .disabled(already_kept),
+                                )
+                                .child(color_row),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1p5()
+                                .flex_wrap()
+                                .child(
+                                    self.button_with_icon(
+                                        if self.echo_saved {
+                                            "已存入日记"
+                                        } else {
+                                            "存入日记"
+                                        },
+                                        IconName::NotebookPen,
+                                        Action::SaveEchoToJournal,
+                                        cx,
+                                    )
+                                    .disabled(self.echo_saved),
+                                )
+                                .child(self.button_with_icon(
+                                    "书摘卡",
+                                    IconName::ImageDown,
+                                    Action::OpenQuoteCard(Box::new(card_draft)),
+                                    cx,
+                                ))
+                                .child(self.button_with_icon(
+                                    "所有划线",
+                                    IconName::Bookmark,
+                                    Action::Highlights,
+                                    cx,
+                                )),
+                        ),
+                )
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .p_3()
+                        .rounded_xl()
+                        .bg(rgb(hex(&t.accent)).opacity(if self.is_dark() { 0.14 } else { 0.09 }))
+                        .border_1()
+                        .border_color(rgb(hex(&t.accent)).opacity(0.28))
+                        .child(
+                            h_flex()
+                                .justify_between()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    self.button_with_icon(
+                                        if self.echo_ai_rx.is_some() {
+                                            "正在细读这段文字…"
+                                        } else {
+                                            "问问微光（AI 深度共读）"
+                                        },
+                                        IconName::WandSparkles,
+                                        Action::AskAiPassage,
+                                        cx,
+                                    )
+                                    .primary()
+                                    .disabled(self.echo_ai_rx.is_some()),
+                                )
+                                .when(self.echo_ai_rx.is_some(), |this| {
+                                    this.child(self.button("停止", Action::CancelAiPassage, cx))
+                                }),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(10.))
+                                .font_family(self.ui_font())
+                                .line_height(relative(1.5))
+                                .text_color(rgb(hex(&t.muted)))
+                                .child(
+                                    "手动触发：仅发送本段选文与书名给 OpenAI，不上传整本书或日记。",
+                                ),
+                        ),
+                )
+                .child(self.echo_card(echo, &self.echo_input, true, cx));
+        }
+        box_el.into_any_element()
+    }
+    #[inline(never)]
+    fn echo_card(
+        &self,
+        echo: &EchoResult,
+        input: &str,
+        is_passage: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         let t = self.theme();
         let mut view = v_flex()
             .gap_4()
@@ -3183,6 +4665,8 @@ impl ReadingApp {
                                     .text_color(rgb(hex(&t.accent)))
                                     .child(if echo.demo {
                                         "示例回响"
+                                    } else if is_passage {
+                                        "AI 段落共读"
                                     } else {
                                         "AI 心情回复"
                                     }),
@@ -3194,6 +4678,8 @@ impl ReadingApp {
                                     .text_color(rgb(hex(&t.muted)))
                                     .child(if echo.demo {
                                         "精选原文 · 预写回复"
+                                    } else if is_passage {
+                                        "段落深度共读 · OpenAI"
                                     } else {
                                         "根据本次文字生成 · OpenAI"
                                     }),
@@ -3206,6 +4692,8 @@ impl ReadingApp {
                             .line_height(relative(1.32))
                             .child(if echo.demo {
                                 "这段话，也让我想起——"
+                            } else if is_passage {
+                                "陪你细读这一段"
                             } else {
                                 "写给此刻的你"
                             }),
@@ -3519,68 +5007,196 @@ impl ReadingApp {
                     .child(self.pet_dock("mood-pet", cx)),
             );
 
+        let breathing_card = if let Some(started) = self.breathing_started {
+            let elapsed = started.elapsed().as_secs_f32();
+            let bp = prism::breathing_phase(elapsed);
+            let session_left = (60.0 - elapsed).max(0.0).ceil() as u32;
+            let session_ratio = (elapsed / 60.0).clamp(0.0, 1.0);
+            v_flex()
+                .relative()
+                .w_full()
+                .p_5()
+                .gap_3()
+                .rounded_2xl()
+                .overflow_hidden()
+                .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.92 } else { 0.94 }))
+                .border_1()
+                .border_color(rgb(hex(&t.accent)).opacity(0.45))
+                .shadow_md()
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .child(prism::prism_beam_horizontal(snap.clone(), 2.0, 2.6, false)),
+                )
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .child(self.studio_badge("4-7-8", "棱镜呼吸光环 · 进行中", true))
+                        .child(self.button_with_icon(
+                            "结束呼吸",
+                            IconName::X,
+                            Action::ToggleBreathing,
+                            cx,
+                        )),
+                )
+                .child(
+                    h_flex()
+                        .gap_5()
+                        .items_center()
+                        .child(prism::breathing_orb_canvas(snap.clone(), elapsed))
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .gap_1p5()
+                                .child(
+                                    h_flex()
+                                        .gap_2p5()
+                                        .items_baseline()
+                                        .child(
+                                            div()
+                                                .text_size(px(24.))
+                                                .font_family(self.display_font())
+                                                .text_color(rgb(hex(&t.text)))
+                                                .child(bp.label),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(16.))
+                                                .font_family(self.ui_font())
+                                                .text_color(rgb(hex(&t.accent)))
+                                                .child(format!("{} s", bp.seconds_left)),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(11.5))
+                                        .font_family(self.ui_font())
+                                        .text_color(rgb(hex(&t.muted)))
+                                        .child(bp.cue),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .items_center()
+                                        .pt_1()
+                                        .child(
+                                            div()
+                                                .w(px(140.))
+                                                .h(px(4.))
+                                                .rounded_full()
+                                                .bg(rgb(hex(&t.text)).opacity(0.10))
+                                                .child(
+                                                    div()
+                                                        .w(px((140.0 * session_ratio).max(4.0)))
+                                                        .h_full()
+                                                        .rounded_full()
+                                                        .bg(rgb(hex(&t.accent))),
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(10.))
+                                                .font_family(self.ui_font())
+                                                .text_color(rgb(hex(&t.muted)))
+                                                .child(format!("还剩 {session_left} 秒")),
+                                        ),
+                                ),
+                        ),
+                )
+                .into_any_element()
+        } else {
+            let hud_bg = if self.is_sky() {
+                rgb(0x133352).opacity(0.72)
+            } else {
+                rgb(0x0b1512).opacity(0.72)
+            };
+            div()
+                .relative()
+                .w_full()
+                .h(px(168.))
+                .rounded_2xl()
+                .overflow_hidden()
+                .border_1()
+                .border_color(self.border_strong())
+                .shadow_sm()
+                .child(
+                    img(self.scene_asset())
+                        .size_full()
+                        .object_fit(ObjectFit::Cover),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .child(prism::prism_beam_horizontal(snap, 1.5, 2.6, false)),
+                )
+                .child(
+                    h_flex()
+                        .absolute()
+                        .left_4()
+                        .right_4()
+                        .bottom_4()
+                        .p_3p5()
+                        .justify_between()
+                        .items_center()
+                        .gap_3()
+                        .rounded_xl()
+                        .bg(hud_bg)
+                        .border_1()
+                        .border_color(rgb(0xffffff).opacity(0.18))
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(
+                                    div()
+                                        .text_size(px(16.5))
+                                        .font_family(self.display_font())
+                                        .text_color(rgb(0xfffdf7))
+                                        .child("先不急着变好。"),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(11.5))
+                                        .font_family(self.ui_font())
+                                        .text_color(rgb(0xd8e4dd))
+                                        .child("在这里坐一会儿，让一句话陪你呼吸。"),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_2p5()
+                                .items_center()
+                                .child(self.waveform_bars_tinted(
+                                    true,
+                                    &[6., 13., 18., 9., 15., 11., 7.],
+                                    Some(if self.is_sky() { 0x93c5fd } else { 0xf5dc9c }),
+                                ))
+                                .child(
+                                    self.button_with_icon(
+                                        "陪我呼吸 1 分钟",
+                                        IconName::Wind,
+                                        Action::ToggleBreathing,
+                                        cx,
+                                    )
+                                    .primary(),
+                                ),
+                        ),
+                )
+                .into_any_element()
+        };
+
         let right_stage = v_flex()
             .flex_1()
             .min_w(px(330.))
             .pt(px(22.))
             .gap_4()
-            .child(
-                div()
-                    .relative()
-                    .w_full()
-                    .h(px(152.))
-                    .rounded_2xl()
-                    .overflow_hidden()
-                    .border_1()
-                    .border_color(self.border_strong())
-                    .shadow_sm()
-                    .child(
-                        img(self.scene_asset())
-                            .size_full()
-                            .object_fit(ObjectFit::Cover),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .left_0()
-                            .right_0()
-                            .child(prism::prism_beam_horizontal(snap, 1.5, 2.6, false)),
-                    )
-                    .child(
-                        h_flex()
-                            .absolute()
-                            .left_4()
-                            .right_4()
-                            .bottom_4()
-                            .p_3p5()
-                            .justify_between()
-                            .items_center()
-                            .rounded_xl()
-                            .bg(rgb(0x0b1512).opacity(0.72))
-                            .border_1()
-                            .border_color(rgb(0xffffff).opacity(0.16))
-                            .child(
-                                v_flex()
-                                    .gap_0p5()
-                                    .child(
-                                        div()
-                                            .text_size(px(16.5))
-                                            .font_family(self.display_font())
-                                            .text_color(rgb(0xfffdf7))
-                                            .child("先不急着变好。"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.5))
-                                            .font_family(self.ui_font())
-                                            .text_color(rgb(0xd8e4dd))
-                                            .child("在这里坐一会儿，让一句话陪你呼吸。"),
-                                    ),
-                            )
-                            .child(self.waveform_bars(true, &[6., 13., 18., 9., 15., 11., 7.])),
-                    ),
-            )
+            .child(breathing_card)
             .child(if let Some((input, echo)) = &self.mood_reply {
                 v_flex()
                     .p_5()
@@ -3609,7 +5225,7 @@ impl ReadingApp {
                                     .child("已自动存入本地私人日记"),
                             ),
                     )
-                    .child(self.echo_card(echo, input, cx))
+                    .child(self.echo_card(echo, input, false, cx))
                     .into_any_element()
             } else {
                 v_flex()
@@ -3679,6 +5295,63 @@ impl ReadingApp {
             .iter()
             .filter(|e| e.favorite)
             .count();
+        let query = self.journal_search.read(cx).value().trim().to_lowercase();
+        let filtered: Vec<&JournalEntry> = self
+            .store
+            .state
+            .journal
+            .iter()
+            .filter(|entry| {
+                let kind_ok = match self.journal_filter {
+                    JournalFilter::All => true,
+                    JournalFilter::Favorite => entry.favorite,
+                    JournalFilter::Mood => entry.kind == "mood",
+                    JournalFilter::Selection => entry.kind == "selection",
+                };
+                if !kind_ok {
+                    return false;
+                }
+                if query.is_empty() {
+                    return true;
+                }
+                entry.input.to_lowercase().contains(&query)
+                    || entry.echo.reply.to_lowercase().contains(&query)
+                    || entry
+                        .mood
+                        .as_deref()
+                        .is_some_and(|m| m.to_lowercase().contains(&query))
+            })
+            .collect();
+
+        // Mood Spectrum Bar: last 14 entries rendered purely as soft color temperature dots
+        let mut spectrum_dots = h_flex().gap_1p5().items_center();
+        for entry in self.store.state.journal.iter().take(14).rev() {
+            let dot_hex = mood_spectrum_color(entry.mood.as_deref());
+            spectrum_dots = spectrum_dots.child(
+                div()
+                    .w(px(12.))
+                    .h(px(7.))
+                    .rounded_full()
+                    .bg(rgb(dot_hex).opacity(0.88)),
+            );
+        }
+
+        let mut filter_bar = h_flex().gap_1p5().items_center().flex_wrap();
+        for (label, filter) in [
+            ("全部", JournalFilter::All),
+            ("已收藏", JournalFilter::Favorite),
+            ("心情", JournalFilter::Mood),
+            ("阅读回响", JournalFilter::Selection),
+        ] {
+            filter_bar = filter_bar.child(self.pill_button(
+                label,
+                None,
+                self.journal_filter == filter,
+                Action::JournalFilter(filter),
+                cx,
+            ));
+        }
+
         let mut content = v_flex()
             .id("journal-scroll")
             .overflow_y_scroll()
@@ -3690,16 +5363,18 @@ impl ReadingApp {
                 h_flex()
                     .justify_between()
                     .items_start()
-                    .gap_6()
+                    .flex_wrap()
+                    .gap_4()
                     .child(self.heading(
-                        "LITTLE THINGS KEPT · 私人回响档案",
+                        "LITTLE THINGS KEPT · 微光手账档案",
                         "那些被文字接住的时刻",
-                        "日记保存在这台电脑上，尚未加密。你可以随时删除。",
+                        "手账保存在这台电脑上，支持随时检索、导出 Markdown 或生成微光书摘卡。",
                     ))
                     .child(
                         h_flex()
-                            .gap_2p5()
+                            .gap_2()
                             .items_center()
+                            .flex_wrap()
                             .child(
                                 div()
                                     .px_3()
@@ -3718,6 +5393,12 @@ impl ReadingApp {
                                     )),
                             )
                             .child(self.button_with_icon(
+                                "导出 Markdown",
+                                IconName::Download,
+                                Action::ExportJournalMarkdown,
+                                cx,
+                            ))
+                            .child(self.button_with_icon(
                                 "清空日记",
                                 IconName::X,
                                 Action::ClearJournal,
@@ -3725,6 +5406,47 @@ impl ReadingApp {
                             )),
                     ),
             );
+        if !self.store.state.journal.is_empty() {
+            content = content.child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_3()
+                    .px_4()
+                    .py_3()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.86 } else { 0.90 }))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .child(
+                        h_flex()
+                            .gap_3()
+                            .items_center()
+                            .flex_wrap()
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.accent)))
+                                    .child("近期情绪光谱"),
+                            )
+                            .child(spectrum_dots),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .flex_wrap()
+                            .child(filter_bar)
+                            .child(
+                                div()
+                                    .w(px(220.))
+                                    .child(Input::new(&self.journal_search).w_full()),
+                            ),
+                    ),
+            );
+        }
         if self.store.state.journal.is_empty() {
             content = content.child(
                 v_flex()
@@ -3764,8 +5486,33 @@ impl ReadingApp {
                             .child("下一次回响，会替你记住那个时刻。"),
                     ),
             );
+        } else if filtered.is_empty() {
+            content = content.child(
+                v_flex()
+                    .w_full()
+                    .py_10()
+                    .items_center()
+                    .gap_2()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&t.paper)).opacity(0.76))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .child(
+                        div()
+                            .text_size(px(15.))
+                            .font_family(self.display_font())
+                            .child("没有符合当前筛选条件的手账记录"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&t.muted)))
+                            .child("试试切换筛选标签或清空关键词。"),
+                    ),
+            );
         }
-        for entry in &self.store.state.journal {
+        for entry in filtered {
             let display_input = if entry.input.trim().is_empty() {
                 entry
                     .mood
@@ -3775,12 +5522,25 @@ impl ReadingApp {
             } else {
                 entry.input.clone()
             };
+            let card_draft = QuoteCardDraft {
+                text: display_input.clone(),
+                attribution: format!(
+                    "{} · {}",
+                    entry.mood.as_deref().unwrap_or("阅读回响"),
+                    display_time(&entry.created_at)
+                ),
+                note: Some(entry.echo.reply.clone()),
+                style: QuoteCardStyle::from_theme_id(&t.id),
+            };
+            let badge_bg = mood_spectrum_color(entry.mood.as_deref());
+            let badge_text = mood_badge_text_color(entry.mood.as_deref(), is_dark);
             let mut bar = h_flex()
                 .gap_2()
                 .pb_3()
                 .border_b_1()
                 .border_color(self.border_subtle())
                 .items_center()
+                .flex_wrap()
                 .child(
                     h_flex()
                         .flex_1()
@@ -3791,10 +5551,10 @@ impl ReadingApp {
                                 .px_2p5()
                                 .py_0p5()
                                 .rounded_full()
-                                .bg(rgb(hex(&t.accent)).opacity(0.14))
+                                .bg(rgb(badge_bg).opacity(0.16))
                                 .text_size(px(10.5))
                                 .font_family(self.ui_font())
-                                .text_color(rgb(hex(&t.accent)))
+                                .text_color(rgb(badge_text))
                                 .child(entry.mood.as_deref().unwrap_or("阅读回响").to_owned()),
                         )
                         .child(
@@ -3805,6 +5565,12 @@ impl ReadingApp {
                                 .child(display_time(&entry.created_at)),
                         ),
                 )
+                .child(self.button_with_icon(
+                    "生成书摘卡",
+                    IconName::ImageDown,
+                    Action::OpenQuoteCard(Box::new(card_draft)),
+                    cx,
+                ))
                 .child(self.button_with_icon(
                     if entry.favorite {
                         "已收藏"
@@ -3821,7 +5587,9 @@ impl ReadingApp {
                     Action::DeleteEntry(entry.id.clone()),
                     cx,
                 ));
-            if let Some(loc) = &entry.location {
+            if let Some(loc) = &entry.location
+                && self.store.state.books.iter().any(|b| b.id == loc.book_id)
+            {
                 let loc = loc.clone();
                 bar = bar.child(
                     Button::new(SharedString::from(format!("return-{}", entry.id)))
@@ -3855,7 +5623,12 @@ impl ReadingApp {
                     .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.90 } else { 0.94 }))
                     .shadow_sm()
                     .child(bar)
-                    .child(self.echo_card(&entry.echo, &display_input, cx)),
+                    .child(self.echo_card(
+                        &entry.echo,
+                        &display_input,
+                        entry.kind == "selection",
+                        cx,
+                    )),
             );
         }
         content.into_any_element()
@@ -4082,7 +5855,7 @@ impl ReadingApp {
                                         .font_family(self.ui_font())
                                         .text_color(rgb(hex(&active_theme.muted)))
                                         .child(match t.id.as_str() {
-                                            "forest" => "FOREST LIGHT · 88.6 FM",
+                                            "forest" => "LAPUTA SKY · 蓝天白云 · 88.6 FM",
                                             "paper" => "QUIET PAPER · 92.4 FM",
                                             "night" => "NIGHT GARDEN · 101.7 FM",
                                             "prism" => "OBSIDIAN PRISM · 108.0 FM",
@@ -4417,7 +6190,8 @@ impl ReadingApp {
                 }
                 self.smoke_step = 11;
             }
-            11 if self.echo.is_some() && !self.store.state.journal.is_empty() => {
+            11 if self.echo.is_some() => {
+                self.act(Action::SaveEchoToJournal, window, cx);
                 println!("GLOW_SMOKE selected_echo journal_saved");
                 self.smoke_step = 37;
                 self.smoke_started = Instant::now();
@@ -4624,54 +6398,10 @@ impl ReadingApp {
             _ => {}
         }
     }
-}
-
-fn hex(s: &str) -> u32 {
-    glow_core::theme::color(s).unwrap_or(0x353e35)
-}
-
-fn display_time(raw: &str) -> String {
-    let Ok(parsed) =
-        time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
-    else {
-        return raw.to_owned();
-    };
-    let offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
-    parsed
-        .to_offset(offset)
-        .format(&time::macros::format_description!(
-            "[year].[month].[day] [hour]:[minute]"
-        ))
-        .unwrap_or_else(|_| raw.to_owned())
-}
-
-impl Render for ReadingApp {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = self.theme().clone();
+    #[inline(never)]
+    fn render_sidebar(&self, t: &ReadingTheme, snap: MotionSnapshot, cx: &Context<Self>) -> Div {
         let dark = self.is_dark();
         let is_prism = self.is_prism();
-        let continuous_flow = !t.reduced_motion && (is_prism || self.audio.is_some());
-        let needs_frame = self.motion.step(t.reduced_motion, continuous_flow);
-        if needs_frame {
-            self.schedule_motion_frame(window, cx);
-        }
-        let snap = self.motion_snapshot();
-        let narrow = f32::from(window.viewport_size().width)
-            - if self.focus_mode { 0. } else { 224. }
-            - 368.
-            < 480.;
-        let visible = self.page == Page::Reader
-            && !self.busy
-            && self.confirm.is_none()
-            && self.store.state.privacy_seen
-            && (self.drawer.is_empty() || !narrow);
-        if let Some(view) = &self.webview {
-            if visible {
-                view.update(cx, |v, _| v.show());
-            } else {
-                view.update(cx, |v, _| v.hide());
-            }
-        }
         let freq = Self::frequency_for_theme(&t.id);
         let mut quick_swatches = h_flex().gap_1p5().items_center();
         for (idx, preset) in themes().iter().enumerate() {
@@ -4821,286 +6551,1336 @@ impl Render for ReadingApp {
                 cx,
             ));
         }
+        sidebar = sidebar.child(
+            div()
+                .id("palette-trigger")
+                .cursor_pointer()
+                .mt_1()
+                .px_3()
+                .py_1p5()
+                .rounded_xl()
+                .bg(rgb(hex(&t.background)).opacity(if dark { 0.56 } else { 0.64 }))
+                .border_1()
+                .border_color(self.border_subtle())
+                .hover(|s| s.border_color(rgb(hex(&t.accent)).opacity(0.45)))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| {
+                        this.act(Action::TogglePalette, window, cx);
+                    }),
+                )
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            h_flex()
+                                .gap_1p5()
+                                .items_center()
+                                .child(
+                                    Icon::new(IconName::Command)
+                                        .size(px(11.5))
+                                        .text_color(rgb(hex(&t.accent))),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .font_family(self.ui_font())
+                                        .text_color(rgb(hex(&t.muted)))
+                                        .child("快捷指令"),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded(px(5.))
+                                .bg(rgb(hex(&t.paper)).opacity(0.85))
+                                .text_size(px(9.))
+                                .font_family(self.ui_font())
+                                .text_color(rgb(hex(&t.muted)))
+                                .child("Ctrl+K"),
+                        ),
+                ),
+        );
+        let deck = self.render_soundscape_deck(t, snap, quick_swatches, cx);
+        sidebar.child(div().flex_1()).child(deck).child(
+            div()
+                .px_3()
+                .pt_1p5()
+                .text_size(px(9.))
+                .font_family(self.ui_font())
+                .line_height(relative(1.5))
+                .text_color(rgb(hex(&t.muted)).opacity(0.84))
+                .child("一盏灯，一本书 · 点光瓶开启静读"),
+        )
+    }
+    #[inline(never)]
+    fn render_soundscape_deck(
+        &self,
+        t: &ReadingTheme,
+        snap: MotionSnapshot,
+        quick_swatches: Div,
+        cx: &Context<Self>,
+    ) -> Div {
+        let dark = self.is_dark();
+        let is_prism = self.is_prism();
         let vial_ratio = self.overall_reading_progress();
-        sidebar = sidebar
-            .child(div().flex_1())
+        let active_preset = self.active_soundscape_preset();
+        let focus_status = self.focus_timer_progress();
+        let mut preset_row = h_flex().gap_1().items_center().justify_between();
+        for preset in SoundscapePreset::ALL {
+            let selected = active_preset == preset;
+            preset_row = preset_row.child(
+                div()
+                    .id(SharedString::from(format!("sc-{}", preset.id())))
+                    .cursor_pointer()
+                    .flex_1()
+                    .py_1()
+                    .rounded_lg()
+                    .flex()
+                    .justify_center()
+                    .bg(if selected {
+                        rgb(hex(&t.accent)).opacity(0.22)
+                    } else {
+                        rgb(hex(&t.paper)).opacity(if dark { 0.42 } else { 0.62 })
+                    })
+                    .border_1()
+                    .border_color(if selected {
+                        rgb(hex(&t.accent)).opacity(0.65)
+                    } else {
+                        rgb(0x000000).opacity(0.0)
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            this.act(Action::Soundscape(preset), window, cx);
+                        }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(9.5))
+                            .font_family(self.ui_font())
+                            .text_color(if selected {
+                                rgb(hex(&t.accent))
+                            } else {
+                                rgb(hex(&t.muted))
+                            })
+                            .child(preset.short_label()),
+                    ),
+            );
+        }
+        let vol_pct = (t.volume.clamp(0.05, 1.0) * 100.0).round() as u32;
+        let mut deck = v_flex()
+            .relative()
+            .overflow_hidden()
+            .p_3()
+            .gap_2()
+            .rounded_2xl()
+            .bg(rgb(hex(&t.background)).opacity(if dark { 0.76 } else { 0.78 }))
+            .border_1()
+            .border_color(self.border_subtle())
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .child(prism::prism_beam_horizontal(snap.clone(), 1.6, 0.9, false)),
+            )
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .child(
+                                Icon::new(if is_prism {
+                                    IconName::Sparkles
+                                } else if t.id == "night" {
+                                    IconName::Moon
+                                } else if self.is_sky() {
+                                    IconName::Cloud
+                                } else {
+                                    IconName::Sun
+                                })
+                                .size(px(13.))
+                                .text_color(rgb(hex(&t.accent))),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.text)))
+                                    .child(t.name.clone()),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .child(div().size(px(5.)).rounded_full().bg(rgb(
+                                if self.audio.is_some()
+                                    || focus_status.is_some()
+                                    || (is_prism && !t.reduced_motion)
+                                {
+                                    0x36c98e
+                                } else {
+                                    hex(&t.accent)
+                                },
+                            )))
+                            .child(
+                                div()
+                                    .text_size(px(8.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child(if focus_status.is_some() {
+                                        "QUIET"
+                                    } else if self.audio.is_some() {
+                                        "LIVE"
+                                    } else if is_prism && !t.reduced_motion {
+                                        "FLOW"
+                                    } else {
+                                        "IDLE"
+                                    }),
+                            ),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .px_2p5()
+                    .py_2()
+                    .rounded_xl()
+                    .bg(rgb(hex(&t.paper)).opacity(if dark { 0.62 } else { 0.78 }))
+                    .child(
+                        div()
+                            .id("vial-trigger")
+                            .cursor_pointer()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, window, cx| {
+                                    this.act(Action::ToggleTimerPicker, window, cx);
+                                }),
+                            )
+                            .child(prism::light_vial_canvas(snap, vial_ratio)),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .gap_1()
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_size(px(8.5))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&t.accent)))
+                                            .child(if let Some((_, rem)) = focus_status {
+                                                let mins = rem / 60;
+                                                let secs = rem % 60;
+                                                format!("静读 · {mins:02}:{secs:02}")
+                                            } else {
+                                                active_preset.label().to_owned()
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(8.5))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&t.muted)))
+                                            .child(format!("{:.0}%", vial_ratio * 100.0)),
+                                    ),
+                            )
+                            .child(self.waveform_bars(
+                                self.audio.is_some() || focus_status.is_some(),
+                                &[5., 11., 15., 8., 13., 9., 6., 12., 8.],
+                            )),
+                    ),
+            );
+        if self.focus_timer_picker_open {
+            deck = deck.child(
+                v_flex()
+                    .gap_1p5()
+                    .p_2()
+                    .rounded_xl()
+                    .bg(rgb(hex(&t.paper)).opacity(if dark { 0.75 } else { 0.90 }))
+                    .border_1()
+                    .border_color(rgb(hex(&t.accent)).opacity(0.32))
+                    .child(
+                        div()
+                            .text_size(px(9.5))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&t.accent)))
+                            .child("静读光瓶 · 温和陪伴计时"),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(self.button("15m", Action::StartFocusTimer(15), cx))
+                            .child(self.button("25m", Action::StartFocusTimer(25), cx))
+                            .child(self.button("45m", Action::StartFocusTimer(45), cx)),
+                    )
+                    .when(focus_status.is_some(), |this| {
+                        this.child(self.button("结束静读", Action::StopFocusTimer, cx))
+                    }),
+            );
+        }
+        deck.child(preset_row)
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .px_1()
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .items_center()
+                            .child(
+                                Icon::new(IconName::Volume2)
+                                    .size(px(11.))
+                                    .text_color(rgb(hex(&t.muted))),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(8.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child(format!("音量 {vol_pct}%")),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .items_center()
+                            .child(
+                                div()
+                                    .id("vol-down")
+                                    .cursor_pointer()
+                                    .px_1p5()
+                                    .rounded(px(5.))
+                                    .bg(rgb(hex(&t.paper)).opacity(0.7))
+                                    .text_size(px(10.))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, window, cx| {
+                                            this.act(Action::AudioVolume(-1), window, cx);
+                                        }),
+                                    )
+                                    .child("−"),
+                            )
+                            .child(
+                                div()
+                                    .id("vol-up")
+                                    .cursor_pointer()
+                                    .px_1p5()
+                                    .rounded(px(5.))
+                                    .bg(rgb(hex(&t.paper)).opacity(0.7))
+                                    .text_size(px(10.))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, window, cx| {
+                                            this.act(Action::AudioVolume(1), window, cx);
+                                        }),
+                                    )
+                                    .child("+"),
+                            ),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .px_1()
+                    .child(
+                        div()
+                            .text_size(px(8.5))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&t.muted)))
+                            .child("快速切换主题"),
+                    )
+                    .child(quick_swatches),
+            )
+            .child(self.nav_button(
+                if self.audio.is_some() {
+                    "关闭环境音"
+                } else {
+                    "开启环境音"
+                },
+                if self.audio.is_some() {
+                    IconName::VolumeX
+                } else {
+                    IconName::AudioLines
+                },
+                self.audio.is_some(),
+                Action::Audio,
+                cx,
+            ))
+    }
+    #[inline(never)]
+    fn render_welcome(&self, t: &ReadingTheme, cx: &Context<Self>) -> AnyElement {
+        v_flex()
+            .size_full()
+            .p_8()
+            .items_center()
+            .justify_center()
+            .bg(rgb(hex(&t.background)).opacity(0.45))
             .child(
                 v_flex()
+                    .w(px(620.))
+                    .max_w_full()
+                    .p_8()
+                    .gap_6()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&t.paper)).opacity(0.97))
+                    .border_1()
+                    .border_color(self.border_strong())
+                    .shadow_lg()
+                    .child(self.specular_line())
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                img("glow-icon.png")
+                                    .size(px(56.))
+                                    .object_fit(ObjectFit::Contain)
+                                    .rounded_2xl(),
+                            )
+                            .child(self.studio_badge("LOCAL-FIRST", "PRIVATE STORAGE", true)),
+                    )
+                    .child(self.heading(
+                        "WELCOME TO GLOW STATION",
+                        "欢迎来到微光。",
+                        "书库、划线和日记保存在这台电脑上；心情回复可连接 OpenAI。",
+                    ))
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_family(self.ui_font())
+                            .line_height(relative(1.75))
+                            .text_color(rgb(hex(&t.muted)))
+                            .child("书库、多色划线、批注、原生声景与书摘卡均 100% 在本机运行。仅当你主动提交心情或点击「问问微光（AI 深度共读）」时，才将当次单段文字发给 OpenAI 生成回复。"),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .flex_wrap()
+                            .child(
+                                div()
+                                    .text_size(px(11.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child("选择初始空间："),
+                            )
+                            .child(self.pill_button(
+                                "林间暖光 · 蓝天白云",
+                                Some(IconName::Cloud),
+                                t.id == "forest",
+                                Action::PickTheme(0),
+                                cx,
+                            ))
+                            .child(self.pill_button(
+                                "黑曜棱镜 · 暗夜流光",
+                                Some(IconName::Sparkles),
+                                t.id == "prism",
+                                Action::PickTheme(3),
+                                cx,
+                            )),
+                    )
+                    .child(
+                        self.button_with_icon(
+                            "知道了，先坐一会儿",
+                            IconName::BookOpen,
+                            Action::Privacy,
+                            cx,
+                        )
+                        .primary(),
+                    ),
+            )
+            .into_any_element()
+    }
+    #[inline(never)]
+    fn render_confirm(&self, t: &ReadingTheme, confirm: &str, cx: &Context<Self>) -> AnyElement {
+        v_flex()
+            .size_full()
+            .p_8()
+            .items_center()
+            .justify_center()
+            .bg(rgb(hex(&t.background)).opacity(0.55))
+            .child(
+                v_flex()
+                    .w(px(520.))
+                    .max_w_full()
+                    .p_7()
+                    .gap_5()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&t.paper)).opacity(0.98))
+                    .border_1()
+                    .border_color(self.border_strong())
+                    .shadow_lg()
+                    .child(self.specular_line())
+                    .child(self.studio_badge("CONFIRM", "请再确认一次", true))
+                    .child(
+                        div()
+                            .text_size(px(26.))
+                            .font_family(self.display_font())
+                            .child(if confirm == "journal" {
+                                "清空全部私人日记？"
+                            } else {
+                                "把这本书移出书架？"
+                            }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_family(self.ui_font())
+                            .line_height(relative(1.7))
+                            .text_color(rgb(hex(&t.muted)))
+                            .child(if confirm == "journal" {
+                                "清空后无法在应用内恢复。书籍和阅读进度不会删除。"
+                            } else {
+                                "用户原文件不会删除，已经留下的日记仍会保留。"
+                            }),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_3()
+                            .child(self.button("保留", Action::Cancel, cx))
+                            .child(
+                                self.button(
+                                    "确认",
+                                    if confirm == "journal" {
+                                        Action::ConfirmClear
+                                    } else {
+                                        Action::ConfirmRemove
+                                    },
+                                    cx,
+                                )
+                                .primary(),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+    #[inline(never)]
+    fn quote_card_modal(&self, draft: &QuoteCardDraft, cx: &Context<Self>) -> AnyElement {
+        let t = self.theme();
+        let (bg_hex, card_hex, text_hex, muted_hex, accent_hex, tag_text) = match draft.style {
+            QuoteCardStyle::Sky => (
+                0x8ecbf6u32,
+                0xf9fdffu32,
+                0x1a324cu32,
+                0x4f6e8eu32,
+                0x2573b8u32,
+                "GLOW · 天空云境书摘",
+            ),
+            QuoteCardStyle::Prism => (
+                0x090c16u32,
+                0x121624u32,
+                0xeef1fau32,
+                0x94a0beu32,
+                0xa78bfau32,
+                "GLOW · 黑曜棱镜书摘",
+            ),
+            QuoteCardStyle::Paper => (
+                0xede5d4u32,
+                0xfffcf5u32,
+                0x2e2923u32,
+                0x70665au32,
+                0x8a5e3bu32,
+                "GLOW · 素纸信笺书摘",
+            ),
+        };
+        let mut style_row = h_flex().gap_2().flex_wrap();
+        for style in QuoteCardStyle::ALL {
+            style_row = style_row.child(self.pill_button(
+                style.label(),
+                None,
+                draft.style == style,
+                Action::QuoteCardStyle(style),
+                cx,
+            ));
+        }
+        let preview_card = v_flex()
+            .w(px(360.))
+            .p_5()
+            .rounded_2xl()
+            .bg(rgb(bg_hex))
+            .border_1()
+            .border_color(rgb(accent_hex).opacity(0.35))
+            .shadow_md()
+            .child(
+                v_flex()
+                    .w_full()
+                    .p_5()
+                    .gap_3()
+                    .rounded_xl()
+                    .bg(rgb(card_hex))
+                    .border_1()
+                    .border_color(rgb(accent_hex).opacity(0.28))
+                    .child(
+                        div()
+                            .px_2p5()
+                            .py_0p5()
+                            .rounded_full()
+                            .bg(rgb(accent_hex).opacity(0.14))
+                            .text_size(px(9.5))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(accent_hex))
+                            .child(tag_text),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(28.))
+                            .line_height(relative(0.75))
+                            .font_family(self.display_font())
+                            .text_color(rgb(accent_hex))
+                            .child("“"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(16.))
+                            .font_family(self.display_font())
+                            .line_height(relative(1.65))
+                            .text_color(rgb(text_hex))
+                            .child(draft.text.chars().take(220).collect::<String>()),
+                    )
+                    .when_some(
+                        draft
+                            .note
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|n| !n.is_empty())
+                            .map(str::to_owned),
+                        |this, note| {
+                            this.child(
+                                v_flex()
+                                    .p_2p5()
+                                    .gap_1()
+                                    .rounded_lg()
+                                    .bg(rgb(accent_hex).opacity(0.09))
+                                    .border_l_2()
+                                    .border_color(rgb(accent_hex))
+                                    .child(
+                                        div()
+                                            .text_size(px(9.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(accent_hex))
+                                            .child("读时批注"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.5))
+                                            .font_family(self.ui_font())
+                                            .line_height(relative(1.55))
+                                            .text_color(rgb(text_hex))
+                                            .child(note.chars().take(120).collect::<String>()),
+                                    ),
+                            )
+                        },
+                    )
+                    .child(
+                        div()
+                            .pt_2()
+                            .border_t_1()
+                            .border_color(rgb(accent_hex).opacity(0.22))
+                            .text_size(px(11.))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(muted_hex))
+                            .child(format!("—— {}", draft.attribution)),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(9.5))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(muted_hex).opacity(0.78))
+                            .child("微光阅读 · GLOW READING"),
+                    ),
+            );
+        div()
+            .id("quote-card-overlay")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .p_6()
+            .bg(rgb(0x060910).opacity(0.58))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.act(Action::CloseQuoteCard, window, cx);
+                }),
+            )
+            .child(
+                v_flex()
+                    .id("quote-card-dialog")
+                    .w(px(740.))
+                    .max_w_full()
+                    .max_h_full()
+                    .overflow_y_scroll()
+                    .p_6()
+                    .gap_5()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&t.paper)).opacity(0.98))
+                    .border_1()
+                    .border_color(self.border_strong())
+                    .shadow_lg()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(self.studio_badge("QUOTE CARD STUDIO", "微光书摘卡", true))
+                                    .child(
+                                        div()
+                                            .text_size(px(21.))
+                                            .font_family(self.display_font())
+                                            .child("把这一句做成一张书摘卡"),
+                                    ),
+                            )
+                            .child(self.button_with_icon(
+                                "关闭",
+                                IconName::X,
+                                Action::CloseQuoteCard,
+                                cx,
+                            )),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_6()
+                            .items_start()
+                            .flex_wrap()
+                            .child(preview_card)
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w(px(240.))
+                                    .gap_4()
+                                    .child(
+                                        v_flex()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.5))
+                                                    .font_family(self.ui_font())
+                                                    .text_color(rgb(hex(&t.muted)))
+                                                    .child("选择卡片版式"),
+                                            )
+                                            .child(style_row),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(12.))
+                                            .font_family(self.ui_font())
+                                            .line_height(relative(1.65))
+                                            .text_color(rgb(hex(&t.muted)))
+                                            .child("导出为 960×1240 高清 PNG 图片，100% 本地绘制、不上传任何内容。"),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .gap_2()
+                                            .child(
+                                                self.button_with_icon(
+                                                    "保存高清 PNG",
+                                                    IconName::ImageDown,
+                                                    Action::SaveQuoteCardPng,
+                                                    cx,
+                                                )
+                                                .primary()
+                                                .w_full(),
+                                            )
+                                            .child(
+                                                self.button_with_icon(
+                                                    "复制文字摘录",
+                                                    IconName::Copy,
+                                                    Action::CopyQuoteCardText,
+                                                    cx,
+                                                )
+                                                .outline()
+                                                .w_full(),
+                                            ),
+                                    ),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+    fn filtered_palette_commands(
+        &self,
+        cx: &App,
+    ) -> Vec<(&'static str, &'static str, IconName, Action)> {
+        let query = self.palette_input.read(cx).value().trim().to_lowercase();
+        let mut commands: Vec<(&'static str, &'static str, IconName, Action)> = vec![
+            (
+                "主题 · 林间暖光（天空之城蓝白）",
+                "蓝天白云默认手绘主题",
+                IconName::Cloud,
+                Action::PickTheme(0),
+            ),
+            (
+                "主题 · 素纸",
+                "温润护眼古典纸页",
+                IconName::Sun,
+                Action::PickTheme(1),
+            ),
+            (
+                "主题 · 静夜",
+                "低亮度柔和深色夜读",
+                IconName::Moon,
+                Action::PickTheme(2),
+            ),
+            (
+                "主题 · 黑曜棱镜",
+                "光谱流光与交互粒子",
+                IconName::Sparkles,
+                Action::PickTheme(3),
+            ),
+            (
+                if self.audio.is_some() {
+                    "声景 · 关闭环境音"
+                } else {
+                    "声景 · 开启环境音"
+                },
+                "切换 MineRadio 原生合成自然声景",
+                if self.audio.is_some() {
+                    IconName::VolumeX
+                } else {
+                    IconName::AudioLines
+                },
+                Action::Audio,
+            ),
+            (
+                "声景 · 天空细雨",
+                "柔润粉红噪声与细微雨滴",
+                IconName::CloudRain,
+                Action::Soundscape(SoundscapePreset::Rain),
+            ),
+            (
+                "声景 · 壁炉微光",
+                "深沉暖流与柔和木柴轻响",
+                IconName::Flame,
+                Action::Soundscape(SoundscapePreset::Fireplace),
+            ),
+            (
+                "声景 · 静夜微风",
+                "缓慢林风与远景夜鸣",
+                IconName::Wind,
+                Action::Soundscape(SoundscapePreset::Breeze),
+            ),
+            (
+                "声景 · 黑曜星穹",
+                "空灵和谐持续音与水晶风铃",
+                IconName::Sparkles,
+                Action::Soundscape(SoundscapePreset::Cosmos),
+            ),
+            (
+                if self.breathing_started.is_some() {
+                    "仪式 · 结束 4-7-8 呼吸放松"
+                } else {
+                    "仪式 · 启动 4-7-8 呼吸放松（1 分钟）"
+                },
+                "前往心情页体验呼吸引导光环",
+                IconName::Wind,
+                Action::ToggleBreathing,
+            ),
+            (
+                "仪式 · 开启 25 分钟静读光瓶",
+                "温和沙漏陪伴，结束时轻声风铃",
+                IconName::Hourglass,
+                Action::StartFocusTimer(25),
+            ),
+            (
+                "阅读 · 切换护眼暖光滤镜",
+                "柔和过滤冷蓝光",
+                IconName::Sun,
+                Action::ToggleWarmFilter,
+            ),
+            (
+                "阅读 · 切换禅意专注模式",
+                "隐匿边栏与工具栏，沉浸书页",
+                IconName::Focus,
+                Action::Focus,
+            ),
+            (
+                "交互 · 切换流光动效 / 静谧模式",
+                "全局减少动态开关",
+                IconName::Sparkles,
+                Action::ToggleFlow,
+            ),
+            (
+                "导航 · 前往我的书架",
+                "藏书、检索与今日重逢",
+                IconName::LibraryBig,
+                Action::Page(Page::Shelf),
+            ),
+            (
+                "导航 · 前往此刻心情",
+                "情绪调频与呼吸光环",
+                IconName::MessageCircleHeart,
+                Action::Page(Page::Mood),
+            ),
+            (
+                "导航 · 前往私人微光手账",
+                "情绪光谱、筛选与书摘卡",
+                IconName::NotebookPen,
+                Action::Page(Page::Journal),
+            ),
+            (
+                "导航 · 前往主题与设置",
+                "调色、自定义素材与导入导出",
+                IconName::Settings2,
+                Action::Page(Page::Themes),
+            ),
+            (
+                "手账 · 导出 Markdown 手账",
+                "把本地日记导出为 .md 文件",
+                IconName::Download,
+                Action::ExportJournalMarkdown,
+            ),
+        ];
+        if self.active_book.is_some() {
+            commands.insert(
+                0,
+                (
+                    "导航 · 回到当前阅读",
+                    "继续停下的书页",
+                    IconName::BookOpen,
+                    Action::Page(Page::Reader),
+                ),
+            );
+        }
+        if query.is_empty() {
+            commands
+        } else {
+            commands
+                .into_iter()
+                .filter(|(title, desc, _, _)| {
+                    title.to_lowercase().contains(&query) || desc.to_lowercase().contains(&query)
+                })
+                .collect()
+        }
+    }
+    fn run_palette_command(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        self.palette_open = false;
+        self.palette_selected = 0;
+        window.focus(&self.focus, cx);
+        if matches!(action, Action::ToggleBreathing) && self.page != Page::Mood {
+            self.act(Action::Page(Page::Mood), window, cx);
+        }
+        self.act(action, window, cx);
+    }
+    fn execute_selected_palette_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let commands = self.filtered_palette_commands(cx);
+        if commands.is_empty() {
+            return;
+        }
+        let idx = self.palette_selected.min(commands.len() - 1);
+        let action = commands[idx].3.clone();
+        self.run_palette_command(action, window, cx);
+    }
+    #[inline(never)]
+    fn command_palette_modal(&self, snap: MotionSnapshot, cx: &Context<Self>) -> AnyElement {
+        let t = self.theme();
+        let commands = self.filtered_palette_commands(cx);
+        let count = commands.len();
+        let selected_idx = if count == 0 {
+            0
+        } else {
+            self.palette_selected.min(count - 1)
+        };
+        let mut list = v_flex()
+            .id("palette-list")
+            .overflow_y_scroll()
+            .max_h(px(360.))
+            .gap_1();
+        for (idx, (title, desc, icon, action)) in commands.into_iter().enumerate() {
+            let is_selected = idx == selected_idx;
+            let action_clone = action.clone();
+            list = list.child(
+                div()
+                    .id(SharedString::from(format!("cmd-{}", idx + 1)))
+                    .cursor_pointer()
+                    .px_3()
+                    .py_2()
+                    .rounded_xl()
+                    .bg(if is_selected {
+                        rgb(hex(&t.accent)).opacity(0.16)
+                    } else {
+                        rgb(0x000000).opacity(0.0)
+                    })
+                    .border_1()
+                    .border_color(if is_selected {
+                        rgb(hex(&t.accent)).opacity(0.45)
+                    } else {
+                        rgb(0x000000).opacity(0.0)
+                    })
+                    .hover(|s| s.bg(rgb(hex(&t.accent)).opacity(0.18)))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            this.run_palette_command(action_clone.clone(), window, cx);
+                        }),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_3()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                h_flex()
+                                    .gap_3()
+                                    .items_center()
+                                    .child(
+                                        Icon::new(icon)
+                                            .size(px(15.))
+                                            .text_color(rgb(hex(&t.accent))),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .gap_0p5()
+                                            .child(
+                                                div()
+                                                    .text_size(px(13.))
+                                                    .font_family(self.ui_font())
+                                                    .text_color(rgb(hex(&t.text)))
+                                                    .child(title),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(10.5))
+                                                    .font_family(self.ui_font())
+                                                    .text_color(rgb(hex(&t.muted)))
+                                                    .child(desc),
+                                            ),
+                                    ),
+                            )
+                            .when(is_selected, |this| {
+                                this.child(
+                                    div()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded(px(5.))
+                                        .bg(rgb(hex(&t.accent)).opacity(0.18))
+                                        .text_size(px(9.5))
+                                        .font_family(self.ui_font())
+                                        .text_color(rgb(hex(&t.accent)))
+                                        .child("Enter"),
+                                )
+                            }),
+                    ),
+            );
+        }
+        if count == 0 {
+            list = list.child(
+                div()
+                    .p_5()
+                    .text_size(px(12.5))
+                    .font_family(self.ui_font())
+                    .text_color(rgb(hex(&t.muted)))
+                    .child("没有匹配的快捷指令，试试搜“主题”、“声景”、“呼吸”或“静读”。"),
+            );
+        }
+        div()
+            .id("palette-overlay")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_start()
+            .justify_center()
+            .pt(px(84.))
+            .px_6()
+            .bg(rgb(0x060910).opacity(0.52))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.act(Action::ClosePalette, window, cx);
+                }),
+            )
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                let len = this.filtered_palette_commands(cx).len();
+                if len == 0 {
+                    return;
+                }
+                match event.keystroke.key.as_str() {
+                    "down" => {
+                        this.palette_selected = (this.palette_selected + 1) % len;
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                    "up" => {
+                        this.palette_selected = if this.palette_selected == 0 {
+                            len - 1
+                        } else {
+                            this.palette_selected - 1
+                        };
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                    _ => {}
+                }
+            }))
+            .child(
+                v_flex()
+                    .id("palette-dialog")
                     .relative()
                     .overflow_hidden()
-                    .p_3()
-                    .gap_2p5()
+                    .w(px(560.))
+                    .max_w_full()
+                    .p_4()
+                    .gap_3()
                     .rounded_2xl()
-                    .bg(rgb(hex(&t.background)).opacity(if dark { 0.76 } else { 0.78 }))
+                    .bg(rgb(hex(&t.paper)).opacity(0.98))
                     .border_1()
-                    .border_color(self.border_subtle())
+                    .border_color(self.border_strong())
+                    .shadow_lg()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
                     .child(
                         div()
                             .absolute()
                             .top_0()
                             .left_0()
                             .right_0()
-                            .child(prism::prism_beam_horizontal(snap.clone(), 1.6, 0.9, false)),
+                            .child(prism::prism_beam_horizontal(snap, 2.0, 0.5, false)),
                     )
                     .child(
                         h_flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .items_center()
-                                    .child(
-                                        Icon::new(if is_prism {
-                                            IconName::Sparkles
-                                        } else if t.id == "night" {
-                                            IconName::Moon
-                                        } else {
-                                            IconName::Sun
-                                        })
-                                        .size(px(13.))
-                                        .text_color(rgb(hex(&t.accent))),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .font_family(self.ui_font())
-                                            .text_color(rgb(hex(&t.text)))
-                                            .child(t.name.clone()),
-                                    ),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_1p5()
-                                    .items_center()
-                                    .child(div().size(px(5.)).rounded_full().bg(rgb(
-                                        if self.audio.is_some() || (is_prism && !t.reduced_motion) {
-                                            0x36c98e
-                                        } else {
-                                            hex(&t.accent)
-                                        },
-                                    )))
-                                    .child(
-                                        div()
-                                            .text_size(px(8.))
-                                            .font_family(self.ui_font())
-                                            .text_color(rgb(hex(&t.muted)))
-                                            .child(if self.audio.is_some() {
-                                                "LIVE"
-                                            } else if is_prism && !t.reduced_motion {
-                                                "FLOW"
-                                            } else {
-                                                "IDLE"
-                                            }),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .justify_between()
                             .gap_2()
-                            .px_2p5()
-                            .py_2()
-                            .rounded_xl()
-                            .bg(rgb(hex(&t.paper)).opacity(if dark { 0.62 } else { 0.78 }))
-                            .child(
-                                div()
-                                    .id("vial-trigger")
-                                    .cursor_pointer()
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, window, cx| {
-                                            this.act(Action::ToggleFlow, window, cx);
-                                        }),
-                                    )
-                                    .child(prism::light_vial_canvas(snap.clone(), vial_ratio)),
-                            )
-                            .child(
-                                v_flex()
-                                    .flex_1()
-                                    .gap_1()
-                                    .child(
-                                        h_flex()
-                                            .justify_between()
-                                            .items_center()
-                                            .child(
-                                                div()
-                                                    .text_size(px(8.5))
-                                                    .font_family(self.ui_font())
-                                                    .text_color(rgb(hex(&t.accent)))
-                                                    .child(freq),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(8.5))
-                                                    .font_family(self.ui_font())
-                                                    .text_color(rgb(hex(&t.muted)))
-                                                    .child(format!("{:.0}%", vial_ratio * 100.0)),
-                                            ),
-                                    )
-                                    .child(self.waveform_bars(
-                                        self.audio.is_some(),
-                                        &[5., 11., 15., 8., 13., 9., 6., 12., 8.],
-                                    )),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .justify_between()
                             .items_center()
-                            .px_1()
+                            .child(
+                                Icon::new(IconName::Command)
+                                    .size(px(15.))
+                                    .text_color(rgb(hex(&t.accent))),
+                            )
                             .child(
                                 div()
-                                    .text_size(px(8.5))
-                                    .font_family(self.ui_font())
-                                    .text_color(rgb(hex(&t.muted)))
-                                    .child("快速切换主题"),
+                                    .flex_1()
+                                    .child(Input::new(&self.palette_input).w_full()),
                             )
-                            .child(quick_swatches),
-                    )
-                    .child(self.nav_button(
-                        if self.audio.is_some() {
-                            "关闭环境音"
-                        } else {
-                            "开启环境音"
-                        },
-                        if self.audio.is_some() {
-                            IconName::VolumeX
-                        } else {
-                            IconName::AudioLines
-                        },
-                        self.audio.is_some(),
-                        Action::Audio,
-                        cx,
-                    )),
-            )
-            .child(
-                div()
-                    .px_3()
-                    .pt_1p5()
-                    .text_size(px(9.))
-                    .font_family(self.ui_font())
-                    .line_height(relative(1.5))
-                    .text_color(rgb(hex(&t.muted)).opacity(0.84))
-                    .child("一盏灯，一本书 · 按自己的步子来"),
-            );
-        let page = if !self.store.state.privacy_seen {
-            v_flex()
-                .size_full()
-                .p_8()
-                .items_center()
-                .justify_center()
-                .bg(rgb(hex(&t.background)).opacity(0.45))
-                .child(
-                    v_flex()
-                        .w(px(620.))
-                        .max_w_full()
-                        .p_8()
-                        .gap_6()
-                        .rounded_2xl()
-                        .bg(rgb(hex(&t.paper)).opacity(0.97))
-                        .border_1()
-                        .border_color(self.border_strong())
-                        .shadow_lg()
-                        .child(self.specular_line())
-                        .child(
-                            h_flex()
-                                .items_center()
-                                .justify_between()
-                                .child(
-                                    img("glow-icon.png")
-                                        .size(px(56.))
-                                        .object_fit(ObjectFit::Contain)
-                                        .rounded_2xl(),
-                                )
-                                .child(self.studio_badge("LOCAL-FIRST", "PRIVATE STORAGE", true)),
-                        )
-                        .child(self.heading(
-                            "WELCOME TO GLOW STATION",
-                            "欢迎来到微光。",
-                            "书库、划线和日记保存在这台电脑上；心情回复可连接 OpenAI。",
-                        ))
-                        .child(
-                            div()
-                                .text_size(px(14.))
-                                .font_family(self.ui_font())
-                                .line_height(relative(1.75))
-                                .text_color(rgb(hex(&t.muted)))
-                                .child("日记与划线尚未加密，你可以随时删除。心情提交会将本次文字与所选心情发送给 OpenAI 生成回复，可能产生 API 费用；成功后记入本机日记。阅读选文回响仍为本地精选示例。"),
-                        )
-                        .child(
-                            self.button_with_icon(
-                                "知道了，先坐一会儿",
-                                IconName::BookOpen,
-                                Action::Privacy,
+                            .child(self.button_with_icon(
+                                "关闭",
+                                IconName::X,
+                                Action::ClosePalette,
                                 cx,
-                            )
-                            .primary(),
-                        ),
-                )
-                .into_any_element()
+                            )),
+                    )
+                    .child(list)
+                    .child(
+                        div()
+                            .pt_1()
+                            .border_t_1()
+                            .border_color(self.border_subtle())
+                            .text_size(px(10.))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&t.muted)))
+                            .child("↑ / ↓ 选择 · Enter 执行 · Esc 或点击空白处关闭"),
+                    ),
+            )
+            .into_any_element()
+    }
+}
+
+fn hex(s: &str) -> u32 {
+    glow_core::theme::color(s).unwrap_or(0x353e35)
+}
+
+fn highlight_color_hex(color: Option<&str>, fallback: u32) -> u32 {
+    match color {
+        Some("amber") => 0xb45309,
+        Some("sage") => 0x047857,
+        Some("rose") => 0xbe123c,
+        Some("prism") => 0x7e22ce,
+        _ => fallback,
+    }
+}
+
+fn highlight_color_hex_for(color: Option<&str>, fallback: u32, is_dark: bool) -> u32 {
+    if is_dark {
+        match color {
+            Some("amber") => 0xfbbf24,
+            Some("sage") => 0x34d399,
+            Some("rose") => 0xfb7185,
+            Some("prism") => 0xc084fc,
+            _ => fallback,
+        }
+    } else {
+        highlight_color_hex(color, fallback)
+    }
+}
+
+fn highlight_color_name(color: Option<&str>) -> &'static str {
+    match color {
+        Some("amber") => "琥珀暖黄",
+        Some("sage") => "苔藓微绿",
+        Some("rose") => "樱雾淡粉",
+        Some("prism") => "棱镜暮紫",
+        _ => "原文摘录",
+    }
+}
+
+fn mood_spectrum_color(mood: Option<&str>) -> u32 {
+    match mood {
+        Some("孤独") => 0x818cf8,
+        Some("疲惫") => 0xf59e0b,
+        Some("迷茫") => 0x38bdf8,
+        Some("失落") => 0x60a5fa,
+        Some("成长") => 0x34d399,
+        Some("希望") => 0xfbbf24,
+        _ => 0xf472b6,
+    }
+}
+
+fn mood_badge_text_color(mood: Option<&str>, is_dark: bool) -> u32 {
+    if is_dark {
+        mood_spectrum_color(mood)
+    } else {
+        match mood {
+            Some("孤独") => 0x4f46e5,
+            Some("疲惫") => 0xb45309,
+            Some("迷茫") => 0x0369a1,
+            Some("失落") => 0x1d4ed8,
+            Some("成长") => 0x047857,
+            Some("希望") => 0xa16207,
+            _ => 0xbe185d,
+        }
+    }
+}
+
+fn circadian_greeting() -> (&'static str, &'static str, &'static str, bool) {
+    let hour = time::OffsetDateTime::now_local()
+        .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+        .hour();
+    match hour {
+        5..=10 => (
+            "MORNING SKY · 晨光慢读",
+            "早安，乘着晨光，\n翻开今天的第一页。",
+            "云层刚被阳光照亮，不赶时间，按自己的步子读几页吧。",
+            false,
+        ),
+        11..=16 => (
+            "AFTERNOON CLOUD · 午后云影",
+            "午后的风很轻，\n适合躲进书页里。",
+            "这里没有读完的期限。蓝天、白云和故事，都会等你。",
+            false,
+        ),
+        17..=20 => (
+            "TWILIGHT GLOW · 暮色微澜",
+            "傍晚的光慢慢暗下来，\n让文字陪你歇一会儿。",
+            "把白天的喧嚣留在门外，挑一首轻缓声景慢慢读。",
+            false,
+        ),
+        _ => (
+            "MIDNIGHT SANCTUARY · 深夜书灯",
+            "夜深了，\n这盏小灯还在为你亮着。",
+            "晚风安静，若觉得屏幕太亮，可以一键切到护眼的静夜空间。",
+            true,
+        ),
+    }
+}
+
+fn today_ymd() -> String {
+    let dt = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+    format!("{:04}-{:02}-{:02}", dt.year(), dt.month() as u8, dt.day())
+}
+
+fn format_journal_markdown(entries: &[JournalEntry]) -> String {
+    let mut out = String::from("# 微光手账 · Glow Reading Journal\n\n");
+    for entry in entries {
+        let tag = entry.mood.as_deref().unwrap_or("阅读回响");
+        let star = if entry.favorite { " ★" } else { "" };
+        out.push_str(&format!(
+            "## {} · {}{}\n\n",
+            display_time(&entry.created_at),
+            tag,
+            star
+        ));
+        if !entry.input.trim().is_empty() {
+            out.push_str(&format!(
+                "> {}\n\n",
+                entry.input.trim().replace('\n', "\n> ")
+            ));
+        }
+        for q in &entry.echo.quotes {
+            out.push_str(&format!(
+                "- 「{}」—— {}《{}》\n",
+                q.text.trim(),
+                q.author,
+                q.work
+            ));
+        }
+        if !entry.echo.quotes.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(entry.echo.reply.trim());
+        out.push_str("\n\n---\n\n");
+    }
+    out
+}
+
+fn display_time(raw: &str) -> String {
+    let Ok(parsed) =
+        time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
+    else {
+        return raw.to_owned();
+    };
+    let offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
+    parsed
+        .to_offset(offset)
+        .format(&time::macros::format_description!(
+            "[year].[month].[day] [hour]:[minute]"
+        ))
+        .unwrap_or_else(|_| raw.to_owned())
+}
+
+impl Render for ReadingApp {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme().clone();
+        let dark = self.is_dark();
+        let is_prism = self.is_prism();
+        let continuous_flow = !t.reduced_motion
+            && (is_prism
+                || self.audio.is_some()
+                || self.breathing_started.is_some()
+                || self.focus_timer_started.is_some());
+        let needs_frame = self.motion.step(t.reduced_motion, continuous_flow);
+        if needs_frame {
+            self.schedule_motion_frame(window, cx);
+        }
+        let snap = self.motion_snapshot();
+        let narrow = self.is_narrow_reader(window);
+        let visible = self.page == Page::Reader
+            && !self.busy
+            && self.confirm.is_none()
+            && self.quote_card.is_none()
+            && !self.palette_open
+            && self.store.state.privacy_seen
+            && (self.drawer.is_empty() || !narrow);
+        if let Some(view) = &self.webview {
+            if visible {
+                view.update(cx, |v, _| v.show());
+            } else {
+                view.update(cx, |v, _| v.hide());
+            }
+        }
+        let page = if !self.store.state.privacy_seen {
+            self.render_welcome(&t, cx)
         } else if let Some(confirm) = &self.confirm {
-            v_flex()
-                .size_full()
-                .p_8()
-                .items_center()
-                .justify_center()
-                .bg(rgb(hex(&t.background)).opacity(0.55))
-                .child(
-                    v_flex()
-                        .w(px(520.))
-                        .max_w_full()
-                        .p_7()
-                        .gap_5()
-                        .rounded_2xl()
-                        .bg(rgb(hex(&t.paper)).opacity(0.98))
-                        .border_1()
-                        .border_color(self.border_strong())
-                        .shadow_lg()
-                        .child(self.specular_line())
-                        .child(self.studio_badge("CONFIRM", "请再确认一次", true))
-                        .child(
-                            div()
-                                .text_size(px(26.))
-                                .font_family(self.display_font())
-                                .child(if confirm == "journal" {
-                                    "清空全部私人日记？"
-                                } else {
-                                    "把这本书移出书架？"
-                                }),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(14.))
-                                .font_family(self.ui_font())
-                                .line_height(relative(1.7))
-                                .text_color(rgb(hex(&t.muted)))
-                                .child(if confirm == "journal" {
-                                    "清空后无法在应用内恢复。书籍和阅读进度不会删除。"
-                                } else {
-                                    "用户原文件不会删除，已经留下的日记仍会保留。"
-                                }),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_3()
-                                .child(self.button("保留", Action::Cancel, cx))
-                                .child(
-                                    self.button(
-                                        "确认",
-                                        if confirm == "journal" {
-                                            Action::ConfirmClear
-                                        } else {
-                                            Action::ConfirmRemove
-                                        },
-                                        cx,
-                                    )
-                                    .primary(),
-                                ),
-                        ),
-                )
-                .into_any_element()
+            self.render_confirm(&t, confirm, cx)
         } else {
             match self.page {
                 Page::Shelf => self.shelf(cx),
@@ -5156,6 +7936,28 @@ impl Render for ReadingApp {
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
                 let reduced = this.theme().reduced_motion;
                 this.motion.on_mouse_move(event.position, reduced);
+                if this.focus_mode && this.page == Page::Reader {
+                    let y = f32::from(event.position.y);
+                    let h = f32::from(window.viewport_size().height).max(1.0);
+                    // Hysteresis covers the full 62px top toolbar and 54px bottom toolbar once revealed
+                    let next_top = if this.zen_reveal_top {
+                        y <= 78.0
+                    } else {
+                        y <= 44.0
+                    };
+                    let next_bottom = if this.zen_reveal_bottom {
+                        y >= h - 70.0
+                    } else {
+                        y >= h - 44.0
+                    };
+                    if (next_top && !this.zen_reveal_top)
+                        || (next_bottom && !this.zen_reveal_bottom)
+                    {
+                        this.zen_revealed_at = Some(Instant::now());
+                    }
+                    this.zen_reveal_top = next_top;
+                    this.zen_reveal_bottom = next_bottom;
+                }
                 if !reduced {
                     this.schedule_motion_frame(window, cx);
                 }
@@ -5171,8 +7973,13 @@ impl Render for ReadingApp {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &Escape, window, cx| {
-                this.confirm = None;
-                this.act(Action::CloseEcho, window, cx);
+                this.handle_escape(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &InputEscape, window, cx| {
+                this.handle_escape(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &Palette, window, cx| {
+                this.act(Action::TogglePalette, window, cx);
             }))
             .on_action(
                 cx.listener(|this, _: &Import, window, cx| this.act(Action::Import, window, cx)),
@@ -5241,10 +8048,16 @@ impl Render for ReadingApp {
             self.page == Page::Reader,
         ));
         if !self.focus_mode || self.page != Page::Reader {
-            root = root.child(sidebar.relative());
+            root = root.child(self.render_sidebar(&t, snap.clone(), cx).relative());
         }
-        root.child(main.relative())
-            .child(prism::cursor_fx_overlay_canvas(snap))
+        root = root.child(main.relative());
+        if let Some(draft) = &self.quote_card {
+            root = root.child(self.quote_card_modal(draft, cx));
+        }
+        if self.palette_open {
+            root = root.child(self.command_palette_modal(snap.clone(), cx));
+        }
+        root.child(prism::cursor_fx_overlay_canvas(snap))
     }
 }
 impl Drop for ReadingApp {
@@ -5256,6 +8069,9 @@ impl Drop for ReadingApp {
 pub fn bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("escape", Escape, Some("GlowReading")),
+        KeyBinding::new("ctrl-k", Palette, Some("GlowReading")),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-k", Palette, Some("GlowReading")),
         KeyBinding::new("ctrl-o", Import, Some("GlowReading")),
         KeyBinding::new("ctrl-f", Search, Some("GlowReading")),
         KeyBinding::new("pageup", Previous, Some("GlowReading")),
@@ -5652,6 +8468,8 @@ mod tests {
                     kind: "location".into(),
                     text: String::new(),
                     cfi: "epubcfi(/6/4!/4/4,/1:0,/1:8)".into(),
+                    color: String::new(),
+                    open_note: false,
                     entries: vec![],
                     progress: Some(0.42),
                     chapter: "第二章 风".into(),
@@ -5732,5 +8550,390 @@ mod tests {
         cx.simulate_mouse_move(point(px(420.), px(300.)), None, Modifiers::default());
         cx.simulate_click(point(px(420.), px(300.)), Modifiers::default());
         cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
+
+    #[gpui::test]
+    fn direct_colored_highlights_notes_echo_and_ai_passage_work_without_journal_spam(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(gpui_kit::init);
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let mut store = Store::open(data.clone()).unwrap();
+        store.install_sample().unwrap();
+        store.state.privacy_seen = true;
+        let book_id = store.state.books[0].id.clone();
+        let (app, cx) = cx.add_window_view(|window, cx| {
+            let mut app = test_app(store, window, cx);
+            app.echo_ai_worker = |passage, title| {
+                Ok(EchoResult {
+                    quotes: vec![],
+                    reply: format!("与你共读《{title}》里的这句：{passage}"),
+                    demo: false,
+                })
+            };
+            app
+        });
+        let cfi = "epubcfi(/6/4!/4/2,/1:0,/1:12)";
+        app.update_in(cx, |app, window, cx| {
+            app.active_book = Some(book_id.clone());
+            app.page = Page::Reader;
+            app.opened = true;
+            // 1. Direct color highlight event does NOT pollute journal
+            app.event(
+                ReaderEvent {
+                    version: 1,
+                    session: app.session.clone(),
+                    request_id: 1,
+                    kind: "highlight".into(),
+                    text: "蓝天下的风轻轻吹过。".into(),
+                    cfi: cfi.into(),
+                    color: "rose".into(),
+                    open_note: true,
+                    entries: vec![],
+                    progress: None,
+                    chapter: String::new(),
+                    results: vec![],
+                },
+                cx,
+            );
+            assert!(app.store.state.journal.is_empty());
+            assert_eq!(app.drawer, "highlights");
+            assert_eq!(
+                app.store.state.books[0].highlights[0].color.as_deref(),
+                Some("rose")
+            );
+            let hl_id = app.store.state.books[0].highlights[0].id.clone();
+            // 2. Edit & save note + recolor
+            app.act(Action::EditHighlightNote(hl_id.clone()), window, cx);
+            app.highlight_note_input
+                .update(cx, |s, cx| s.set_value("像天空之城里的云朵。", window, cx));
+            app.act(Action::SaveHighlightNote, window, cx);
+            app.act(
+                Action::RecolorHighlight(Box::new((hl_id, "prism".into()))),
+                window,
+                cx,
+            );
+            assert_eq!(
+                app.store.state.books[0].highlights[0].note.as_deref(),
+                Some("像天空之城里的云朵。")
+            );
+            assert_eq!(
+                app.store.state.books[0].highlights[0].color.as_deref(),
+                Some("prism")
+            );
+            // 3. Casual echo does NOT pollute journal until explicitly saved or AI companion completes
+            app.event(
+                ReaderEvent {
+                    version: 1,
+                    session: app.session.clone(),
+                    request_id: 2,
+                    kind: "echo".into(),
+                    text: "傍晚的风吹过林间小路。".into(),
+                    cfi: cfi.into(),
+                    color: String::new(),
+                    open_note: false,
+                    entries: vec![],
+                    progress: None,
+                    chapter: String::new(),
+                    results: vec![],
+                },
+                cx,
+            );
+            assert!(app.store.state.journal.is_empty());
+            assert!(app.echo.as_ref().is_some_and(|e| !e.quotes.is_empty()));
+            // 4. Trigger manual AI 段落共读
+            app.act(Action::AskAiPassage, window, cx);
+            let result = app
+                .echo_ai_rx
+                .take()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap();
+            app.finish_ai_passage(result, cx);
+            assert_eq!(app.store.state.journal.len(), 1);
+            assert!(!app.store.state.journal[0].echo.demo);
+            assert!(app.store.state.journal[0].echo.reply.contains("共读"));
+            assert!(app.echo_saved);
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let reopened = Store::open(data).unwrap();
+        assert_eq!(
+            reopened.state.books[0].highlights[0].note.as_deref(),
+            Some("像天空之城里的云朵。")
+        );
+        assert_eq!(reopened.state.journal.len(), 1);
+    }
+
+    #[gpui::test]
+    fn breathing_focus_timer_zen_warm_filter_palette_and_quote_card_render_cleanly(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.bind_keys(bindings());
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let mut store = Store::open(data.clone()).unwrap();
+        store.install_sample().unwrap();
+        store.state.privacy_seen = true;
+        let book_id = store.state.books[0].id.clone();
+        store
+            .add_highlight_styled(
+                &book_id,
+                "云端的光从窗户洒下来。".into(),
+                "epubcfi(/6/4!/4/2,/1:0,/1:10)".into(),
+                Some("amber".into()),
+                Some("安静的一页".into()),
+            )
+            .unwrap();
+        store
+            .record(
+                "mood",
+                "今天天空很蓝".into(),
+                Some("希望".into()),
+                echo::respond("", Some("希望")),
+                None,
+            )
+            .unwrap();
+        let (app, cx) = cx.add_window_view(|window, cx| test_app(store, window, cx));
+        app.update_in(cx, |app, window, cx| {
+            // Default theme is Laputa Sky blue-white "林间暖光"
+            assert_eq!(app.theme().id, "forest");
+            assert_eq!(app.theme().paper, "#F8FCFF");
+            assert!(app.is_sky());
+            // Unread book shows true 0% progress (not fake clamped 34%)
+            assert_eq!(app.overall_reading_progress(), 0.0);
+            // Symmetric 5% volume stepping from default 0.35 -> 0.40 -> 0.35 -> 0.30
+            app.act(Action::AudioVolume(1), window, cx);
+            assert!((app.theme().volume - 0.40).abs() < 0.001);
+            app.act(Action::AudioVolume(-2), window, cx);
+            assert!((app.theme().volume - 0.30).abs() < 0.001);
+            // Daily rediscovery picks up the saved highlight
+            assert!(app.daily_rediscovery().is_some());
+            // Shelf filters
+            app.act(Action::ShelfFilter(ShelfFilter::Unread), window, cx);
+            assert_eq!(app.shelf_filter, ShelfFilter::Unread);
+            app.act(Action::ShelfFilter(ShelfFilter::All), window, cx);
+            // Warm filter persists
+            app.act(Action::ToggleWarmFilter, window, cx);
+            assert!(app.store.state.warm_filter);
+            assert_eq!(app.theme_json()["warm_filter"], true);
+            // 4-7-8 Breathing Ritual on Mood page
+            app.act(Action::Page(Page::Mood), window, cx);
+            app.act(Action::ToggleBreathing, window, cx);
+            assert!(app.breathing_started.is_some());
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(cx.debug_bounds("结束呼吸").is_some());
+
+        app.update_in(cx, |app, window, cx| {
+            app.act(Action::ToggleBreathing, window, cx);
+            assert!(app.breathing_started.is_none());
+            // Reading Light Vial Focus Timer starts near 0% (not fake 18%)
+            app.act(Action::ToggleTimerPicker, window, cx);
+            assert!(app.focus_timer_picker_open);
+            app.act(Action::StartFocusTimer(25), window, cx);
+            assert!(app.focus_timer_started.is_some());
+            assert!(!app.focus_timer_picker_open);
+            assert!(app.overall_reading_progress() < 0.05);
+            // Zen Reading Mode & edge reveal hysteresis
+            app.active_book = Some(book_id.clone());
+            app.page = Page::Reader;
+            app.act(Action::Focus, window, cx);
+            assert!(app.focus_mode);
+            app.event(
+                ReaderEvent {
+                    version: 1,
+                    session: app.session.clone(),
+                    request_id: 1,
+                    kind: "edge".into(),
+                    text: "top".into(),
+                    cfi: String::new(),
+                    color: String::new(),
+                    open_note: false,
+                    entries: vec![],
+                    progress: None,
+                    chapter: String::new(),
+                    results: vec![],
+                },
+                cx,
+            );
+            assert!(app.zen_reveal_top);
+            // Immediate stale "none" from WebView mouseleave must NOT collapse revealed bar
+            app.event(
+                ReaderEvent {
+                    version: 1,
+                    session: app.session.clone(),
+                    request_id: 2,
+                    kind: "edge".into(),
+                    text: "none".into(),
+                    cfi: String::new(),
+                    color: String::new(),
+                    open_note: false,
+                    entries: vec![],
+                    progress: None,
+                    chapter: String::new(),
+                    results: vec![],
+                },
+                cx,
+            );
+            assert!(app.zen_reveal_top);
+        });
+        // Moving pointer across the 62px top toolbar (y = 60) keeps toolbar revealed via hysteresis
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_mouse_move(point(px(400.), px(60.)), None, Modifiers::default());
+        app.read_with(cx, |app, _| assert!(app.zen_reveal_top));
+        // Moving into center of reading area hides top toolbar
+        cx.simulate_mouse_move(point(px(400.), px(260.)), None, Modifiers::default());
+        app.read_with(cx, |app, _| assert!(!app.zen_reveal_top));
+
+        app.update_in(cx, |app, window, cx| {
+            // Journal filter & Markdown formatter
+            app.act(Action::Page(Page::Journal), window, cx);
+            app.act(Action::JournalFilter(JournalFilter::Mood), window, cx);
+            let md = format_journal_markdown(&app.store.state.journal);
+            assert!(md.contains("微光手账"));
+            assert!(md.contains("今天天空很蓝"));
+            // Quote Card Studio modal
+            app.act(
+                Action::OpenQuoteCard(Box::new(QuoteCardDraft {
+                    text: "云端的光从窗户洒下来。".into(),
+                    attribution: "《在林间，慢慢来》".into(),
+                    note: Some("安静的一页".into()),
+                    style: QuoteCardStyle::Sky,
+                })),
+                window,
+                cx,
+            );
+            assert!(app.quote_card.is_some());
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(cx.debug_bounds("保存高清 PNG").is_some());
+
+        // Ctrl+K Command Palette: Escape MUST close even while palette_input holds focus!
+        app.update_in(cx, |app, window, cx| {
+            app.act(Action::CloseQuoteCard, window, cx);
+            app.act(Action::TogglePalette, window, cx);
+            assert!(app.palette_open);
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |app, _| assert!(!app.palette_open));
+
+        // Command Palette keyboard filtering + Enter execution works end-to-end
+        app.update_in(cx, |app, window, cx| {
+            app.act(Action::TogglePalette, window, cx);
+            app.palette_input
+                .update(cx, |s, cx| s.set_value("黑曜棱镜", window, cx));
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_keystrokes("enter");
+        app.read_with(cx, |app, _| {
+            assert!(!app.palette_open);
+            assert_eq!(app.theme().id, "prism");
+        });
+
+        // Removed book guard in daily_rediscovery: favorited entry pointing to removed book has target=None
+        app.update_in(cx, |app, window, cx| {
+            app.store.state.journal[0].favorite = true;
+            app.store.state.journal[0].location = Some(Location {
+                book_id: book_id.clone(),
+                cfi: "epubcfi(/6/4!/4/2,/1:0,/1:10)".into(),
+            });
+            app.store.remove_book(&book_id).unwrap();
+            let red = app.daily_rediscovery().unwrap();
+            assert!(red.2.is_none());
+            // Palette breathing command transitions cleanly to Mood page and starts breathing
+            app.run_palette_command(Action::ToggleBreathing, window, cx);
+            assert_eq!(app.page, Page::Mood);
+            assert!(app.breathing_started.is_some());
+        });
+    }
+
+    #[gpui::test]
+    fn stale_ai_passage_and_failed_note_event_preserve_active_state(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let mut store = Store::open(data).unwrap();
+        store.install_sample().unwrap();
+        let book_id = store.state.books[0].id.clone();
+        let (hl, _) = store
+            .add_highlight_styled(
+                &book_id,
+                "桌上的枝条在水里长出了细小的根。".into(),
+                "epubcfi(/6/4!/4/2,/1:0,/1:12)".into(),
+                Some("amber".into()),
+                Some("旧批注".into()),
+            )
+            .unwrap();
+        let (app, cx) = cx.add_window_view(|window, cx| {
+            let mut app = test_app(store, window, cx);
+            app.active_book = Some(book_id.clone());
+            app.page = Page::Reader;
+            app.session = "s1".into();
+            app
+        });
+        app.update_in(cx, |app, window, cx| {
+            // 1. User switches selection to passage B before a stale AI result for passage A finishes
+            app.echo_input = "新的选文段落 B".into();
+            app.echo_cfi = "epubcfi(/6/4!/4/4,/1:0,/1:10)".into();
+            app.echo = Some(EchoResult {
+                quotes: vec![],
+                reply: "段落 B 的本地回响".into(),
+                demo: true,
+            });
+            app.echo_saved = false;
+            app.finish_ai_passage(
+                Ok(PassageGenerated {
+                    book_id: Some(book_id.clone()),
+                    passage: "旧的选文段落 A".into(),
+                    cfi: "epubcfi(/6/4!/4/2,/1:0,/1:10)".into(),
+                    result: EchoResult {
+                        quotes: vec![],
+                        reply: "段落 A 的 AI 共读".into(),
+                        demo: false,
+                    },
+                }),
+                cx,
+            );
+            assert_eq!(app.store.state.journal.len(), 1);
+            assert_eq!(app.echo.as_ref().unwrap().reply, "段落 B 的本地回响");
+            assert!(
+                !app.echo_saved,
+                "stale AI completion for passage A must not mark passage B as saved"
+            );
+
+            // 2. Active note draft is preserved when an incoming open_note highlight event fails
+            app.act(Action::EditHighlightNote(hl.id.clone()), window, cx);
+            app.highlight_note_input
+                .update(cx, |s, cx| s.set_value("正在编辑中的新批注", window, cx));
+            let (tx, rx) = mpsc::sync_channel(4);
+            app.rx = Some(rx);
+            tx.send(
+                json!({
+                    "version": 1,
+                    "session": "s1",
+                    "request_id": 1,
+                    "kind": "highlight",
+                    "text": "   ",
+                    "cfi": "epubcfi(/6/4!/4/6,/1:0,/1:6)",
+                    "color": "amber",
+                    "open_note": true
+                })
+                .to_string(),
+            )
+            .unwrap();
+            app.tick(window, cx);
+            assert!(app.error.is_some());
+            assert_eq!(app.highlight_note_target.as_deref(), Some(hl.id.as_str()));
+            assert_eq!(
+                app.highlight_note_input.read(cx).value().as_str(),
+                "正在编辑中的新批注"
+            );
+        });
     }
 }

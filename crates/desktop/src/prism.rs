@@ -52,6 +52,7 @@ pub struct MotionSnapshot {
     pub idle_fade: f32,
     pub phase: f32,
     pub is_prism: bool,
+    pub is_sky: bool,
     pub is_dark: bool,
     pub accent: u32,
     pub reduced_motion: bool,
@@ -60,6 +61,7 @@ pub struct MotionSnapshot {
     pub pet_jump: f32,
     pub pet_sparks: Vec<BurstSpark>,
     pub pet_happy: bool,
+    pub pet_mood: Option<String>,
 }
 
 pub struct MotionEngine {
@@ -164,6 +166,11 @@ impl MotionEngine {
     pub fn trigger_pet(&mut self, origin: Point<Pixels>, reduced_motion: bool) -> &'static str {
         let whisper = PET_WHISPERS[self.pet_clicks % PET_WHISPERS.len()];
         self.pet_clicks = self.pet_clicks.wrapping_add(1);
+        self.trigger_pet_celebration(origin, reduced_motion);
+        whisper
+    }
+
+    pub fn trigger_pet_celebration(&mut self, origin: Point<Pixels>, reduced_motion: bool) {
         self.pet_happy_until = Some(Instant::now() + Duration::from_millis(2800));
         if !reduced_motion {
             self.pet_vel = -185.0;
@@ -184,7 +191,6 @@ impl MotionEngine {
                 self.pet_sparks.drain(0..excess);
             }
         }
-        whisper
     }
 
     /// Advances spring physics, ripples, trail sparks, and ambient phase.
@@ -301,9 +307,11 @@ impl MotionEngine {
     pub fn snapshot(
         &self,
         is_prism: bool,
+        is_sky: bool,
         accent: u32,
         is_dark: bool,
         reduced_motion: bool,
+        pet_mood: Option<String>,
     ) -> MotionSnapshot {
         let speed = (self.pointer_vel.0 * self.pointer_vel.0
             + self.pointer_vel.1 * self.pointer_vel.1)
@@ -328,6 +336,7 @@ impl MotionEngine {
             idle_fade,
             phase: self.phase,
             is_prism,
+            is_sky,
             is_dark,
             accent,
             reduced_motion,
@@ -336,6 +345,7 @@ impl MotionEngine {
             pet_jump: self.pet_jump,
             pet_sparks: self.pet_sparks.clone(),
             pet_happy,
+            pet_mood,
         }
     }
 }
@@ -526,6 +536,42 @@ pub fn ambient_stage_canvas(snap: MotionSnapshot, is_reader: bool) -> impl IntoE
                         border_style: BorderStyle::default(),
                     });
                 }
+            } else if snap.is_sky && !is_reader {
+                // Studio Ghibli Castle-in-the-Sky luminous blue sky & drifting sunlit cloud puffs
+                let p = if snap.reduced_motion { 0.0 } else { snap.phase };
+                let cloud1 = point(
+                    px(ox + w * (0.28 + 0.04 * (p * 0.16).sin()) - px_norm * 24.0),
+                    px(oy + h * 0.16 - py_norm * 14.0),
+                );
+                let cloud2 = point(
+                    px(ox + w * (0.78 + 0.05 * (p * 0.14 + 1.5).cos()) - px_norm * 32.0),
+                    px(oy + h * 0.24 - py_norm * 18.0),
+                );
+                let cloud3 = point(
+                    px(ox + w * (0.64 + 0.04 * (p * 0.12 + 3.0).sin()) + px_norm * 20.0),
+                    px(oy + h * 0.84 + py_norm * 12.0),
+                );
+                paint_glow_orb(
+                    window,
+                    cloud1,
+                    96.0,
+                    180.0,
+                    Hsla::from(rgb(0xffffff).opacity(0.42)),
+                );
+                paint_glow_orb(
+                    window,
+                    cloud2,
+                    108.0,
+                    195.0,
+                    Hsla::from(rgb(0xffffff).opacity(0.38)),
+                );
+                paint_glow_orb(
+                    window,
+                    cloud3,
+                    92.0,
+                    170.0,
+                    Hsla::from(rgb(0x93c5fd).opacity(0.24)),
+                );
             }
 
             // 2. Mouse-following optical spotlight & chromatic dispersion aura
@@ -572,8 +618,24 @@ pub fn ambient_stage_canvas(snap: MotionSnapshot, is_reader: bool) -> impl IntoE
                         58.0,
                         spectral_color(hue_shift, (0.17 + speed_boost * 0.12) * intensity),
                     );
+                } else if snap.is_sky {
+                    // Sunlit sky-blue & cloud-white cursor aura for Laputa theme
+                    paint_glow_orb(
+                        window,
+                        snap.pointer_smooth,
+                        36.0,
+                        118.0,
+                        Hsla::from(rgb(0x38bdf8).opacity(0.11 * intensity)),
+                    );
+                    paint_glow_orb(
+                        window,
+                        snap.pointer_halo,
+                        28.0,
+                        94.0,
+                        Hsla::from(rgb(0xffffff).opacity(0.26 * intensity)),
+                    );
                 } else {
-                    // Subtle warm reading lamplight following the cursor in Forest/Paper/Night
+                    // Subtle warm reading lamplight following the cursor in Paper/Night
                     let aura_alpha = if snap.is_dark { 0.15 } else { 0.09 } * intensity;
                     paint_glow_orb(
                         window,
@@ -751,7 +813,7 @@ pub fn prism_beam_horizontal(
             } else {
                 0.0
             };
-            let focal = if snap.pointer_active && mx_local >= -0.2 && mx_local <= 1.2 {
+            let focal = if snap.pointer_active && (-0.2..=1.2).contains(&mx_local) {
                 let clamped = mx_local.clamp(0.08, 0.92);
                 drift * (1.0 - proximity * 0.72) + clamped * (proximity * 0.72)
             } else {
@@ -935,6 +997,26 @@ pub fn prism_companion_canvas(snap: MotionSnapshot) -> impl IntoElement {
             let gaze_x = (dx / dist) * 1.4;
             let gaze_y = (dy / dist) * 1.1;
 
+            // Mood-reactive companion aura halo (painted before px_block borrows window)
+            let mood_tint = match snap.pet_mood.as_deref() {
+                Some("疲惫") => Some(0xf59e0b),
+                Some("孤独") => Some(0xc084fc),
+                Some("迷茫") => Some(0x38bdf8),
+                Some("失落") => Some(0x60a5fa),
+                Some("成长") => Some(0x34d399),
+                Some("希望") => Some(0xfbbf24),
+                _ => None,
+            };
+            if let Some(tint) = mood_tint {
+                paint_glow_orb(
+                    window,
+                    point(px(ox + 42.0), px(oy + 22.0 + jump * 0.5)),
+                    14.0,
+                    24.0,
+                    Hsla::from(rgb(tint).opacity(if snap.pet_happy { 0.34 } else { 0.22 })),
+                );
+            }
+
             let mut px_block = |gx: f32, gy: f32, gw: f32, gh: f32, color: Hsla| {
                 window.paint_quad(PaintQuad {
                     bounds: Bounds::new(
@@ -950,12 +1032,20 @@ pub fn prism_companion_canvas(snap: MotionSnapshot) -> impl IntoElement {
             };
 
             // --- Mascot 1: Purple Pixel Prism Cat (Clawd-inspired) ---
-            let cat_main = Hsla::from(rgb(if snap.is_prism { 0x9b87ff } else { 0x8a79d8 }));
-            let cat_hi = Hsla::from(rgb(0xc4b5fd));
-            let cat_dark = Hsla::from(rgb(0x4c3f91));
+            let cat_main = Hsla::from(rgb(if snap.is_prism {
+                0x9b87ff
+            } else if snap.is_sky {
+                0x3b82c4
+            } else {
+                0x8a79d8
+            }));
+            let cat_hi = Hsla::from(rgb(if snap.is_sky { 0xbae6fd } else { 0xc4b5fd }));
+            let cat_dark = Hsla::from(rgb(if snap.is_sky { 0x1e4e79 } else { 0x4c3f91 }));
             let eye_bg = Hsla::from(rgb(0x0b0e18));
             let eye_glow = if snap.pet_happy {
                 spectral_color(snap.phase * 0.4, 1.0)
+            } else if let Some(tint) = mood_tint {
+                Hsla::from(rgb(tint))
             } else {
                 Hsla::from(rgb(0x7dd3fc))
             };
@@ -1024,10 +1114,14 @@ pub fn prism_companion_canvas(snap: MotionSnapshot) -> impl IntoElement {
             let b_off = 16.5_f32;
             let b_jump = jump * 0.72;
 
-            // Floating crystal prism diamond glow above buddy's head
+            // Floating crystal prism diamond glow above buddy's head (Laputa levitation crystal in sky theme)
             let crystal_y = 0.8 + bob * 0.32;
             let crystal_color = if snap.is_prism || snap.pet_happy {
                 spectral_color(snap.phase * 0.16 + 0.65, 0.95)
+            } else if let Some(tint) = mood_tint {
+                Hsla::from(rgb(tint).opacity(0.95))
+            } else if snap.is_sky {
+                Hsla::from(rgb(0x38bdf8).opacity(0.96))
             } else {
                 Hsla::from(rgb(0xb8d4f4).opacity(0.92))
             };
@@ -1218,4 +1312,123 @@ pub fn light_vial_canvas(snap: MotionSnapshot, fill_ratio: f32) -> impl IntoElem
     )
     .w(px(22.))
     .h(px(40.))
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BreathingPhase {
+    pub label: &'static str,
+    pub cue: &'static str,
+    pub seconds_left: u32,
+    pub radius_factor: f32,
+    pub color_t: f32,
+}
+
+/// Computes the 4-7-8 breathing ritual phase from elapsed seconds.
+pub fn breathing_phase(elapsed_secs: f32) -> BreathingPhase {
+    let cycle = elapsed_secs.max(0.0) % 19.0;
+    if cycle < 4.0 {
+        let p = (cycle / 4.0).clamp(0.0, 1.0);
+        let eased = 0.5 - 0.5 * (p * std::f32::consts::PI).cos();
+        BreathingPhase {
+            label: "慢慢吸气",
+            cue: "INHALE · 4 秒 · 感受微光充满胸腔",
+            seconds_left: (4.0 - cycle).ceil().clamp(1.0, 4.0) as u32,
+            radius_factor: 0.42 + 0.58 * eased,
+            color_t: 0.68,
+        }
+    } else if cycle < 11.0 {
+        let p = ((cycle - 4.0) / 7.0).clamp(0.0, 1.0);
+        let pulse = 0.03 * (p * std::f32::consts::TAU * 2.0).sin();
+        BreathingPhase {
+            label: "轻轻屏息",
+            cue: "HOLD · 7 秒 · 让思绪停在云端",
+            seconds_left: (11.0 - cycle).ceil().clamp(1.0, 7.0) as u32,
+            radius_factor: (1.0 + pulse).clamp(0.94, 1.02),
+            color_t: 0.46,
+        }
+    } else {
+        let p = ((cycle - 11.0) / 8.0).clamp(0.0, 1.0);
+        let eased = 0.5 - 0.5 * (p * std::f32::consts::PI).cos();
+        BreathingPhase {
+            label: "缓缓呼出",
+            cue: "EXHALE · 8 秒 · 把疲惫交给风",
+            seconds_left: (19.0 - cycle).ceil().clamp(1.0, 8.0) as u32,
+            radius_factor: 1.0 - 0.58 * eased,
+            color_t: 0.85,
+        }
+    }
+}
+
+/// Serene 4-7-8 GPU Optical Breathing Orb rendered inside the Mood page sanctuary card.
+pub fn breathing_orb_canvas(snap: MotionSnapshot, elapsed_secs: f32) -> impl IntoElement {
+    let bp = breathing_phase(elapsed_secs);
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let ox = f32::from(bounds.origin.x);
+            let oy = f32::from(bounds.origin.y);
+            let w = f32::from(bounds.size.width).max(1.0);
+            let h = f32::from(bounds.size.height).max(1.0);
+            let center = point(px(ox + w * 0.5), px(oy + h * 0.5));
+            let max_r = (w.min(h) * 0.44).max(18.0);
+            let factor = if snap.reduced_motion {
+                0.76
+            } else {
+                bp.radius_factor
+            };
+            let core_r = max_r * factor;
+
+            let primary = if snap.is_prism {
+                spectral_color(bp.color_t + snap.phase * 0.02, 0.85)
+            } else if snap.is_sky {
+                Hsla::from(rgb(0x38bdf8).opacity(0.84))
+            } else {
+                Hsla::from(rgb(snap.accent).opacity(0.82))
+            };
+            let secondary = if snap.is_prism {
+                spectral_color(bp.color_t + 0.25 + snap.phase * 0.02, 0.42)
+            } else if snap.is_sky {
+                Hsla::from(rgb(0xffffff).opacity(0.62))
+            } else {
+                Hsla::from(rgb(0xfde68a).opacity(0.40))
+            };
+
+            // Soft outer optical bloom
+            paint_glow_orb(window, center, core_r * 0.78, 42.0, primary.opacity(0.36));
+
+            // Concentric guide rings
+            for (scale, alpha) in [(1.0_f32, 0.20_f32), (0.74, 0.28)] {
+                let r = max_r * scale;
+                window.paint_quad(PaintQuad {
+                    bounds: Bounds::new(
+                        point(px(ox + w * 0.5 - r), px(oy + h * 0.5 - r)),
+                        size(px(r * 2.0), px(r * 2.0)),
+                    ),
+                    corner_radii: Corners::all(px(r)),
+                    background: transparent_black().into(),
+                    border_widths: Edges::all(px(1.2)),
+                    border_color: primary.opacity(alpha),
+                    border_style: BorderStyle::Solid,
+                });
+            }
+
+            // Breathing orb core
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(
+                    point(px(ox + w * 0.5 - core_r), px(oy + h * 0.5 - core_r)),
+                    size(px(core_r * 2.0), px(core_r * 2.0)),
+                ),
+                corner_radii: Corners::all(px(core_r)),
+                background: linear_gradient(
+                    135.0,
+                    linear_color_stop(secondary, 0.0),
+                    linear_color_stop(primary, 1.0),
+                ),
+                border_widths: Edges::all(px(1.5)),
+                border_color: Hsla::from(rgb(0xffffff).opacity(0.55)),
+                border_style: BorderStyle::Solid,
+            });
+        },
+    )
+    .size(px(108.))
 }
