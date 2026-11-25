@@ -1,6 +1,6 @@
 import ePub from 'epubjs';
 
-type Theme = { paper:string;text:string;accent:string;font:string;font_size:number;line_height:number;width:number;font_url?:string;reduced_motion:boolean };
+type Theme = { id?:string;paper:string;text:string;accent:string;font:string;font_size:number;line_height:number;width:number;font_url?:string;reduced_motion:boolean };
 type Highlight = { id:string;cfi:string;text?:string };
 type Command = { version:number;session:string;request_id:number;kind:string;url?:string;cfi?:string;href?:string;mode?:string;theme?:Theme;query?:string;highlight?:Highlight;highlights?:Highlight[] };
 declare global { interface Window { ipc?:{postMessage:(s:string)=>void}; glowReceive:(cmd:Command)=>void; __events?:unknown[] } }
@@ -131,11 +131,36 @@ function styles(){
 function styleText(){
  return Object.entries(styles()).map(([selector,declarations])=>`${selector}{${Object.entries(declarations).map(([name,value])=>`${name}:${value}`).join(';')}}`).join('\n');
 }
+let glowRaf=0, pendingX=0, pendingY=0;
+function updateCursorGlow(x:number,y:number){
+ if(theme?.reduced_motion)return;
+ pendingX=x;pendingY=y;
+ if(glowRaf)return;
+ glowRaf=requestAnimationFrame(()=>{
+  glowRaf=0;
+  document.documentElement.style.setProperty('--mx',`${pendingX}px`);
+  document.documentElement.style.setProperty('--my',`${pendingY}px`);
+  document.documentElement.style.setProperty('--glow-op','1');
+ });
+}
+function spawnRipple(x:number,y:number){
+ if(theme?.reduced_motion)return;
+ const el=document.createElement('span');
+ el.className='prism-ripple';
+ el.style.left=`${x}px`;el.style.top=`${y}px`;
+ document.body.append(el);
+ setTimeout(()=>el.remove(),700);
+}
+document.addEventListener('mousemove',e=>updateCursorGlow(e.clientX,e.clientY),{passive:true});
+document.addEventListener('mouseleave',()=>document.documentElement.style.setProperty('--glow-op','0'));
 async function applyTheme(){
  if(!theme)return;
+ document.documentElement.dataset.theme=theme.id||'forest';
+ document.documentElement.dataset.reducedMotion=theme.reduced_motion?'yes':'no';
  document.documentElement.style.setProperty('--paper',theme.paper);
  document.documentElement.style.setProperty('--ink',theme.text);
  document.documentElement.style.setProperty('--accent',theme.accent);
+ if(theme.reduced_motion)document.documentElement.style.setProperty('--glow-op','0');
  if(rendition){
    for(const content of rendition.getContents()) await prepareContent(content);
  }
@@ -165,7 +190,15 @@ async function prepareContent(content:any){
   const a=(event.target as Element)?.closest('a');
   if(a){const href=a.getAttribute('href')||'';if(/^[a-z]+:|^\/\//i.test(href)){event.preventDefault();event.stopImmediatePropagation();}}
  },true);
- doc.addEventListener('mousedown',hideEcho);
+ doc.addEventListener('mousemove',(event)=>{
+  const frame=(content.window.frameElement as HTMLElement|null)?.getBoundingClientRect();
+  if(frame)updateCursorGlow(frame.left+event.clientX,frame.top+event.clientY);
+ },{passive:true});
+ doc.addEventListener('mousedown',(event)=>{
+  hideEcho();
+  const frame=(content.window.frameElement as HTMLElement|null)?.getBoundingClientRect();
+  if(frame&&event.button===0)spawnRipple(frame.left+event.clientX,frame.top+event.clientY);
+ });
  doc.addEventListener('scroll',hideEcho,{passive:true});
  doc.addEventListener('mouseup',()=>setTimeout(()=>{
   const selection=doc.getSelection();if(!selection?.rangeCount||selection.isCollapsed){hideEcho();return;}

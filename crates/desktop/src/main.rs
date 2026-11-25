@@ -5,6 +5,7 @@
 mod app;
 mod mood;
 mod platform;
+mod prism;
 #[cfg(all(test, feature = "ui-test"))]
 extern crate gpui_kit as gpui;
 use gpui_kit::*;

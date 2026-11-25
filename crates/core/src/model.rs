@@ -118,6 +118,16 @@ pub fn themes() -> Vec<Theme> {
             accent: "#7CD4B0".into(),
             ..Theme::default()
         },
+        Theme {
+            id: "prism".into(),
+            name: "黑曜棱镜".into(),
+            background: "#090A0F".into(),
+            paper: "#121520".into(),
+            text: "#EEF1FA".into(),
+            muted: "#8C96B0".into(),
+            accent: "#9B87FF".into(),
+            ..Theme::default()
+        },
     ]
 }
 

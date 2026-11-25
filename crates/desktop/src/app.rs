@@ -1,4 +1,7 @@
-use crate::{mood, platform};
+use crate::{
+    mood, platform,
+    prism::{self, MotionEngine, MotionSnapshot},
+};
 use anyhow::Context as _;
 use glow_core::{
     Bookmark, EchoResult, Location, Store, Theme as ReadingTheme,
@@ -83,6 +86,8 @@ enum Action {
     Asset(String),
     Audio,
     ReducedMotion,
+    ToggleFlow,
+    PetInteract(Point<Pixels>),
     RevealSpoiler(String),
     Privacy,
     Encoding(String),
@@ -131,6 +136,7 @@ pub struct ReadingApp {
     smoke_step: u8,
     smoke_started: Instant,
     busy: bool,
+    motion: MotionEngine,
 }
 
 impl ReadingApp {
@@ -190,6 +196,7 @@ impl ReadingApp {
             smoke_step: 0,
             smoke_started: Instant::now(),
             busy: false,
+            motion: MotionEngine::new(),
         };
         app.install_native_theme(cx);
         window.focus(&app.focus, cx);
@@ -218,7 +225,10 @@ impl ReadingApp {
         if self.theme().font_asset.is_some() {
             return self.theme().font.clone().into();
         }
-        if !matches!(self.theme().id.as_str(), "forest" | "paper" | "night") {
+        if !matches!(
+            self.theme().id.as_str(),
+            "forest" | "paper" | "night" | "prism"
+        ) {
             return self
                 .theme()
                 .font
@@ -930,6 +940,29 @@ impl ReadingApp {
                     t.reduced_motion = !t.reduced_motion;
                 }
             }
+            Action::ToggleFlow => {
+                self.store.state.theme.reduced_motion = !self.store.state.theme.reduced_motion;
+                if let Some(preview) = &mut self.preview {
+                    preview.reduced_motion = self.store.state.theme.reduced_motion;
+                }
+                self.configure(cx);
+                self.save();
+                self.notice = Some(if self.store.state.theme.reduced_motion {
+                    "已切换为静谧模式（关闭鼠标流光与动效）。".into()
+                } else {
+                    "已开启棱镜流光与动态交互。".into()
+                });
+            }
+            Action::PetInteract(origin) => {
+                let reduced = self.theme().reduced_motion;
+                let is_prism = self.is_prism();
+                let whisper = self.motion.trigger_pet(origin, reduced);
+                self.motion.on_click(origin, reduced, is_prism);
+                self.notice = Some(whisper.into());
+                if !reduced && !cfg!(test) && !self.smoke {
+                    window.request_animation_frame();
+                }
+            }
             Action::RevealSpoiler(id) => {
                 self.spoilers.insert(id);
             }
@@ -1107,15 +1140,76 @@ impl ReadingApp {
     fn is_dark(&self) -> bool {
         glow_core::theme::color(&self.theme().paper).unwrap_or(0) <= 0x606060
     }
+    fn is_prism(&self) -> bool {
+        self.theme().id == "prism"
+    }
+    fn scene_asset(&self) -> &'static str {
+        match self.theme().id.as_str() {
+            "prism" => "scene-prism.png",
+            "night" => "scene-night.png",
+            _ => "scene.png",
+        }
+    }
+    fn motion_snapshot(&self) -> MotionSnapshot {
+        let t = self.theme();
+        self.motion.snapshot(
+            self.is_prism(),
+            hex(&t.accent),
+            self.is_dark(),
+            t.reduced_motion,
+        )
+    }
+    fn overall_reading_progress(&self) -> f32 {
+        if let Some(active_id) = self
+            .active_book
+            .as_ref()
+            .or(self.store.state.last_book.as_ref())
+            && let Some(book) = self.store.state.books.iter().find(|b| &b.id == active_id)
+            && let Some(p) = book.progress
+        {
+            return p.clamp(0.18, 0.94);
+        }
+        let max_p = self
+            .store
+            .state
+            .books
+            .iter()
+            .filter_map(|b| b.progress)
+            .fold(0.0_f32, f32::max);
+        if max_p > 0.01 {
+            max_p.clamp(0.18, 0.94)
+        } else {
+            0.34
+        }
+    }
+    fn pet_dock(&self, id: &'static str, cx: &Context<Self>) -> impl IntoElement {
+        let snap = self.motion_snapshot();
+        div()
+            .id(id)
+            .cursor_pointer()
+            .rounded_xl()
+            .px_1()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    this.act(Action::PetInteract(event.position), window, cx);
+                }),
+            )
+            .child(prism::prism_companion_canvas(snap))
+    }
     fn border_subtle(&self) -> Hsla {
-        if self.is_dark() {
+        if self.is_prism() {
+            rgb(0xa5b4fc).opacity(0.14).into()
+        } else if self.is_dark() {
             rgb(0xffffff).opacity(0.11).into()
         } else {
             rgb(hex(&self.theme().text)).opacity(0.10).into()
         }
     }
     fn border_strong(&self) -> Hsla {
-        if self.is_dark() {
+        if self.is_prism() {
+            rgb(0xc4b5fd).opacity(0.24).into()
+        } else if self.is_dark() {
             rgb(0xffffff).opacity(0.18).into()
         } else {
             rgb(hex(&self.theme().text)).opacity(0.16).into()
@@ -1132,46 +1226,68 @@ impl ReadingApp {
             "forest" => "FM 88.6",
             "paper" => "FM 92.4",
             "night" => "FM 101.7",
+            "prism" => "FM 108.0",
             _ => "FM 96.0",
         }
     }
     fn waveform_bars(&self, active: bool, heights: &[f32]) -> Div {
         let t = self.theme();
-        let mut row = h_flex().gap_1().items_center();
+        let prism = self.is_prism();
+        let animate = !t.reduced_motion && (active || prism);
+        let mut row = h_flex().gap_1().items_center().h(px(18.));
         for (idx, h) in heights.iter().enumerate() {
+            let dyn_h = if animate {
+                let wave = (self.motion.phase * 2.6 + idx as f32 * 0.78).sin() * 0.34 + 0.86;
+                (*h * wave).clamp(3.5, 17.5)
+            } else {
+                *h
+            };
             let opacity = if active {
-                if idx % 2 == 0 { 0.92 } else { 0.64 }
+                if idx % 2 == 0 { 0.94 } else { 0.68 }
+            } else if prism {
+                if idx % 2 == 0 { 0.82 } else { 0.56 }
             } else if idx % 2 == 0 {
                 0.42
             } else {
                 0.24
             };
-            row = row.child(
-                div()
-                    .w(px(2.5))
-                    .h(px(*h))
-                    .rounded_full()
-                    .bg(rgb(hex(&t.accent)).opacity(opacity)),
-            );
+            let bar_bg: Hsla = if prism {
+                prism::spectral_color(
+                    (idx as f32 / heights.len().max(1) as f32) + self.motion.phase * 0.06,
+                    opacity,
+                )
+            } else {
+                rgb(hex(&t.accent)).opacity(opacity).into()
+            };
+            row = row.child(div().w(px(2.5)).h(px(dyn_h)).rounded_full().bg(bar_bg));
         }
         row
     }
     fn studio_badge(&self, code: &str, label: &str, active: bool) -> Div {
         let t = self.theme();
+        let dot_color: Hsla = if active && self.is_prism() {
+            prism::spectral_color(self.motion.phase * 0.08 + 0.55, 1.0)
+        } else if active {
+            rgb(hex(&t.accent)).into()
+        } else {
+            rgb(hex(&t.muted)).into()
+        };
         h_flex()
             .gap_2()
             .items_center()
             .px_2p5()
             .py_1()
             .rounded_full()
-            .bg(rgb(hex(&t.accent)).opacity(if self.is_dark() { 0.18 } else { 0.11 }))
-            .border_1()
-            .border_color(rgb(hex(&t.accent)).opacity(0.28))
-            .child(div().size(px(6.)).rounded_full().bg(rgb(if active {
-                hex(&t.accent)
+            .bg(rgb(hex(&t.accent)).opacity(if self.is_prism() {
+                0.15
+            } else if self.is_dark() {
+                0.18
             } else {
-                hex(&t.muted)
-            })))
+                0.11
+            }))
+            .border_1()
+            .border_color(rgb(hex(&t.accent)).opacity(if self.is_prism() { 0.34 } else { 0.28 }))
+            .child(div().size(px(6.)).rounded_full().bg(dot_color))
             .child(
                 div()
                     .text_size(px(10.))
@@ -1318,9 +1434,11 @@ impl ReadingApp {
             .child(button)
     }
     fn heading(&self, kicker: &str, title: &str, sub: &str) -> Div {
+        let freq = Self::frequency_for_theme(&self.theme().id);
         v_flex()
             .gap_2()
-            .child(self.studio_badge("FM 94.2", kicker, true))
+            .items_start()
+            .child(self.studio_badge(freq, kicker, true))
             .child(
                 div()
                     .text_size(px(28.))
@@ -1439,7 +1557,10 @@ impl ReadingApp {
                 } else {
                     "等待翻开第一页"
                 });
+            let snap = self.motion_snapshot();
             let card = v_flex()
+                .relative()
+                .overflow_hidden()
                 .gap_3()
                 .w(px(236.))
                 .p_3p5()
@@ -1451,9 +1572,12 @@ impl ReadingApp {
                 .hover(|style| {
                     style
                         .bg(rgb(hex(&t.paper)))
-                        .border_color(rgb(hex(&t.accent)).opacity(0.48))
+                        .border_color(rgb(hex(&t.accent)).opacity(0.56))
                         .shadow_md()
                 })
+                .child(div().absolute().top_0().left_0().right_0().child(
+                    prism::prism_beam_horizontal(snap.clone(), 1.5, i as f32 * 0.85, false),
+                ))
                 .child(
                     div()
                         .relative()
@@ -1708,6 +1832,7 @@ impl ReadingApp {
                 "这里没有读完的期限。故事和微光，都会等你。".to_owned(),
             )
         };
+        let snap = self.motion_snapshot();
         let hero = h_flex()
             .relative()
             .w_full()
@@ -1720,24 +1845,20 @@ impl ReadingApp {
             .bg(rgb(hex(&t.background)))
             .shadow_md()
             .child(
-                img(if t.id == "night" {
-                    "scene-night.png"
-                } else {
-                    "scene.png"
-                })
-                .absolute()
-                .size_full()
-                .object_fit(ObjectFit::Cover),
+                img(self.scene_asset())
+                    .absolute()
+                    .size_full()
+                    .object_fit(ObjectFit::Cover),
             )
             .child(
                 v_flex()
                     .relative()
-                    .w(px(480.))
+                    .w(px(436.))
                     .max_w_full()
                     .h_full()
                     .p_6()
                     .justify_between()
-                    .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.86 } else { 0.90 }))
+                    .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.88 } else { 0.90 }))
                     .border_r_1()
                     .border_color(self.border_subtle())
                     .child(self.heading(hero_kicker, &hero_title, &hero_sub))
@@ -1846,15 +1967,46 @@ impl ReadingApp {
                                     .child("也足够让风停一会儿"),
                             ),
                     ),
+            )
+            // Signature Obsidian Prism mouse-tracking top & bottom edge beams
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .child(prism::prism_beam_horizontal(snap.clone(), 2.0, 0.0, false)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .child(prism::prism_beam_horizontal(snap, 2.0, 1.5, false)),
+            );
+        let hero_stage = div()
+            .relative()
+            .w_full()
+            .flex_shrink_0()
+            .pt(px(22.))
+            .child(hero)
+            .child(
+                div()
+                    .absolute()
+                    .top(px(-2.))
+                    .right(px(24.))
+                    .child(self.pet_dock("shelf-pet", cx)),
             );
         v_flex()
             .id("shelf-scroll")
             .overflow_y_scroll()
             .size_full()
             .px_7()
-            .py_6()
+            .pt_3()
+            .pb_6()
             .gap_5()
-            .child(hero)
+            .child(hero_stage)
             .child(
                 h_flex()
                     .justify_between()
@@ -2187,7 +2339,9 @@ impl ReadingApp {
                 )
                 .toggled(self.focus_mode),
             );
+        let snap = self.motion_snapshot();
         let toolbar = h_flex()
+            .relative()
             .h(px(62.))
             .px_5()
             .gap_3()
@@ -2195,6 +2349,14 @@ impl ReadingApp {
             .bg(rgb(hex(&t.paper)).opacity(0.96))
             .border_b_1()
             .border_color(self.border_subtle())
+            .child(
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .child(prism::prism_beam_horizontal(snap, 1.5, 0.4, false)),
+            )
             .child(self.button_with_icon(
                 "书架",
                 IconName::ChevronLeft,
@@ -3197,11 +3359,14 @@ impl ReadingApp {
     fn mood_page(&self, cx: &Context<Self>) -> AnyElement {
         let t = self.theme();
         let is_dark = self.is_dark();
+        let snap = self.motion_snapshot();
         let mut moods = h_flex().gap_2().flex_wrap();
         for mood in echo::MOODS {
             moods = moods.child(self.mood_button(mood, self.mood == *mood, cx));
         }
         let mut left_console = v_flex()
+            .relative()
+            .overflow_hidden()
             .w(px(408.))
             .max_w_full()
             .flex_shrink_0()
@@ -3210,8 +3375,24 @@ impl ReadingApp {
             .rounded_2xl()
             .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.90 } else { 0.94 }))
             .border_1()
-            .border_color(self.border_subtle())
-            .shadow_sm()
+            .border_color(self.border_strong())
+            .shadow_md()
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .child(prism::prism_beam_horizontal(snap.clone(), 2.0, 0.3, false)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .child(prism::prism_beam_horizontal(snap.clone(), 2.0, 1.9, false)),
+            )
             .child(
                 v_flex()
                     .gap_2()
@@ -3313,9 +3494,25 @@ impl ReadingApp {
                 ),
         );
 
+        let left_stage = div()
+            .relative()
+            .w(px(408.))
+            .max_w_full()
+            .flex_shrink_0()
+            .pt(px(22.))
+            .child(left_console)
+            .child(
+                div()
+                    .absolute()
+                    .top(px(-2.))
+                    .right(px(20.))
+                    .child(self.pet_dock("mood-pet", cx)),
+            );
+
         let right_stage = v_flex()
             .flex_1()
             .min_w(px(330.))
+            .pt(px(22.))
             .gap_4()
             .child(
                 div()
@@ -3328,13 +3525,17 @@ impl ReadingApp {
                     .border_color(self.border_strong())
                     .shadow_sm()
                     .child(
-                        img(if t.id == "night" {
-                            "scene-night.png"
-                        } else {
-                            "scene.png"
-                        })
-                        .size_full()
-                        .object_fit(ObjectFit::Cover),
+                        img(self.scene_asset())
+                            .size_full()
+                            .object_fit(ObjectFit::Cover),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .child(prism::prism_beam_horizontal(snap, 1.5, 2.6, false)),
                     )
                     .child(
                         h_flex()
@@ -3453,7 +3654,7 @@ impl ReadingApp {
                     .gap_5()
                     .items_start()
                     .flex_wrap()
-                    .child(left_console)
+                    .child(left_stage)
                     .child(right_stage),
             )
             .into_any_element()
@@ -3728,11 +3929,12 @@ impl ReadingApp {
                         .border_1()
                         .border_color(rgb(0xffffff).opacity(0.35)),
                 );
-            let preview_inner = if matches!(t.id.as_str(), "forest" | "night") {
-                img(if t.id == "night" {
-                    "scene-night.png"
-                } else {
-                    "scene.png"
+            let snap = self.motion_snapshot();
+            let preview_inner = if matches!(t.id.as_str(), "forest" | "night" | "prism") {
+                img(match t.id.as_str() {
+                    "prism" => "scene-prism.png",
+                    "night" => "scene-night.png",
+                    _ => "scene.png",
                 })
                 .w_full()
                 .h(px(132.))
@@ -3783,23 +3985,36 @@ impl ReadingApp {
                     )
                     .into_any_element()
             };
+            let is_prism_card = t.id == "prism";
             let card = v_flex()
-                .w(px(236.))
+                .relative()
+                .overflow_hidden()
+                .w(px(228.))
                 .p_3p5()
                 .gap_3()
                 .rounded_2xl()
                 .bg(rgb(hex(&active_theme.paper)).opacity(if is_dark { 0.90 } else { 0.94 }))
                 .border_1()
                 .border_color(if active {
-                    Hsla::from(rgb(hex(&active_theme.accent)).opacity(0.65))
+                    Hsla::from(rgb(hex(&active_theme.accent)).opacity(0.75))
                 } else {
                     self.border_subtle()
                 })
                 .shadow_sm()
                 .hover(|style| {
                     style
-                        .border_color(rgb(hex(&active_theme.accent)).opacity(0.55))
+                        .border_color(rgb(hex(&active_theme.accent)).opacity(0.62))
                         .shadow_md()
+                })
+                .when(is_prism_card || active, |this| {
+                    this.child(div().absolute().top_0().left_0().right_0().child(
+                        prism::prism_beam_horizontal(
+                            snap.clone(),
+                            2.0,
+                            i as f32 * 0.9,
+                            is_prism_card,
+                        ),
+                    ))
                 })
                 .child(
                     div()
@@ -3809,7 +4024,33 @@ impl ReadingApp {
                         .border_1()
                         .border_color(rgb(hex(&t.text)).opacity(0.12))
                         .child(preview_inner)
-                        .child(div().absolute().right(px(8.)).top(px(8.)).child(swatches)),
+                        .child(div().absolute().right(px(8.)).top(px(8.)).child(swatches))
+                        .when(is_prism_card, |this| {
+                            this.child(
+                                div()
+                                    .absolute()
+                                    .left(px(8.))
+                                    .bottom(px(8.))
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_full()
+                                    .bg(rgb(0x090a0f).opacity(0.82))
+                                    .border_1()
+                                    .border_color(rgb(0xc4b5fd).opacity(0.42))
+                                    .text_size(px(9.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(0xe9d5ff))
+                                    .child("✦ 鼠标流光"),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .bottom_0()
+                                    .left_0()
+                                    .right_0()
+                                    .child(prism::prism_beam_horizontal(snap, 2.0, 1.2, true)),
+                            )
+                        }),
                 )
                 .child(
                     h_flex()
@@ -3827,13 +4068,14 @@ impl ReadingApp {
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(9.5))
+                                        .text_size(px(9.))
                                         .font_family(self.ui_font())
                                         .text_color(rgb(hex(&active_theme.muted)))
                                         .child(match t.id.as_str() {
                                             "forest" => "FOREST LIGHT · 88.6 FM",
                                             "paper" => "QUIET PAPER · 92.4 FM",
                                             "night" => "NIGHT GARDEN · 101.7 FM",
+                                            "prism" => "OBSIDIAN PRISM · 108.0 FM",
                                             _ => "PERSONAL THEME · 96.0 FM",
                                         }),
                                 ),
@@ -3843,19 +4085,19 @@ impl ReadingApp {
                                 h_flex()
                                     .gap_1()
                                     .items_center()
-                                    .px_2p5()
+                                    .px_2()
                                     .py_0p5()
                                     .rounded_full()
                                     .bg(rgb(hex(&active_theme.accent)).opacity(0.14))
-                                    .text_size(px(10.))
+                                    .text_size(px(9.5))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&active_theme.accent)))
                                     .child(
                                         Icon::new(IconName::Check)
-                                            .size(px(11.))
+                                            .size(px(10.))
                                             .text_color(rgb(hex(&active_theme.accent))),
                                     )
-                                    .child("正在使用"),
+                                    .child("使用中"),
                             )
                         }),
                 )
@@ -3897,6 +4139,7 @@ impl ReadingApp {
                     h_flex()
                         .gap_3()
                         .items_center()
+                        .flex_wrap()
                         .child(
                             self.button_with_icon(
                                 "自定义 / 另存主题",
@@ -3907,11 +4150,24 @@ impl ReadingApp {
                             .primary(),
                         )
                         .child(
+                            self.button_with_icon(
+                                if active_theme.reduced_motion {
+                                    "流光交互：已静谧"
+                                } else {
+                                    "流光交互：已开启"
+                                },
+                                IconName::Sparkles,
+                                Action::ToggleFlow,
+                                cx,
+                            )
+                            .outline(),
+                        )
+                        .child(
                             div()
                                 .text_size(px(12.))
                                 .font_family(self.ui_font())
                                 .text_color(rgb(hex(&active_theme.muted)))
-                                .child("可调整色彩、字号、背景图片与专属环境音"),
+                                .child("支持鼠标流光、棱镜边缘折射与自定义素材"),
                         ),
                 )
                 .child(
@@ -4261,7 +4517,33 @@ impl ReadingApp {
                 if let Ok(image) = window.render_to_image() {
                     let _ = image.save(self.store.root.join("themes.png"));
                 }
-                self.act(Action::PickTheme(2), window, cx);
+                self.act(Action::PickTheme(3), window, cx);
+                self.act(Action::Page(Page::Shelf), window, cx);
+                self.motion.on_mouse_move(point(px(620.), px(190.)), false);
+                self.motion.on_mouse_move(point(px(690.), px(210.)), false);
+                self.motion.on_click(point(px(680.), px(230.)), false, true);
+                self.motion.step(false, true);
+                self.smoke_step = 41;
+                self.smoke_started = Instant::now();
+            }
+            41 if self.smoke_started.elapsed() > Duration::from_millis(600) => {
+                #[cfg(feature = "ui-test")]
+                if let Ok(image) = window.render_to_image() {
+                    let _ = image.save(self.store.root.join("prism-shelf.png"));
+                }
+                self.act(Action::Page(Page::Mood), window, cx);
+                self.motion.on_mouse_move(point(px(470.), px(260.)), false);
+                self.motion.on_click(point(px(470.), px(260.)), false, true);
+                self.motion.step(false, true);
+                self.smoke_step = 42;
+                self.smoke_started = Instant::now();
+            }
+            42 if self.smoke_started.elapsed() > Duration::from_millis(600) => {
+                #[cfg(feature = "ui-test")]
+                if let Ok(image) = window.render_to_image() {
+                    let _ = image.save(self.store.root.join("prism-mood.png"));
+                }
+                self.act(Action::PickTheme(3), window, cx);
                 self.act(Action::Page(Page::Reader), window, cx);
                 self.smoke_step = 5;
                 self.smoke_started = Instant::now();
@@ -4357,6 +4639,13 @@ impl Render for ReadingApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme().clone();
         let dark = self.is_dark();
+        let is_prism = self.is_prism();
+        let continuous_flow = !t.reduced_motion && (is_prism || self.audio.is_some());
+        let needs_frame = self.motion.step(t.reduced_motion, continuous_flow);
+        if needs_frame && !cfg!(test) && !self.smoke {
+            window.request_animation_frame();
+        }
+        let snap = self.motion_snapshot();
         let narrow = f32::from(window.viewport_size().width)
             - if self.focus_mode { 0. } else { 224. }
             - 368.
@@ -4374,16 +4663,53 @@ impl Render for ReadingApp {
             }
         }
         let freq = Self::frequency_for_theme(&t.id);
+        let mut quick_swatches = h_flex().gap_1p5().items_center();
+        for (idx, preset) in themes().iter().enumerate() {
+            let selected = t.id == preset.id;
+            let dot_color = if preset.id == "prism" {
+                0x9b87ff
+            } else {
+                hex(&preset.accent)
+            };
+            quick_swatches = quick_swatches.child(
+                div()
+                    .id(SharedString::from(format!("quick-theme-{idx}")))
+                    .cursor_pointer()
+                    .p(px(2.))
+                    .rounded_full()
+                    .border_1()
+                    .border_color(if selected {
+                        rgb(dot_color).opacity(0.95)
+                    } else {
+                        rgb(0xffffff).opacity(0.14)
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            this.act(Action::PickTheme(idx), window, cx);
+                        }),
+                    )
+                    .child(div().size(px(10.)).rounded_full().bg(rgb(dot_color))),
+            );
+        }
         let mut sidebar = v_flex()
+            .relative()
             .w(px(224.))
             .h_full()
             .px_4()
             .py_5()
             .gap_1p5()
             .flex_shrink_0()
-            .bg(rgb(hex(&t.paper)).opacity(if dark { 0.90 } else { 0.94 }))
+            .bg(rgb(hex(&t.paper)).opacity(if is_prism {
+                0.86
+            } else if dark {
+                0.90
+            } else {
+                0.94
+            }))
             .border_r_1()
             .border_color(self.border_subtle())
+            .child(prism::prism_rail_vertical(snap.clone()))
             .child(
                 h_flex()
                     .gap_3()
@@ -4398,7 +4724,7 @@ impl Render for ReadingApp {
                             .rounded_2xl()
                             .bg(rgb(hex(&t.accent)).opacity(0.14))
                             .border_1()
-                            .border_color(rgb(hex(&t.accent)).opacity(0.28))
+                            .border_color(rgb(hex(&t.accent)).opacity(0.32))
                             .child(
                                 img("glow-icon.png")
                                     .size(px(40.))
@@ -4424,11 +4750,13 @@ impl Render for ReadingApp {
                                             .px_1p5()
                                             .py_0p5()
                                             .rounded_full()
-                                            .bg(rgb(hex(&t.accent)).opacity(0.14))
+                                            .bg(rgb(hex(&t.accent)).opacity(0.16))
+                                            .border_1()
+                                            .border_color(rgb(hex(&t.accent)).opacity(0.28))
                                             .text_size(px(8.))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&t.accent)))
-                                            .child("FM 94.2"),
+                                            .child(freq),
                                     ),
                             )
                             .child(
@@ -4436,7 +4764,11 @@ impl Render for ReadingApp {
                                     .text_size(px(8.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child("AMBIENT READING STATION"),
+                                    .child(if is_prism {
+                                        "OBSIDIAN PRISM STATION"
+                                    } else {
+                                        "AMBIENT READING STATION"
+                                    }),
                             ),
                     ),
             );
@@ -4479,17 +4811,27 @@ impl Render for ReadingApp {
                 cx,
             ));
         }
+        let vial_ratio = self.overall_reading_progress();
         sidebar = sidebar
             .child(div().flex_1())
             .child(
                 v_flex()
+                    .relative()
+                    .overflow_hidden()
                     .p_3()
                     .gap_2p5()
                     .rounded_2xl()
-                    .bg(rgb(hex(&t.background)).opacity(if dark { 0.72 } else { 0.76 }))
+                    .bg(rgb(hex(&t.background)).opacity(if dark { 0.76 } else { 0.78 }))
                     .border_1()
                     .border_color(self.border_subtle())
-                    .child(self.specular_line())
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .child(prism::prism_beam_horizontal(snap.clone(), 1.6, 0.9, false)),
+                    )
                     .child(
                         h_flex()
                             .items_center()
@@ -4499,7 +4841,9 @@ impl Render for ReadingApp {
                                     .gap_2()
                                     .items_center()
                                     .child(
-                                        Icon::new(if t.id == "night" {
+                                        Icon::new(if is_prism {
+                                            IconName::Sparkles
+                                        } else if t.id == "night" {
                                             IconName::Moon
                                         } else {
                                             IconName::Sun
@@ -4520,7 +4864,7 @@ impl Render for ReadingApp {
                                     .gap_1p5()
                                     .items_center()
                                     .child(div().size(px(5.)).rounded_full().bg(rgb(
-                                        if self.audio.is_some() {
+                                        if self.audio.is_some() || (is_prism && !t.reduced_motion) {
                                             0x36c98e
                                         } else {
                                             hex(&t.accent)
@@ -4533,6 +4877,8 @@ impl Render for ReadingApp {
                                             .text_color(rgb(hex(&t.muted)))
                                             .child(if self.audio.is_some() {
                                                 "LIVE"
+                                            } else if is_prism && !t.reduced_motion {
+                                                "FLOW"
                                             } else {
                                                 "IDLE"
                                             }),
@@ -4543,32 +4889,65 @@ impl Render for ReadingApp {
                         h_flex()
                             .items_center()
                             .justify_between()
+                            .gap_2()
                             .px_2p5()
-                            .py_1p5()
-                            .rounded_lg()
-                            .bg(rgb(hex(&t.paper)).opacity(if dark { 0.56 } else { 0.78 }))
+                            .py_2()
+                            .rounded_xl()
+                            .bg(rgb(hex(&t.paper)).opacity(if dark { 0.62 } else { 0.78 }))
+                            .child(
+                                div()
+                                    .id("vial-trigger")
+                                    .cursor_pointer()
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, window, cx| {
+                                            this.act(Action::ToggleFlow, window, cx);
+                                        }),
+                                    )
+                                    .child(prism::light_vial_canvas(snap.clone(), vial_ratio)),
+                            )
                             .child(
                                 v_flex()
-                                    .gap_0p5()
+                                    .flex_1()
+                                    .gap_1()
                                     .child(
-                                        div()
-                                            .text_size(px(8.))
-                                            .font_family(self.ui_font())
-                                            .text_color(rgb(hex(&t.accent)))
-                                            .child(freq),
+                                        h_flex()
+                                            .justify_between()
+                                            .items_center()
+                                            .child(
+                                                div()
+                                                    .text_size(px(8.5))
+                                                    .font_family(self.ui_font())
+                                                    .text_color(rgb(hex(&t.accent)))
+                                                    .child(freq),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(8.5))
+                                                    .font_family(self.ui_font())
+                                                    .text_color(rgb(hex(&t.muted)))
+                                                    .child(format!("{:.0}%", vial_ratio * 100.0)),
+                                            ),
                                     )
-                                    .child(
-                                        div()
-                                            .text_size(px(9.))
-                                            .font_family(self.ui_font())
-                                            .text_color(rgb(hex(&t.muted)))
-                                            .child("你的阅读空间"),
-                                    ),
+                                    .child(self.waveform_bars(
+                                        self.audio.is_some(),
+                                        &[5., 11., 15., 8., 13., 9., 6., 12., 8.],
+                                    )),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .px_1()
+                            .child(
+                                div()
+                                    .text_size(px(8.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child("快速切换主题"),
                             )
-                            .child(self.waveform_bars(
-                                self.audio.is_some(),
-                                &[5., 11., 15., 8., 13., 9., 6., 12., 8., 5.],
-                            )),
+                            .child(quick_swatches),
                     )
                     .child(self.nav_button(
                         if self.audio.is_some() {
@@ -4764,6 +5143,23 @@ impl Render for ReadingApp {
             .size_full()
             .bg(rgb(hex(&t.background)))
             .text_color(rgb(hex(&t.text)))
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+                let reduced = this.theme().reduced_motion;
+                this.motion.on_mouse_move(event.position, reduced);
+                if !reduced && !cfg!(test) && !this.smoke {
+                    window.request_animation_frame();
+                }
+                cx.notify();
+            }))
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                let reduced = this.theme().reduced_motion;
+                let is_prism = this.is_prism();
+                this.motion.on_click(event.position, reduced, is_prism);
+                if !reduced && !cfg!(test) && !this.smoke {
+                    window.request_animation_frame();
+                }
+                cx.notify();
+            }))
             .on_action(cx.listener(|this, _: &Escape, window, cx| {
                 this.confirm = None;
                 this.act(Action::CloseEcho, window, cx);
@@ -4798,36 +5194,47 @@ impl Render for ReadingApp {
                         .bg(rgb(hex(&t.background)).opacity(t.overlay)),
                 );
         }
-        if matches!(t.id.as_str(), "forest" | "night") {
-            root = root
-                .child(
-                    img("scene-night.png")
-                        .absolute()
-                        .size(px(1.))
-                        .opacity(0.001),
-                )
-                .child(
-                    img(if t.id == "night" {
-                        "scene-night.png"
-                    } else {
-                        "scene.png"
-                    })
+        // Preload builtin scenic textures so theme switching has zero first-frame blanking
+        root = root
+            .child(
+                img("scene-night.png")
+                    .absolute()
+                    .size(px(1.))
+                    .opacity(0.001),
+            )
+            .child(
+                img("scene-prism.png")
+                    .absolute()
+                    .size(px(1.))
+                    .opacity(0.001),
+            );
+        if matches!(t.id.as_str(), "forest" | "night" | "prism") {
+            root = root.child(
+                img(self.scene_asset())
                     .absolute()
                     .size_full()
                     .object_fit(ObjectFit::Cover)
                     .opacity(if self.page == Page::Reader {
                         0.03
+                    } else if is_prism {
+                        0.16
                     } else if dark {
                         0.10
                     } else {
                         0.07
                     }),
-                );
+            );
         }
+        // Ambient GPU optical stage: parallax aurora, dot-matrix, and mouse-following chromatic spotlight
+        root = root.child(prism::ambient_stage_canvas(
+            snap.clone(),
+            self.page == Page::Reader,
+        ));
         if !self.focus_mode || self.page != Page::Reader {
             root = root.child(sidebar.relative());
         }
         root.child(main.relative())
+            .child(prism::cursor_fx_overlay_canvas(snap))
     }
 }
 impl Drop for ReadingApp {

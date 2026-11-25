@@ -1,0 +1,276 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680" width="1200" height="680">
+  <defs>
+    <!-- Deep obsidian cosmos background -->
+    <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#05060B"/>
+      <stop offset="42%" stop-color="#0B0E1A"/>
+      <stop offset="76%" stop-color="#11172B"/>
+      <stop offset="100%" stop-color="#080A12"/>
+    </linearGradient>
+
+    <!-- Prismatic horizon nebula -->
+    <radialGradient id="nebulaViolet" cx="34%" cy="32%" r="48%">
+      <stop offset="0%" stop-color="#8B5CF6" stop-opacity="0.34"/>
+      <stop offset="48%" stop-color="#4F46E5" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#090A0F" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="nebulaCyan" cx="72%" cy="34%" r="44%">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.30"/>
+      <stop offset="52%" stop-color="#0EA5E9" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#090A0F" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="nebulaGold" cx="56%" cy="54%" r="36%">
+      <stop offset="0%" stop-color="#F59E0B" stop-opacity="0.22"/>
+      <stop offset="55%" stop-color="#EC4899" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#090A0F" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Spectrum ribbon gradients -->
+    <linearGradient id="auroraRibbon1" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#F59E0B" stop-opacity="0"/>
+      <stop offset="18%" stop-color="#FBBF24" stop-opacity="0.52"/>
+      <stop offset="40%" stop-color="#F472B6" stop-opacity="0.58"/>
+      <stop offset="62%" stop-color="#A78BFA" stop-opacity="0.62"/>
+      <stop offset="82%" stop-color="#38BDF8" stop-opacity="0.54"/>
+      <stop offset="100%" stop-color="#34D399" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="auroraRibbon2" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0"/>
+      <stop offset="25%" stop-color="#818CF8" stop-opacity="0.40"/>
+      <stop offset="52%" stop-color="#E879F9" stop-opacity="0.42"/>
+      <stop offset="76%" stop-color="#FBBF24" stop-opacity="0.36"/>
+      <stop offset="100%" stop-color="#34D399" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Crystal prism facet fills -->
+    <linearGradient id="prismFaceLeft" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#E0E7FF" stop-opacity="0.42"/>
+      <stop offset="50%" stop-color="#818CF8" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#1E1B4B" stop-opacity="0.46"/>
+    </linearGradient>
+    <linearGradient id="prismFaceRight" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.38"/>
+      <stop offset="48%" stop-color="#A855F7" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#0F172A" stop-opacity="0.52"/>
+    </linearGradient>
+    <linearGradient id="prismEdge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FDE68A"/>
+      <stop offset="35%" stop-color="#F472B6"/>
+      <stop offset="68%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#A78BFA"/>
+    </linearGradient>
+
+    <!-- Incoming white beam -->
+    <linearGradient id="inBeam" x1="0" y1="0" x2="1" y2="0.4">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="70%" stop-color="#E0F2FE" stop-opacity="0.62"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.95"/>
+    </linearGradient>
+
+    <!-- Refracted fan rays -->
+    <linearGradient id="rayGold" x1="0" y1="0" x2="1" y2="0.15">
+      <stop offset="0%" stop-color="#FDE68A" stop-opacity="0.72"/>
+      <stop offset="55%" stop-color="#F59E0B" stop-opacity="0.24"/>
+      <stop offset="100%" stop-color="#F59E0B" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="rayRose" x1="0" y1="0" x2="1" y2="0.2">
+      <stop offset="0%" stop-color="#F9A8D4" stop-opacity="0.68"/>
+      <stop offset="55%" stop-color="#EC4899" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#EC4899" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="rayViolet" x1="0" y1="0" x2="1" y2="0.25">
+      <stop offset="0%" stop-color="#C4B5FD" stop-opacity="0.70"/>
+      <stop offset="55%" stop-color="#8B5CF6" stop-opacity="0.24"/>
+      <stop offset="100%" stop-color="#8B5CF6" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="rayCyan" x1="0" y1="0" x2="1" y2="0.3">
+      <stop offset="0%" stop-color="#7DD3FC" stop-opacity="0.72"/>
+      <stop offset="55%" stop-color="#0EA5E9" stop-opacity="0.24"/>
+      <stop offset="100%" stop-color="#0EA5E9" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="rayMint" x1="0" y1="0" x2="1" y2="0.35">
+      <stop offset="0%" stop-color="#6EE7B7" stop-opacity="0.62"/>
+      <stop offset="55%" stop-color="#10B981" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#10B981" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Obsidian lake water -->
+    <linearGradient id="lakeGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0D1120"/>
+      <stop offset="45%" stop-color="#080B14"/>
+      <stop offset="100%" stop-color="#05060B"/>
+    </linearGradient>
+
+    <!-- Pavilion warm glow -->
+    <linearGradient id="warmRoom" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FEF3C7"/>
+      <stop offset="60%" stop-color="#F59E0B"/>
+      <stop offset="100%" stop-color="#B45309"/>
+    </linearGradient>
+    <radialGradient id="lakeReflect" cx="50%" cy="15%" r="55%">
+      <stop offset="0%" stop-color="#FBBF24" stop-opacity="0.36"/>
+      <stop offset="35%" stop-color="#A78BFA" stop-opacity="0.20"/>
+      <stop offset="70%" stop-color="#38BDF8" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#05060B" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Horizon beam -->
+    <linearGradient id="horizonBeam" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#F59E0B" stop-opacity="0"/>
+      <stop offset="22%" stop-color="#FBBF24" stop-opacity="0.82"/>
+      <stop offset="44%" stop-color="#F472B6" stop-opacity="0.88"/>
+      <stop offset="66%" stop-color="#8B5CF6" stop-opacity="0.92"/>
+      <stop offset="84%" stop-color="#38BDF8" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#34D399" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Deep sky backdrop -->
+  <rect width="1200" height="680" fill="url(#skyGrad)"/>
+  <rect width="1200" height="680" fill="url(#nebulaViolet)"/>
+  <rect width="1200" height="680" fill="url(#nebulaCyan)"/>
+  <rect width="1200" height="680" fill="url(#nebulaGold)"/>
+
+  <!-- Subtle optical dot-matrix constellation in corners -->
+  <g fill="#A5B4FC" opacity="0.22">
+    <circle cx="52" cy="56" r="1.4"/><circle cx="84" cy="56" r="1.2"/><circle cx="116" cy="56" r="1.1"/><circle cx="148" cy="56" r="0.9"/>
+    <circle cx="52" cy="88" r="1.3"/><circle cx="84" cy="88" r="1.5"/><circle cx="116" cy="88" r="1.1"/><circle cx="148" cy="88" r="0.9"/>
+    <circle cx="52" cy="120" r="1.1"/><circle cx="84" cy="120" r="1.2"/><circle cx="116" cy="120" r="1.3"/>
+    <circle cx="1050" cy="64" r="1.2"/><circle cx="1082" cy="64" r="1.4"/><circle cx="1114" cy="64" r="1.3"/><circle cx="1146" cy="64" r="1.1"/>
+    <circle cx="1082" cy="96" r="1.1"/><circle cx="1114" cy="96" r="1.5"/><circle cx="1146" cy="96" r="1.2"/>
+    <circle cx="1114" cy="128" r="1.2"/><circle cx="1146" cy="128" r="1.0"/>
+  </g>
+
+  <!-- Stars & constellation lines -->
+  <g stroke="#94A3B8" stroke-width="0.7" opacity="0.22">
+    <line x1="168" y1="112" x2="234" y2="86"/>
+    <line x1="234" y1="86" x2="296" y2="128"/>
+    <line x1="296" y1="128" x2="362" y2="94"/>
+    <line x1="874" y1="114" x2="946" y2="82"/>
+    <line x1="946" y1="82" x2="1014" y2="132"/>
+  </g>
+  <g fill="#F8FAFC">
+    <circle cx="168" cy="112" r="2.1" opacity="0.85"/>
+    <circle cx="234" cy="86" r="1.8" opacity="0.72"/>
+    <circle cx="296" cy="128" r="2.2" opacity="0.8"/>
+    <circle cx="362" cy="94" r="1.6" opacity="0.65"/>
+    <circle cx="468" cy="72" r="1.9" opacity="0.75"/>
+    <circle cx="696" cy="78" r="1.7" opacity="0.70"/>
+    <circle cx="788" cy="122" r="2.2" opacity="0.82"/>
+    <circle cx="874" cy="114" r="1.9" opacity="0.78"/>
+    <circle cx="946" cy="82" r="2.4" opacity="0.90"/>
+    <circle cx="1014" cy="132" r="1.8" opacity="0.72"/>
+  </g>
+
+  <!-- Flowing aurora ribbons across the upper sky -->
+  <path d="M 0 180 C 220 96, 420 236, 660 156 C 880 82, 1040 198, 1200 132 L 1200 226 C 1020 278, 860 174, 650 238 C 410 310, 210 184, 0 254 Z" fill="url(#auroraRibbon1)" opacity="0.42"/>
+  <path d="M 0 250 C 260 190, 480 288, 740 212 C 940 156, 1080 242, 1200 198 L 1200 264 C 1060 302, 920 236, 730 284 C 470 350, 250 252, 0 304 Z" fill="url(#auroraRibbon2)" opacity="0.34"/>
+
+  <!-- Sonic / orbital crystal rings behind prism -->
+  <g fill="none" stroke="url(#prismEdge)" opacity="0.24">
+    <circle cx="590" cy="244" r="108" stroke-width="1.2"/>
+    <circle cx="590" cy="244" r="154" stroke-width="0.9" stroke-dasharray="6 10"/>
+    <circle cx="590" cy="244" r="206" stroke-width="0.7" stroke-dasharray="2 14"/>
+  </g>
+
+  <!-- Incoming pure starlight ray -->
+  <polygon points="74,106 544,239 540,253 68,126" fill="url(#inBeam)"/>
+  <line x1="96" y1="115" x2="543" y2="246" stroke="#FFFFFF" stroke-width="2.2" opacity="0.90"/>
+
+  <!-- Refracted prismatic dispersion fan rays -->
+  <polygon points="628,225 1200,148 1200,196 634,239" fill="url(#rayGold)"/>
+  <polygon points="634,236 1200,196 1200,242 640,248" fill="url(#rayRose)"/>
+  <polygon points="639,246 1200,242 1200,290 644,258" fill="url(#rayViolet)"/>
+  <polygon points="643,256 1200,290 1200,340 648,268" fill="url(#rayCyan)"/>
+  <polygon points="646,266 1200,340 1200,388 652,276" fill="url(#rayMint)"/>
+
+  <!-- Floating Glass Obsidian Prism Crystal -->
+  <g>
+    <!-- Soft outer glow -->
+    <polygon points="590,148 504,296 676,296" fill="#A78BFA" opacity="0.14"/>
+    <!-- Left crystal face -->
+    <polygon points="590,158 514,290 590,268" fill="url(#prismFaceLeft)"/>
+    <!-- Right crystal face -->
+    <polygon points="590,158 666,290 590,268" fill="url(#prismFaceRight)"/>
+    <!-- Bottom facet -->
+    <polygon points="514,290 666,290 590,268" fill="#1E293B" opacity="0.64"/>
+    <!-- Internal dispersion beam inside prism -->
+    <polygon points="541,241 636,227 650,272 537,251" fill="url(#prismEdge)" opacity="0.38"/>
+    <!-- Entrance refraction flare -->
+    <circle cx="541" cy="245" r="7" fill="#FFFFFF" opacity="0.55"/>
+    <circle cx="541" cy="245" r="3" fill="#FFFFFF" opacity="0.95"/>
+    <!-- Razor-sharp glowing prism edges -->
+    <polygon points="590,158 514,290 666,290" fill="none" stroke="url(#prismEdge)" stroke-width="2.4"/>
+    <line x1="590" y1="158" x2="590" y2="268" stroke="#F8FAFC" stroke-width="1.3" opacity="0.72"/>
+    <line x1="514" y1="290" x2="590" y2="268" stroke="#C4B5FD" stroke-width="1.0" opacity="0.55"/>
+    <line x1="666" y1="290" x2="590" y2="268" stroke="#7DD3FC" stroke-width="1.0" opacity="0.55"/>
+    <!-- Specular starlight glint on apex -->
+    <path d="M 590 144 L 593 155 L 604 158 L 593 161 L 590 172 L 587 161 L 576 158 L 587 155 Z" fill="#FFFFFF" opacity="0.92"/>
+  </g>
+
+  <!-- Distant dark obsidian mountain silhouettes -->
+  <path d="M 0 448 L 138 386 L 268 424 L 412 368 L 552 430 L 696 376 L 842 422 L 998 364 L 1126 408 L 1200 388 L 1200 472 L 0 472 Z" fill="#0C101E" opacity="0.88"/>
+  <path d="M 0 462 L 194 422 L 352 448 L 538 414 L 748 446 L 944 408 L 1110 440 L 1200 426 L 1200 480 L 0 480 Z" fill="#090C16"/>
+
+  <!-- Luminous prismatic horizon shoreline line -->
+  <rect x="0" y="476" width="1200" height="2.6" fill="url(#horizonBeam)"/>
+
+  <!-- Still obsidian mirror lake -->
+  <rect x="0" y="478" width="1200" height="202" fill="url(#lakeGrad)"/>
+  <ellipse cx="600" cy="534" rx="340" ry="96" fill="url(#lakeReflect)"/>
+
+  <!-- Subtle horizontal water reflection ripples -->
+  <g stroke="url(#horizonBeam)" stroke-linecap="round" opacity="0.34">
+    <line x1="410" y1="504" x2="790" y2="504" stroke-width="1.8"/>
+    <line x1="456" y1="524" x2="744" y2="524" stroke-width="1.5"/>
+    <line x1="494" y1="546" x2="706" y2="546" stroke-width="1.2"/>
+    <line x1="532" y1="572" x2="668" y2="572" stroke-width="1.0"/>
+    <line x1="560" y1="598" x2="640" y2="598" stroke-width="0.9"/>
+  </g>
+
+  <!-- Minimalist obsidian glass reading pavilion on shoreline -->
+  <g>
+    <!-- Deck & reflection posts -->
+    <rect x="492" y="466" width="216" height="12" rx="3" fill="#0B0F1A" stroke="#334155" stroke-width="1"/>
+    <rect x="514" y="478" width="4" height="20" fill="#1E293B"/>
+    <rect x="682" y="478" width="4" height="20" fill="#1E293B"/>
+    <!-- Glass pavilion body -->
+    <rect x="524" y="408" width="152" height="58" rx="4" fill="#111827" stroke="#475569" stroke-width="1.4"/>
+    <!-- Warm reading sanctuary interior glow -->
+    <rect x="534" y="416" width="84" height="44" rx="2" fill="url(#warmRoom)" opacity="0.90"/>
+    <rect x="624" y="416" width="42" height="44" rx="2" fill="#38BDF8" opacity="0.26"/>
+    <!-- Interior window mullions & pendant lamp -->
+    <line x1="576" y1="416" x2="576" y2="460" stroke="#1E1B18" stroke-width="2"/>
+    <line x1="534" y1="444" x2="618" y2="444" stroke="#1E1B18" stroke-width="1.6"/>
+    <line x1="556" y1="416" x2="556" y2="429" stroke="#1E1B18" stroke-width="1.2"/>
+    <circle cx="556" cy="432" r="4.2" fill="#FFFBEB"/>
+    <!-- Cantilever obsidian roof with prismatic edge light -->
+    <polygon points="504,408 600,384 696,408" fill="#0B0F1B"/>
+    <polyline points="504,408 600,384 696,408" fill="none" stroke="url(#prismEdge)" stroke-width="2"/>
+    <!-- Warm water reflection directly below pavilion -->
+    <rect x="536" y="486" width="82" height="42" rx="8" fill="#FBBF24" opacity="0.16"/>
+    <rect x="624" y="486" width="42" height="32" rx="6" fill="#38BDF8" opacity="0.12"/>
+  </g>
+
+  <!-- Floating prismatic diamond motes & acoustic equalizer tick bars -->
+  <g opacity="0.72">
+    <polygon points="246,274 251,282 246,290 241,282" fill="#FDE68A"/>
+    <polygon points="384,328 388,334 384,340 380,334" fill="#F472B6"/>
+    <polygon points="824,292 829,300 824,308 819,300" fill="#38BDF8"/>
+    <polygon points="948,224 952,230 948,236 944,230" fill="#A78BFA"/>
+    <polygon points="1032,336 1036,342 1032,348 1028,342" fill="#34D399"/>
+  </g>
+  <g fill="url(#horizonBeam)" opacity="0.36">
+    <rect x="136" y="542" width="3" height="14" rx="1.5"/>
+    <rect x="145" y="534" width="3" height="28" rx="1.5"/>
+    <rect x="154" y="539" width="3" height="18" rx="1.5"/>
+    <rect x="163" y="528" width="3" height="36" rx="1.5"/>
+    <rect x="172" y="536" width="3" height="22" rx="1.5"/>
+    <rect x="181" y="544" width="3" height="12" rx="1.5"/>
+    <rect x="1018" y="540" width="3" height="16" rx="1.5"/>
+    <rect x="1027" y="530" width="3" height="34" rx="1.5"/>
+    <rect x="1036" y="536" width="3" height="22" rx="1.5"/>
+    <rect x="1045" y="526" width="3" height="40" rx="1.5"/>
+    <rect x="1054" y="538" width="3" height="18" rx="1.5"/>
+  </g>
+</svg>
