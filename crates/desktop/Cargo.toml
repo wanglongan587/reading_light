@@ -21,6 +21,8 @@ base64 = "0.22"
 rodio = { version = "0.20", default-features = false, features = ["wav", "vorbis", "mp3"] }
 time = { version = "0.3", features = ["formatting", "local-offset"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+kothok-edge-tts = "0.2.10"
+tokio = { version = "1", features = ["rt", "time"] }
 
 [dev-dependencies]
 tempfile = "3"

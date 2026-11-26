@@ -8,6 +8,8 @@ mod platform;
 mod prism;
 mod quotecard;
 mod soundscape;
+mod sync_client;
+mod tts;
 #[cfg(all(test, feature = "ui-test"))]
 extern crate gpui_kit as gpui;
 use gpui_kit::*;

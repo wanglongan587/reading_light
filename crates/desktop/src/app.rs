@@ -1,12 +1,17 @@
+#[path = "app_features.rs"]
+mod features;
+
 use crate::{
     mood, platform,
     prism::{self, MotionEngine, MotionSnapshot, ThemeAtmosphere},
     quotecard::{self, QuoteCardDraft, QuoteCardStyle},
     soundscape::{ChimeSource, SoundscapeHandle, SoundscapePreset, SoundscapeSource},
+    sync_client, tts,
 };
 use anyhow::Context as _;
 use glow_core::{
-    Bookmark, EchoResult, JournalEntry, Location, Store, Theme as ReadingTheme,
+    AiSettings, BookCompanionCache, Bookmark, EchoResult, JournalEntry, LocalSecrets, Location,
+    SoundscapeMix, Store, Theme as ReadingTheme,
     bridge::{ReaderEvent, SearchHit, TocEntry},
     echo,
     model::themes,
@@ -105,6 +110,10 @@ enum Action {
     CancelMood,
     ToggleBreathing,
     ToggleTimerPicker,
+    CloseTimerPicker,
+    StepCustomTimer(i32),
+    StartCustomFocusTimer,
+    ToggleTimerWithAudio,
     StartFocusTimer(u32),
     StopFocusTimer,
     Favorite(String),
@@ -140,6 +149,43 @@ enum Action {
     RevealSpoiler(String),
     Privacy,
     Encoding(String),
+    // Multi-Track Soundscape Mixer
+    ToggleMixer,
+    CloseMixer,
+    StepMixTrack(SoundscapePreset, i8),
+    SetMixTrack(SoundscapePreset, f32),
+    ApplyMixRecipe(&'static str),
+    // Spoiler-Free AI Companion (Recap & Character Graph)
+    ToggleCompanion,
+    CompanionTab(u8),
+    SelectCharacter(usize),
+    RefreshCompanion,
+    CancelCompanion,
+    OpenCompanionPoster,
+    // Edge-TTS Audiobook Studio
+    ToggleTtsDrawer,
+    TtsStart,
+    TtsPauseResume,
+    TtsStop,
+    TtsPrev,
+    TtsNext,
+    TtsVoice(String),
+    TtsRate(f32),
+    TtsToggleDuck,
+    TtsToggleSleepTimer,
+    // Multi-Provider AI Settings (Cloud + Local Offline Ollama/LM Studio/llama.cpp + Custom URL)
+    SelectAiPreset(String),
+    PickDiscoveredModel(String),
+    SaveAiSettings,
+    TestAiConnection,
+    // Multi-Device Sync (GitHub Private Repo / Sync Folder)
+    SelectSyncMode(String),
+    PickSyncFolder,
+    ToggleSyncBooks,
+    ToggleSyncOnExit,
+    SaveSyncSettings,
+    TestSyncConnection,
+    RunSyncNow,
 }
 
 struct PassageGenerated {
@@ -187,6 +233,8 @@ pub struct ReadingApp {
     focus_timer_started: Option<Instant>,
     focus_timer_total_secs: u32,
     focus_timer_picker_open: bool,
+    focus_timer_input: Entity<InputState>,
+    focus_timer_with_audio: bool,
     shelf_search: Entity<InputState>,
     shelf_filter: ShelfFilter,
     rediscovery_offset: usize,
@@ -217,6 +265,27 @@ pub struct ReadingApp {
     busy: bool,
     motion: MotionEngine,
     frame_scheduled: bool,
+    // Feature pillars state
+    mixer_open: bool,
+    companion_tab: u8,
+    companion_selected_char: usize,
+    companion_rx: Option<mpsc::Receiver<anyhow::Result<(String, BookCompanionCache)>>>,
+    tts_player: Option<tts::TtsPlayer>,
+    tts_status: tts::TtsStatus,
+    tts_ducking_applied: bool,
+    ai_base_url_input: Entity<InputState>,
+    ai_model_input: Entity<InputState>,
+    ai_key_input: Entity<InputState>,
+    ai_test_rx: Option<mpsc::Receiver<anyhow::Result<mood::ConnectionCheck>>>,
+    discovered_ai_models: Vec<String>,
+    sync_owner_input: Entity<InputState>,
+    sync_repo_input: Entity<InputState>,
+    sync_branch_input: Entity<InputState>,
+    sync_api_base_input: Entity<InputState>,
+    sync_token_input: Entity<InputState>,
+    sync_rx: Option<mpsc::Receiver<anyhow::Result<sync_client::SyncOutcome>>>,
+    sync_test_rx: Option<mpsc::Receiver<anyhow::Result<String>>>,
+    custom_mood_worker_override: bool,
 }
 
 impl ReadingApp {
@@ -272,9 +341,78 @@ impl ReadingApp {
         )
         .detach();
         cx.observe(&palette_input, |_, _, cx| cx.notify()).detach();
+        let focus_timer_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx).placeholder("1—180");
+            state.set_value("30", window, cx);
+            state
+        });
+        cx.subscribe_in(
+            &focus_timer_input,
+            window,
+            |this, _, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => cx.notify(),
+                InputEvent::PressEnter { .. } if this.focus_timer_picker_open => {
+                    this.act(Action::StartCustomFocusTimer, window, cx);
+                }
+                _ => {}
+            },
+        )
+        .detach();
+        cx.observe(&focus_timer_input, |_, _, cx| cx.notify())
+            .detach();
         let fields = (0..13)
             .map(|_| cx.new(|cx| InputState::new(window, cx)))
             .collect();
+        let secrets = store.load_secrets();
+        let ai_base_url_val = store.state.ai.base_url.clone();
+        let ai_model_val = store.state.ai.model.clone();
+        let ai_key_val = secrets.ai_api_key.clone();
+        let ai_base_url_input = cx.new(|cx| {
+            let mut s = InputState::new(window, cx)
+                .placeholder("Base URL 或完整接口（如 https://your-api/v1 或 http://127.0.0.1:11434/v1）");
+            s.set_value(ai_base_url_val, window, cx);
+            s
+        });
+        let ai_model_input = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).placeholder("例如 deepseek-chat 或 qwen2.5:7b");
+            s.set_value(ai_model_val, window, cx);
+            s
+        });
+        let ai_key_input = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).placeholder("API Key（本地 Ollama/LM Studio 无需填写）");
+            s.set_value(ai_key_val, window, cx);
+            s
+        });
+        let sync_owner_val = store.state.sync.github_owner.clone();
+        let sync_repo_val = store.state.sync.github_repo.clone();
+        let sync_branch_val = store.state.sync.github_branch.clone();
+        let sync_api_val = store.state.sync.github_api_base.clone();
+        let sync_token_val = secrets.github_token.clone();
+        let sync_owner_input = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).placeholder("你的 GitHub 用户名");
+            s.set_value(sync_owner_val, window, cx);
+            s
+        });
+        let sync_repo_input = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).placeholder("私有同步仓库名（如 glow-reading-sync）");
+            s.set_value(sync_repo_val, window, cx);
+            s
+        });
+        let sync_branch_input = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).placeholder("默认 main");
+            s.set_value(sync_branch_val, window, cx);
+            s
+        });
+        let sync_api_base_input = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).placeholder("默认 https://api.github.com");
+            s.set_value(sync_api_val, window, cx);
+            s
+        });
+        let sync_token_input = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).placeholder("GitHub Personal Access Token（仅存本机）");
+            s.set_value(sync_token_val, window, cx);
+            s
+        });
         let smoke = std::env::args().any(|a| a == "--smoke-test");
         let app = Self {
             store,
@@ -314,6 +452,8 @@ impl ReadingApp {
             focus_timer_started: None,
             focus_timer_total_secs: 25 * 60,
             focus_timer_picker_open: false,
+            focus_timer_input,
+            focus_timer_with_audio: false,
             shelf_search,
             shelf_filter: ShelfFilter::All,
             rediscovery_offset: 0,
@@ -344,6 +484,26 @@ impl ReadingApp {
             busy: false,
             motion: MotionEngine::new(),
             frame_scheduled: false,
+            mixer_open: false,
+            companion_tab: 0,
+            companion_selected_char: 0,
+            companion_rx: None,
+            tts_player: None,
+            tts_status: tts::TtsStatus::default(),
+            tts_ducking_applied: false,
+            ai_base_url_input,
+            ai_model_input,
+            ai_key_input,
+            ai_test_rx: None,
+            discovered_ai_models: vec![],
+            sync_owner_input,
+            sync_repo_input,
+            sync_branch_input,
+            sync_api_base_input,
+            sync_token_input,
+            sync_rx: None,
+            sync_test_rx: None,
+            custom_mood_worker_override: false,
         };
         app.install_native_theme(cx);
         window.focus(&app.focus, cx);
@@ -498,6 +658,14 @@ impl ReadingApp {
             }
         }
     }
+    fn active_soundscape_mix(&self) -> SoundscapeMix {
+        let mix = self.store.state.soundscape_mix.clamped();
+        if mix.is_silent() {
+            SoundscapeMix::from_single(self.active_soundscape_preset().id())
+        } else {
+            mix
+        }
+    }
     fn start_audio(&mut self, prefer_preset: bool) -> anyhow::Result<String> {
         let vol = self.theme().volume.clamp(0.05, 1.0);
         if !prefer_preset && let Some(path) = &self.theme().audio {
@@ -517,22 +685,39 @@ impl ReadingApp {
             self.audio = Some((stream, sink, None));
             return Ok("自定义环境音".into());
         }
-        let preset = self.active_soundscape_preset();
+        let mix = self.active_soundscape_mix();
+        let label = mix.summary_label();
+        if let Some((_, sink, Some(handle))) = &self.audio {
+            handle.apply_mix(&mix);
+            handle.set_ducking(
+                self.tts_status.active
+                    && !self.tts_status.paused
+                    && self.store.state.tts.duck_soundscape,
+            );
+            sink.set_volume(vol);
+            return Ok(label);
+        }
         let (stream, handle) = rodio::OutputStream::try_default()
             .map_err(|_| anyhow::anyhow!("未检测到可用的音频输出设备"))?;
         let sink = rodio::Sink::try_new(&handle)?;
         sink.set_volume(vol);
-        let (src, stop_handle) = SoundscapeSource::with_handle(preset);
+        let (src, stop_handle) = SoundscapeSource::with_mix_handle(&mix);
+        if self.tts_status.active
+            && !self.tts_status.paused
+            && self.store.state.tts.duck_soundscape
+        {
+            stop_handle.set_ducking(true);
+        }
         sink.append(src);
         self.stop_audio_smoothly();
         self.audio = Some((stream, sink, Some(stop_handle)));
-        Ok(preset.label().into())
+        Ok(label)
     }
     fn play_chime(&mut self) {
         if let Ok((stream, handle)) = rodio::OutputStream::try_default()
             && let Ok(sink) = rodio::Sink::try_new(&handle)
         {
-            sink.set_volume((self.theme().volume * 0.9).clamp(0.18, 0.7));
+            sink.set_volume((self.theme().volume * 1.1).clamp(0.32, 0.85));
             sink.append(ChimeSource::new());
             self.chime_audio = Some((stream, sink));
         }
@@ -554,6 +739,14 @@ impl ReadingApp {
     fn handle_escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.palette_open {
             self.palette_open = false;
+            window.focus(&self.focus, cx);
+            cx.notify();
+        } else if self.mixer_open {
+            self.mixer_open = false;
+            window.focus(&self.focus, cx);
+            cx.notify();
+        } else if self.focus_timer_picker_open {
+            self.focus_timer_picker_open = false;
             window.focus(&self.focus, cx);
             cx.notify();
         } else if self.quote_card.is_some() {
@@ -710,9 +903,18 @@ impl ReadingApp {
                 self.notice = Some(format!(
                     "棱镜喵：静读光瓶已蓄满 {mins} 分钟，今天共静心阅读 {total_today} 分钟。"
                 ));
+                if self.store.state.tts.sleep_with_timer && self.tts_status.active {
+                    if let Some(player) = &self.tts_player {
+                        player.stop();
+                    }
+                    self.notice = Some(format!(
+                        "棱镜喵：静读光瓶已蓄满 {mins} 分钟，并已轻声停止听书，晚安。"
+                    ));
+                }
             }
             cx.notify();
         }
+        self.tick_features(cx);
         let messages = self
             .rx
             .as_ref()
@@ -862,6 +1064,7 @@ impl ReadingApp {
                     if !event.chapter.is_empty() {
                         book.chapter = Some(event.chapter.clone());
                     }
+                    book.updated_at = Some(glow_core::model::now());
                     self.dirty = true;
                 }
             }
@@ -1354,10 +1557,25 @@ impl ReadingApp {
                     .map(|b| b.title.clone())
                     .unwrap_or_else(|| "微光藏书".into());
                 let worker = self.echo_ai_worker;
+                let use_custom = self.custom_mood_worker_override
+                    || (worker as *const () as usize)
+                        != (mood::generate_passage as *const () as usize);
+                let ai_settings = self.store.state.ai.clone();
+                let secrets = self.store.load_secrets();
                 let (sender, receiver) = mpsc::channel();
                 self.echo_ai_rx = Some(receiver);
                 std::thread::spawn(move || {
-                    let outcome = worker(&passage, &book_title).map(|result| PassageGenerated {
+                    let generated = if use_custom {
+                        worker(&passage, &book_title)
+                    } else {
+                        mood::generate_passage_with_settings(
+                            &ai_settings,
+                            &secrets,
+                            &passage,
+                            &book_title,
+                        )
+                    };
+                    let outcome = generated.map(|result| PassageGenerated {
                         book_id,
                         passage,
                         cfi,
@@ -1435,10 +1653,19 @@ impl ReadingApp {
                 }
                 let selected_mood = self.mood.clone();
                 let worker = self.mood_worker;
+                let use_custom = self.custom_mood_worker_override
+                    || (worker as *const () as usize) != (mood::generate as *const () as usize);
+                let ai_settings = self.store.state.ai.clone();
+                let secrets = self.store.load_secrets();
                 let (sender, receiver) = mpsc::channel();
                 self.mood_rx = Some(receiver);
                 std::thread::spawn(move || {
-                    let result = worker(&text, &selected_mood).map(|result| mood::Generated {
+                    let generated = if use_custom {
+                        worker(&text, &selected_mood)
+                    } else {
+                        mood::generate_with_settings(&ai_settings, &secrets, &text, &selected_mood)
+                    };
+                    let result = generated.map(|result| mood::Generated {
                         input: text,
                         mood: selected_mood,
                         result,
@@ -1459,15 +1686,69 @@ impl ReadingApp {
             }
             Action::ToggleTimerPicker => {
                 self.focus_timer_picker_open = !self.focus_timer_picker_open;
+                if self.focus_timer_picker_open {
+                    self.palette_open = false;
+                    self.quote_card = None;
+                    let cur = self.focus_timer_input.read(cx).value().trim().to_owned();
+                    if cur.parse::<u32>().is_err() {
+                        let fallback = (self.focus_timer_total_secs / 60).clamp(1, 180);
+                        self.focus_timer_input.update(cx, |s, cx| {
+                            s.set_value(fallback.to_string(), window, cx)
+                        });
+                    }
+                    let focus = self.focus_timer_input.read(cx).focus_handle(cx).clone();
+                    window.focus(&focus, cx);
+                } else {
+                    window.focus(&self.focus, cx);
+                }
+            }
+            Action::CloseTimerPicker => {
+                self.focus_timer_picker_open = false;
+                window.focus(&self.focus, cx);
+            }
+            Action::StepCustomTimer(delta) => {
+                let current = self
+                    .focus_timer_input
+                    .read(cx)
+                    .value()
+                    .trim()
+                    .parse::<i32>()
+                    .unwrap_or((self.focus_timer_total_secs / 60).clamp(1, 180) as i32);
+                let next = (current + delta).clamp(1, 180);
+                self.focus_timer_input
+                    .update(cx, |s, cx| s.set_value(next.to_string(), window, cx));
+            }
+            Action::ToggleTimerWithAudio => {
+                self.focus_timer_with_audio = !self.focus_timer_with_audio;
+            }
+            Action::StartCustomFocusTimer => {
+                let raw = self.focus_timer_input.read(cx).value().trim().to_owned();
+                let mins = raw
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|m| (1..=180).contains(m))
+                    .ok_or_else(|| anyhow::anyhow!("请输入 1—180 之间的整数分钟数"))?;
+                self.perform(Action::StartFocusTimer(mins), window, cx)?;
             }
             Action::StartFocusTimer(minutes) => {
-                let mins = minutes.clamp(1, 120);
+                let mins = minutes.clamp(1, 180);
                 self.focus_timer_total_secs = mins * 60;
                 self.focus_timer_started = Some(Instant::now());
                 self.focus_timer_picker_open = false;
+                self.focus_timer_input
+                    .update(cx, |s, cx| s.set_value(mins.to_string(), window, cx));
+                window.focus(&self.focus, cx);
+                let audio_note = if self.focus_timer_with_audio && self.audio.is_none() {
+                    match self.start_audio(false) {
+                        Ok(label) => format!("，并已同步开启「{label}」声景"),
+                        Err(_) => String::new(),
+                    }
+                } else {
+                    String::new()
+                };
                 self.schedule_motion_frame(window, cx);
                 self.notice = Some(format!(
-                    "棱镜喵：已开启 {mins} 分钟静读光瓶，不急不躁，慢慢读吧。"
+                    "棱镜喵：已开启 {mins} 分钟静读光瓶{audio_note}，不急不躁，慢慢读吧。"
                 ));
             }
             Action::StopFocusTimer => {
@@ -1477,6 +1758,7 @@ impl ReadingApp {
                     .map(|started| (started.elapsed().as_secs() / 60) as u32)
                     .unwrap_or(0);
                 self.focus_timer_picker_open = false;
+                window.focus(&self.focus, cx);
                 if elapsed_mins > 0 {
                     let today = today_ymd();
                     let total_today = self
@@ -1592,8 +1874,17 @@ impl ReadingApp {
                 let all = self.all_themes();
                 if let Some(t) = all.get(index) {
                     let was_playing = self.audio.is_some();
-                    self.store.state.theme = t.clone();
+                    let prev_volume = self.store.state.theme.volume;
+                    let prev_reduced_motion = self.store.state.theme.reduced_motion;
+                    let mut next = t.clone();
+                    if index < themes().len() {
+                        next.volume = prev_volume;
+                        next.reduced_motion = prev_reduced_motion;
+                    }
+                    self.store.state.theme = next;
                     self.store.state.soundscape_preset = None;
+                    let paired = SoundscapePreset::for_theme(&self.store.state.theme.id);
+                    self.store.state.soundscape_mix = SoundscapeMix::from_single(paired.id());
                     self.stop_audio_smoothly();
                     self.preview = None;
                     self.install_native_theme(cx);
@@ -1691,16 +1982,19 @@ impl ReadingApp {
                     self.notice = Some("已轻声关闭环境声景。".into());
                 } else {
                     let label = self.start_audio(false)?;
+                    let vol_pct = (self.theme().volume.clamp(0.05, 1.0) * 100.0).round() as u32;
                     self.schedule_motion_frame(window, cx);
-                    self.notice = Some(format!("已开启环境声景：{label}。"));
+                    self.notice = Some(format!("已开启环境声景：{label}（音量 {vol_pct}%）。"));
                 }
             }
             Action::Soundscape(preset) => {
                 self.store.state.soundscape_preset = Some(preset.id().into());
+                self.store.state.soundscape_mix = SoundscapeMix::from_single(preset.id());
                 self.save();
                 let label = self.start_audio(true)?;
+                let vol_pct = (self.theme().volume.clamp(0.05, 1.0) * 100.0).round() as u32;
                 self.schedule_motion_frame(window, cx);
-                self.notice = Some(format!("声景频道已调频至：{label}。"));
+                self.notice = Some(format!("声景频道已调频至：{label}（音量 {vol_pct}%）。"));
             }
             Action::AudioVolume(delta) => {
                 let steps = (self.store.state.theme.volume * 20.0).round() as i32 + delta as i32;
@@ -1767,6 +2061,7 @@ impl ReadingApp {
                     self.open(&id, window, cx)?;
                 }
             }
+            other => self.perform_feature(other, window, cx)?,
         }
         Ok(())
     }
@@ -1969,7 +2264,7 @@ impl ReadingApp {
     fn is_prism(&self) -> bool {
         self.theme().id == "prism"
     }
-    #[cfg(test)]
+    #[cfg(all(test, feature = "ui-test"))]
     fn is_sky(&self) -> bool {
         self.theme().id == "forest"
     }
@@ -2652,6 +2947,7 @@ impl ReadingApp {
                     "等待翻开第一页"
                 });
             let snap = self.motion_snapshot();
+            let open_book_id = b.id.clone();
             let card = v_flex()
                 .relative()
                 .overflow_hidden()
@@ -2673,134 +2969,148 @@ impl ReadingApp {
                     prism::prism_beam_horizontal(snap.clone(), 1.5, i as f32 * 0.85, false),
                 ))
                 .child(
-                    div()
-                        .relative()
-                        .rounded_xl()
-                        .overflow_hidden()
-                        .border_1()
-                        .border_color(rgb(0xffffff).opacity(0.22))
-                        .shadow_sm()
-                        .child(cover)
-                        // 3D Hardcover Spine Crease Overlay
-                        .child(
-                            div()
-                                .absolute()
-                                .left(px(0.))
-                                .top(px(0.))
-                                .w(px(9.))
-                                .h_full()
-                                .bg(rgb(0x000000).opacity(0.24)),
+                    v_flex()
+                        .id(SharedString::from(format!("book-open-{i}")))
+                        .debug_selector(move || format!("book-open-{i}"))
+                        .cursor_pointer()
+                        .gap_3()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, window, cx| {
+                                this.act(Action::Open(open_book_id.clone()), window, cx);
+                            }),
                         )
                         .child(
                             div()
-                                .absolute()
-                                .left(px(9.))
-                                .top(px(0.))
-                                .w(px(1.5))
-                                .h_full()
-                                .bg(rgb(0xffffff).opacity(0.26)),
-                        )
-                        // Top-right reading status pill on cover
-                        .child(
-                            div()
-                                .absolute()
-                                .right(px(8.))
-                                .top(px(8.))
-                                .px_2()
-                                .py_0p5()
-                                .rounded_full()
-                                .bg(rgb(hud_hex).opacity(0.78))
+                                .relative()
+                                .rounded_xl()
+                                .overflow_hidden()
                                 .border_1()
-                                .border_color(rgb(0xffffff).opacity(0.18))
-                                .text_size(px(10.))
-                                .font_family(self.ui_font())
-                                .text_color(rgb(0xfff7df))
-                                .child(reading_label.clone()),
-                        )
-                        // Bottom-left format badge on cover
-                        .child(
-                            div()
-                                .absolute()
-                                .left(px(16.))
-                                .bottom(px(8.))
-                                .px_1p5()
-                                .py_0p5()
-                                .rounded(px(5.))
-                                .bg(rgb(hud_hex).opacity(0.72))
-                                .text_size(px(9.))
-                                .font_family(self.ui_font())
-                                .text_color(rgb(0xe8efe9))
-                                .child(format_badge),
-                        ),
-                )
-                .child(
-                    v_flex()
-                        .gap_1()
-                        .child(
-                            div()
-                                .text_size(px(15.5))
-                                .font_family(self.display_font())
-                                .line_height(relative(1.3))
-                                .text_color(rgb(hex(&t.text)))
-                                .text_ellipsis()
-                                .child(b.title.clone()),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(11.5))
-                                .font_family(self.ui_font())
-                                .text_color(rgb(hex(&t.muted)))
-                                .text_ellipsis()
-                                .child(b.author.clone()),
-                        ),
-                )
-                .child(
-                    v_flex()
-                        .gap_1p5()
-                        .px_2p5()
-                        .py_2()
-                        .rounded_xl()
-                        .bg(rgb(hex(&t.background)).opacity(if is_dark { 0.58 } else { 0.68 }))
-                        .child(
-                            h_flex()
-                                .justify_between()
-                                .items_center()
-                                .gap_2()
+                                .border_color(rgb(0xffffff).opacity(0.22))
+                                .hover(|style| style.border_color(rgb(hex(&t.accent)).opacity(0.65)))
+                                .shadow_sm()
+                                .child(cover)
+                                // 3D Hardcover Spine Crease Overlay
                                 .child(
                                     div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .text_size(px(10.))
-                                        .font_family(self.ui_font())
-                                        .text_color(if b.location.is_some() {
-                                            rgb(hex(&t.accent))
-                                        } else {
-                                            rgb(hex(&t.muted))
-                                        })
-                                        .text_ellipsis()
-                                        .child(chapter_label.to_owned()),
+                                        .absolute()
+                                        .left(px(0.))
+                                        .top(px(0.))
+                                        .w(px(9.))
+                                        .h_full()
+                                        .bg(rgb(0x000000).opacity(0.24)),
                                 )
                                 .child(
                                     div()
+                                        .absolute()
+                                        .left(px(9.))
+                                        .top(px(0.))
+                                        .w(px(1.5))
+                                        .h_full()
+                                        .bg(rgb(0xffffff).opacity(0.26)),
+                                )
+                                // Top-right reading status pill on cover
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .right(px(8.))
+                                        .top(px(8.))
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_full()
+                                        .bg(rgb(hud_hex).opacity(0.78))
+                                        .border_1()
+                                        .border_color(rgb(0xffffff).opacity(0.18))
                                         .text_size(px(10.))
                                         .font_family(self.ui_font())
-                                        .text_color(rgb(hex(&t.muted)))
-                                        .child(format!("{:.0}%", progress_val * 100.0)),
+                                        .text_color(rgb(0xfff7df))
+                                        .child(reading_label.clone()),
+                                )
+                                // Bottom-left format badge on cover
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .left(px(16.))
+                                        .bottom(px(8.))
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded(px(5.))
+                                        .bg(rgb(hud_hex).opacity(0.72))
+                                        .text_size(px(9.))
+                                        .font_family(self.ui_font())
+                                        .text_color(rgb(0xe8efe9))
+                                        .child(format_badge),
                                 ),
                         )
                         .child(
-                            div()
-                                .w_full()
-                                .h(px(3.5))
-                                .rounded_full()
-                                .bg(rgb(hex(&t.text)).opacity(0.10))
+                            v_flex()
+                                .gap_1()
                                 .child(
                                     div()
-                                        .w(px((188.0 * progress_val)
-                                            .max(if b.location.is_some() { 6.0 } else { 0.0 })))
-                                        .h_full()
+                                        .text_size(px(15.5))
+                                        .font_family(self.display_font())
+                                        .line_height(relative(1.3))
+                                        .text_color(rgb(hex(&t.text)))
+                                        .text_ellipsis()
+                                        .child(b.title.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(11.5))
+                                        .font_family(self.ui_font())
+                                        .text_color(rgb(hex(&t.muted)))
+                                        .text_ellipsis()
+                                        .child(b.author.clone()),
+                                ),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_1p5()
+                                .px_2p5()
+                                .py_2()
+                                .rounded_xl()
+                                .bg(rgb(hex(&t.background)).opacity(if is_dark { 0.58 } else { 0.68 }))
+                                .child(
+                                    h_flex()
+                                        .justify_between()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .text_size(px(10.))
+                                                .font_family(self.ui_font())
+                                                .text_color(if b.location.is_some() {
+                                                    rgb(hex(&t.accent))
+                                                } else {
+                                                    rgb(hex(&t.muted))
+                                                })
+                                                .text_ellipsis()
+                                                .child(chapter_label.to_owned()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(10.))
+                                                .font_family(self.ui_font())
+                                                .text_color(rgb(hex(&t.muted)))
+                                                .child(format!("{:.0}%", progress_val * 100.0)),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .h(px(3.5))
                                         .rounded_full()
-                                        .bg(rgb(hex(&t.accent))),
+                                        .bg(rgb(hex(&t.text)).opacity(0.10))
+                                        .child(
+                                            div()
+                                                .w(px((188.0 * progress_val)
+                                                    .max(if b.location.is_some() { 6.0 } else { 0.0 })))
+                                                .h_full()
+                                                .rounded_full()
+                                                .bg(rgb(hex(&t.accent))),
+                                        ),
                                 ),
                         ),
                 )
@@ -2832,6 +3142,8 @@ impl ReadingApp {
         }
         books = books.child(
             v_flex()
+                .id("shelf-add-book-card")
+                .cursor_pointer()
                 .w(px(236.))
                 .h(px(344.))
                 .p_5()
@@ -2848,6 +3160,12 @@ impl ReadingApp {
                         .border_color(rgb(hex(&t.accent)).opacity(0.45))
                         .shadow_sm()
                 })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| {
+                        this.act(Action::Import, window, cx);
+                    }),
+                )
                 .child(
                     div()
                         .size(px(68.))
@@ -3519,6 +3837,23 @@ impl ReadingApp {
             .border_1()
             .border_color(self.border_subtle())
             .child(
+                self.button_with_icon("AI 共读", IconName::WandSparkles, Action::ToggleCompanion, cx)
+                    .toggled(self.drawer == "companion"),
+            )
+            .child(
+                self.button_with_icon(
+                    if self.tts_status.active && !self.tts_status.paused {
+                        "听书中"
+                    } else {
+                        "听书"
+                    },
+                    IconName::AudioLines,
+                    Action::ToggleTtsDrawer,
+                    cx,
+                )
+                .toggled(self.drawer == "tts" || self.tts_status.active),
+            )
+            .child(
                 self.button_with_icon("目录", IconName::ListTree, Action::Toc, cx)
                     .toggled(self.drawer == "toc"),
             )
@@ -3777,9 +4112,23 @@ impl ReadingApp {
                 )
                 .into_any_element()
         };
+        let timer_label = if let Some((_, rem)) = self.focus_timer_progress() {
+            format!("静读 {:02}:{:02}", rem / 60, rem % 60)
+        } else {
+            "静读计时".to_owned()
+        };
         bottom = bottom
             .child(hint)
             .child(self.pet_dock("reader-pet", cx))
+            .child(
+                self.button_with_icon(
+                    &timer_label,
+                    IconName::Timer,
+                    Action::ToggleTimerPicker,
+                    cx,
+                )
+                .toggled(self.focus_timer_started.is_some() || self.focus_timer_picker_open),
+            )
             .child(
                 self.button_with_icon("排版", IconName::AArrowDown, Action::Typography, cx)
                     .toggled(self.drawer == "type"),
@@ -3837,6 +4186,8 @@ impl ReadingApp {
     fn reader_drawer(&self, cx: &Context<Self>) -> AnyElement {
         let t = self.theme();
         let title = match self.drawer.as_str() {
+            "companion" => "防剧透 AI 共读",
+            "tts" => "微光神经听书",
             "toc" => "沿着目录走",
             "search" => "在书里找一句话",
             "highlights" => "划过的地方",
@@ -3845,6 +4196,8 @@ impl ReadingApp {
             _ => "文字的回响",
         };
         let kicker = match self.drawer.as_str() {
+            "companion" => "SPOILER-FREE AI · 前情提要与人物图谱",
+            "tts" => "EDGE NEURAL AUDIOBOOK · 朗读伴听",
             "toc" => "IN THIS BOOK · 章节导航",
             "search" => "FIND THE WORDS · 全书检索",
             "highlights" => "LINES WORTH KEEPING · 划线",
@@ -3879,6 +4232,12 @@ impl ReadingApp {
                     .child(self.button_with_icon("收起", IconName::X, Action::CloseEcho, cx)),
             );
         match self.drawer.as_str() {
+            "companion" => {
+                content = content.child(self.drawer_companion(cx));
+            }
+            "tts" => {
+                content = content.child(self.drawer_tts(cx));
+            }
             "toc" => {
                 if self.toc.is_empty() {
                     content = content.child(
@@ -6191,7 +6550,9 @@ impl ReadingApp {
                                 )),
                         ),
                 ),
-        );
+        )
+        .child(self.settings_ai_card(cx))
+        .child(self.settings_sync_card(cx));
         if let Some(draft) = &self.draft {
             let labels = [
                 "主题名称",
@@ -6327,6 +6688,7 @@ impl ReadingApp {
             0 => {
                 self.store.state.privacy_seen = true;
                 if std::env::var_os("GLOW_SMOKE_FAKE_MOOD").is_some() {
+                    self.custom_mood_worker_override = true;
                     self.mood_worker = |_, _| {
                         Ok(EchoResult {
                             quotes: vec![],
@@ -6585,6 +6947,17 @@ impl ReadingApp {
                 if let Ok(image) = window.render_to_image() {
                     let _ = image.save(self.store.root.join("kiki-shelf.png"));
                 }
+                self.act(Action::PickTheme(5), window, cx);
+                self.act(Action::ToggleTimerPicker, window, cx);
+                self.smoke_step = 48;
+                self.smoke_started = Instant::now();
+            }
+            48 if self.smoke_started.elapsed() > Duration::from_millis(450) => {
+                #[cfg(feature = "ui-test")]
+                if let Ok(image) = window.render_to_image() {
+                    let _ = image.save(self.store.root.join("focus-timer-modal.png"));
+                }
+                self.act(Action::CloseTimerPicker, window, cx);
                 self.act(Action::PickTheme(3), window, cx);
                 self.act(Action::Page(Page::Reader), window, cx);
                 self.smoke_step = 5;
@@ -6872,7 +7245,7 @@ impl ReadingApp {
                 .font_family(self.ui_font())
                 .line_height(relative(1.5))
                 .text_color(rgb(hex(&t.muted)).opacity(0.84))
-                .child("一盏灯，一本书 · 点光瓶开启静读"),
+                .child("一盏灯，一本书 · 慢慢读"),
         )
     }
     #[inline(never)]
@@ -6889,8 +7262,10 @@ impl ReadingApp {
         let active_preset = self.active_soundscape_preset();
         let focus_status = self.focus_timer_progress();
         let mut preset_row = h_flex().gap_1().items_center().justify_between();
-        for preset in SoundscapePreset::ALL {
-            let selected = active_preset == preset;
+        let active_mix = self.active_soundscape_mix();
+        for preset in SoundscapePreset::SIDEBAR_QUICK {
+            let selected = preset.mix_value(&active_mix) >= 0.01
+                || (active_mix.is_silent() && active_preset == preset);
             preset_row = preset_row.child(
                 div()
                     .id(SharedString::from(format!("sc-{}", preset.id())))
@@ -6931,7 +7306,14 @@ impl ReadingApp {
             );
         }
         let vol_pct = (t.volume.clamp(0.05, 1.0) * 100.0).round() as u32;
-        let mut deck = v_flex()
+        let today_mins = if self.store.state.reading_minutes_date.as_deref()
+            == Some(today_ymd().as_str())
+        {
+            self.store.state.reading_minutes_today
+        } else {
+            0
+        };
+        let deck = v_flex()
             .relative()
             .overflow_hidden()
             .p_3()
@@ -7008,90 +7390,152 @@ impl ReadingApp {
                             ),
                     ),
             )
+            // Full-card interactive Quiet Reading Timer trigger (discoverable label + pill CTA)
             .child(
                 h_flex()
+                    .id("vial-trigger")
+                    .debug_selector(|| "vial-trigger".into())
+                    .cursor_pointer()
                     .items_center()
                     .justify_between()
                     .gap_2()
                     .px_2p5()
                     .py_2()
                     .rounded_xl()
-                    .bg(rgb(hex(&t.paper)).opacity(if dark { 0.62 } else { 0.78 }))
-                    .child(
-                        div()
-                            .id("vial-trigger")
-                            .cursor_pointer()
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, window, cx| {
-                                    this.act(Action::ToggleTimerPicker, window, cx);
-                                }),
-                            )
-                            .child(prism::light_vial_canvas(snap, vial_ratio)),
+                    .bg(rgb(hex(&t.paper)).opacity(if dark { 0.68 } else { 0.86 }))
+                    .border_1()
+                    .border_color(if focus_status.is_some() || self.focus_timer_picker_open {
+                        rgb(hex(&t.accent)).opacity(0.62)
+                    } else {
+                        rgb(hex(&t.accent)).opacity(0.24)
+                    })
+                    .hover(|s| {
+                        s.bg(rgb(hex(&t.paper)))
+                            .border_color(rgb(hex(&t.accent)).opacity(0.75))
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            this.act(Action::ToggleTimerPicker, window, cx);
+                        }),
                     )
+                    .child(prism::light_vial_canvas(snap, vial_ratio))
                     .child(
                         v_flex()
                             .flex_1()
+                            .min_w_0()
                             .gap_1()
                             .child(
                                 h_flex()
                                     .justify_between()
                                     .items_center()
+                                    .gap_1()
                                     .child(
                                         div()
-                                            .text_size(px(8.5))
+                                            .text_size(px(10.))
                                             .font_family(self.ui_font())
-                                            .text_color(rgb(hex(&t.accent)))
+                                            .text_color(rgb(hex(&t.text)))
                                             .child(if let Some((_, rem)) = focus_status {
-                                                let mins = rem / 60;
-                                                let secs = rem % 60;
-                                                format!("静读 · {mins:02}:{secs:02}")
+                                                format!("静读 {:02}:{:02}", rem / 60, rem % 60)
                                             } else {
-                                                active_preset.label().to_owned()
+                                                "静读计时".to_owned()
                                             }),
                                     )
                                     .child(
-                                        div()
-                                            .text_size(px(8.5))
-                                            .font_family(self.ui_font())
-                                            .text_color(rgb(hex(&t.muted)))
-                                            .child(format!("{:.0}%", vial_ratio * 100.0)),
+                                        h_flex()
+                                            .gap_0p5()
+                                            .items_center()
+                                            .px_1p5()
+                                            .py_0p5()
+                                            .rounded_full()
+                                            .bg(rgb(hex(&t.accent)).opacity(0.16))
+                                            .border_1()
+                                            .border_color(rgb(hex(&t.accent)).opacity(0.32))
+                                            .child(
+                                                Icon::new(IconName::Timer)
+                                                    .size(px(8.5))
+                                                    .text_color(rgb(hex(&t.accent))),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(8.))
+                                                    .font_family(self.ui_font())
+                                                    .text_color(rgb(hex(&t.accent)))
+                                                    .child(if focus_status.is_some() {
+                                                        "调整"
+                                                    } else {
+                                                        "设时长"
+                                                    }),
+                                            ),
                                     ),
                             )
-                            .child(self.waveform_bars(
-                                self.audio.is_some() || focus_status.is_some(),
-                                &[5., 11., 15., 8., 13., 9., 6., 12., 8.],
-                            )),
+                            .child(
+                                div()
+                                    .text_size(px(8.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .text_ellipsis()
+                                    .child(if focus_status.is_some() {
+                                        format!(
+                                            "已蓄光 {:.0}% · 点此结束或重设",
+                                            vial_ratio * 100.0
+                                        )
+                                    } else if today_mins > 0 {
+                                        format!("今日已静读 {today_mins} 分钟")
+                                    } else {
+                                        "专注倒计时 · 可自定义".to_owned()
+                                    }),
+                            ),
                     ),
-            );
-        if self.focus_timer_picker_open {
-            deck = deck.child(
-                v_flex()
-                    .gap_1p5()
-                    .p_2()
-                    .rounded_xl()
-                    .bg(rgb(hex(&t.paper)).opacity(if dark { 0.75 } else { 0.90 }))
-                    .border_1()
-                    .border_color(rgb(hex(&t.accent)).opacity(0.32))
+            )
+            // Dedicated soundscape channel status row + multi-track mixer button + waveform
+            .child(
+                h_flex()
+                    .px_1()
+                    .justify_between()
+                    .items_center()
+                    .gap_1()
                     .child(
                         div()
-                            .text_size(px(9.5))
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(8.5))
                             .font_family(self.ui_font())
-                            .text_color(rgb(hex(&t.accent)))
-                            .child("静读光瓶 · 温和陪伴计时"),
+                            .text_ellipsis()
+                            .text_color(if self.audio.is_some() {
+                                rgb(hex(&t.accent))
+                            } else {
+                                rgb(hex(&t.muted))
+                            })
+                            .child(format!("声景 · {}", active_mix.summary_label())),
                     )
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .child(self.button("15m", Action::StartFocusTimer(15), cx))
-                            .child(self.button("25m", Action::StartFocusTimer(25), cx))
-                            .child(self.button("45m", Action::StartFocusTimer(45), cx)),
+                        div()
+                            .id("mixer-trigger")
+                            .debug_selector(|| "mixer-trigger".into())
+                            .cursor_pointer()
+                            .px_1p5()
+                            .py_0p5()
+                            .rounded_full()
+                            .bg(rgb(hex(&t.accent)).opacity(if self.mixer_open { 0.28 } else { 0.14 }))
+                            .border_1()
+                            .border_color(rgb(hex(&t.accent)).opacity(0.36))
+                            .text_size(px(8.))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&t.accent)))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, window, cx| {
+                                    this.act(Action::ToggleMixer, window, cx);
+                                }),
+                            )
+                            .child("混音台"),
                     )
-                    .when(focus_status.is_some(), |this| {
-                        this.child(self.button("结束静读", Action::StopFocusTimer, cx))
-                    }),
+                    .child(self.waveform_bars(
+                        self.audio.is_some(),
+                        &[4., 9., 13., 7., 11., 6., 9.],
+                    )),
             );
-        }
         deck.child(preset_row)
             .child(
                 h_flex()
@@ -7750,6 +8194,42 @@ impl ReadingApp {
                 Action::Soundscape(SoundscapePreset::Cosmos),
             ),
             (
+                "声景 · 浅海电车",
+                "铁轨轻律与浅海潮汐浪声",
+                IconName::CloudRain,
+                Action::Soundscape(SoundscapePreset::Train),
+            ),
+            (
+                "声景 · 治愈琴韵",
+                "久石让式温柔电钢五声琶音",
+                IconName::AudioLines,
+                Action::Soundscape(SoundscapePreset::Piano),
+            ),
+            (
+                "声景 · 打开 6 轨多轨混音台",
+                "自由叠加细雨、壁炉、浅海电车与治愈琴韵",
+                IconName::Settings2,
+                Action::ToggleMixer,
+            ),
+            (
+                "AI · 打开防剧透前情提要与人物图谱",
+                "仅依据当前已读章节梳理故事脉络与关系星座图",
+                IconName::WandSparkles,
+                Action::ToggleCompanion,
+            ),
+            (
+                "听书 · 打开 Edge 神经语音听书台",
+                "晓晓/云希等多音色朗读，自动压低背景声景",
+                IconName::AudioLines,
+                Action::ToggleTtsDrawer,
+            ),
+            (
+                "同步 · 立即执行多端双向同步",
+                "通过 GitHub 私有仓库或同步盘无损合并进度与手账",
+                IconName::RefreshCw,
+                Action::RunSyncNow,
+            ),
+            (
                 if self.breathing_started.is_some() {
                     "仪式 · 结束 4-7-8 呼吸放松"
                 } else {
@@ -7758,6 +8238,12 @@ impl ReadingApp {
                 "前往心情页体验呼吸引导光环",
                 IconName::Wind,
                 Action::ToggleBreathing,
+            ),
+            (
+                "仪式 · 设置静读光瓶时长（支持自定义分钟）",
+                "打开静读计时面板，自由设定 1—180 分钟",
+                IconName::Timer,
+                Action::ToggleTimerPicker,
             ),
             (
                 "仪式 · 开启 25 分钟静读光瓶",
@@ -7853,6 +8339,304 @@ impl ReadingApp {
         let idx = self.palette_selected.min(commands.len() - 1);
         let action = commands[idx].3.clone();
         self.run_palette_command(action, window, cx);
+    }
+    #[inline(never)]
+    fn focus_timer_modal(&self, snap: MotionSnapshot, cx: &Context<Self>) -> AnyElement {
+        let t = self.theme();
+        let dark = self.is_dark();
+        let focus_status = self.focus_timer_progress();
+        let vial_ratio = self.overall_reading_progress();
+        let custom_raw = self.focus_timer_input.read(cx).value().trim().to_owned();
+        let custom_mins = custom_raw
+            .parse::<u32>()
+            .ok()
+            .filter(|m| (1..=180).contains(m));
+        let today_mins = if self.store.state.reading_minutes_date.as_deref()
+            == Some(today_ymd().as_str())
+        {
+            self.store.state.reading_minutes_today
+        } else {
+            0
+        };
+        let active_preset = self.active_soundscape_preset();
+        let mut preset_pills = h_flex().gap_2().flex_wrap();
+        for &(mins, label, hint) in &[
+            (10u32, "10 分钟", "小憩片刻"),
+            (15, "15 分钟", "睡前几页"),
+            (25, "25 分钟", "标准静读"),
+            (45, "45 分钟", "深度沉浸"),
+            (60, "60 分钟", "长卷慢读"),
+        ] {
+            let selected = custom_mins == Some(mins);
+            preset_pills = preset_pills.child(
+                v_flex()
+                    .id(SharedString::from(format!("timer-preset-{mins}")))
+                    .cursor_pointer()
+                    .px_3()
+                    .py_2()
+                    .gap_0p5()
+                    .rounded_xl()
+                    .bg(if selected {
+                        rgb(hex(&t.accent)).opacity(0.16)
+                    } else {
+                        rgb(hex(&t.background)).opacity(if dark { 0.62 } else { 0.72 })
+                    })
+                    .border_1()
+                    .border_color(if selected {
+                        Hsla::from(rgb(hex(&t.accent)).opacity(0.70))
+                    } else {
+                        self.border_subtle()
+                    })
+                    .hover(|s| {
+                        s.bg(rgb(hex(&t.accent)).opacity(0.18))
+                            .border_color(rgb(hex(&t.accent)).opacity(0.65))
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            this.act(Action::StartFocusTimer(mins), window, cx);
+                        }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .font_family(self.ui_font())
+                            .text_color(if selected {
+                                rgb(hex(&t.accent))
+                            } else {
+                                rgb(hex(&t.text))
+                            })
+                            .child(label),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(9.5))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&t.muted)))
+                            .child(hint),
+                    ),
+            );
+        }
+        let cta_label = if let Some(m) = custom_mins {
+            if focus_status.is_some() {
+                format!("重新设定为 {m} 分钟静读")
+            } else {
+                format!("开始 {m} 分钟静读")
+            }
+        } else {
+            "开始自定义静读".to_owned()
+        };
+        div()
+            .id("focus-timer-overlay")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .p_6()
+            .bg(rgb(0x060910).opacity(0.56))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.act(Action::CloseTimerPicker, window, cx);
+                }),
+            )
+            .child(
+                v_flex()
+                    .id("focus-timer-dialog")
+                    .debug_selector(|| "focus-timer-dialog".into())
+                    .w(px(500.))
+                    .max_w_full()
+                    .p_6()
+                    .gap_5()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&t.paper)).opacity(0.98))
+                    .border_1()
+                    .border_color(self.border_strong())
+                    .shadow_lg()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_start()
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(self.studio_badge(
+                                        "QUIET READING TIMER",
+                                        "静读光瓶 · 自定义时长",
+                                        true,
+                                    ))
+                                    .child(
+                                        div()
+                                            .text_size(px(21.))
+                                            .font_family(self.display_font())
+                                            .child("为这一段阅读，留一点安静时间"),
+                                    ),
+                            )
+                            .child(self.button_with_icon(
+                                "关闭",
+                                IconName::X,
+                                Action::CloseTimerPicker,
+                                cx,
+                            )),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_4()
+                            .items_center()
+                            .justify_between()
+                            .p_4()
+                            .rounded_xl()
+                            .bg(rgb(hex(&t.background)).opacity(if dark { 0.65 } else { 0.72 }))
+                            .border_1()
+                            .border_color(self.border_subtle())
+                            .child(
+                                h_flex()
+                                    .gap_3p5()
+                                    .items_center()
+                                    .child(prism::light_vial_canvas(snap, vial_ratio))
+                                    .child(
+                                        v_flex()
+                                            .gap_0p5()
+                                            .child(
+                                                div()
+                                                    .text_size(px(19.))
+                                                    .font_family(self.display_font())
+                                                    .text_color(rgb(hex(&t.text)))
+                                                    .child(if let Some((_, rem)) = focus_status {
+                                                        format!(
+                                                            "正在静读 · 剩余 {:02}:{:02}",
+                                                            rem / 60,
+                                                            rem % 60
+                                                        )
+                                                    } else if let Some(m) = custom_mins {
+                                                        format!("准备静读 · {m} 分钟")
+                                                    } else {
+                                                        "输入 1—180 分钟".to_owned()
+                                                    }),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.))
+                                                    .font_family(self.ui_font())
+                                                    .text_color(rgb(hex(&t.muted)))
+                                                    .child("结束时以轻柔三音风铃提醒，并自动计入今日阅读时长"),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .px_2p5()
+                                    .py_1()
+                                    .rounded_full()
+                                    .bg(rgb(hex(&t.accent)).opacity(0.14))
+                                    .text_size(px(10.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.accent)))
+                                    .child(format!("今日已读 {today_mins} 分钟")),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(px(11.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child("快捷时长（点击即刻开始）"),
+                            )
+                            .child(preset_pills),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(px(11.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child("自定义时长（支持自由输入 1—180 分钟，按回车直接开始）"),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(self.button("−5", Action::StepCustomTimer(-5), cx).outline())
+                                    .child(self.button("−1", Action::StepCustomTimer(-1), cx).outline())
+                                    .child(div().w(px(110.)).child(Input::new(&self.focus_timer_input)))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.5))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&t.muted)))
+                                            .child("分钟"),
+                                    )
+                                    .child(self.button("+1", Action::StepCustomTimer(1), cx).outline())
+                                    .child(self.button("+5", Action::StepCustomTimer(5), cx).outline()),
+                            ),
+                    )
+                    .when(self.audio.is_none(), |this| {
+                        this.child(
+                            h_flex()
+                                .items_center()
+                                .justify_between()
+                                .child(self.pill_button(
+                                    &format!(
+                                        "开始静读时同步开启「{}」环境声",
+                                        active_preset.label()
+                                    ),
+                                    Some(IconName::AudioLines),
+                                    self.focus_timer_with_audio,
+                                    Action::ToggleTimerWithAudio,
+                                    cx,
+                                )),
+                        )
+                    })
+                    .when_some(self.error.clone(), |this, err| {
+                        this.child(
+                            div()
+                                .px_3()
+                                .py_2()
+                                .rounded_lg()
+                                .bg(rgb(0xb34f36).opacity(0.12))
+                                .text_size(px(11.5))
+                                .font_family(self.ui_font())
+                                .text_color(rgb(0xb34f36))
+                                .child(err),
+                        )
+                    })
+                    .child(
+                        h_flex()
+                            .gap_2p5()
+                            .justify_end()
+                            .items_center()
+                            .when(focus_status.is_some(), |this| {
+                                this.child(
+                                    self.button_with_icon(
+                                        "结束当前静读",
+                                        IconName::X,
+                                        Action::StopFocusTimer,
+                                        cx,
+                                    )
+                                    .outline(),
+                                )
+                            })
+                            .child(
+                                self.button_with_icon(
+                                    &cta_label,
+                                    IconName::Hourglass,
+                                    Action::StartCustomFocusTimer,
+                                    cx,
+                                )
+                                .primary(),
+                            ),
+                    ),
+            )
+            .into_any_element()
     }
     #[inline(never)]
     fn command_palette_modal(&self, snap: MotionSnapshot, cx: &Context<Self>) -> AnyElement {
@@ -8217,6 +9001,7 @@ impl Render for ReadingApp {
         let continuous_flow = !t.reduced_motion
             && (is_prism
                 || self.audio.is_some()
+                || self.tts_status.active
                 || self.breathing_started.is_some()
                 || self.focus_timer_started.is_some());
         let needs_frame = self.motion.step(t.reduced_motion, continuous_flow);
@@ -8229,6 +9014,8 @@ impl Render for ReadingApp {
             && !self.busy
             && self.confirm.is_none()
             && self.quote_card.is_none()
+            && !self.focus_timer_picker_open
+            && !self.mixer_open
             && !self.palette_open
             && self.store.state.privacy_seen
             && (self.drawer.is_empty() || !narrow);
@@ -8420,6 +9207,12 @@ impl Render for ReadingApp {
         if let Some(draft) = &self.quote_card {
             root = root.child(self.quote_card_modal(draft, cx));
         }
+        if self.focus_timer_picker_open {
+            root = root.child(self.focus_timer_modal(snap.clone(), cx));
+        }
+        if self.mixer_open {
+            root = root.child(self.soundscape_mixer_modal(snap.clone(), cx));
+        }
         if self.palette_open {
             root = root.child(self.command_palette_modal(snap.clone(), cx));
         }
@@ -8428,7 +9221,25 @@ impl Render for ReadingApp {
 }
 impl Drop for ReadingApp {
     fn drop(&mut self) {
+        if let Some(player) = self.tts_player.take() {
+            player.stop();
+        }
         let _ = self.store.save();
+        if !cfg!(test)
+            && self.store.state.sync.auto_sync_on_exit
+            && self.store.state.sync.mode != "off"
+        {
+            let token = self.store.load_secrets().github_token;
+            if let Ok(outcome) = sync_client::run_sync(
+                &self.store.root,
+                &self.store.state,
+                &self.store.state.sync,
+                &token,
+            ) {
+                self.store.state = outcome.merged_state;
+                let _ = self.store.save();
+            }
+        }
     }
 }
 
@@ -8451,6 +9262,7 @@ mod tests {
     use core::prelude::v1::test;
     fn test_app(store: Store, window: &mut Window, cx: &mut Context<ReadingApp>) -> ReadingApp {
         let mut app = ReadingApp::new(store, window, cx);
+        app.custom_mood_worker_override = true;
         app.mood_worker = |text, _| {
             Ok(EchoResult {
                 quotes: vec![],
@@ -9071,11 +9883,18 @@ mod tests {
             assert!(app.is_sky());
             // Unread book shows true 0% progress (not fake clamped 34%)
             assert_eq!(app.overall_reading_progress(), 0.0);
-            // Symmetric 5% volume stepping from default 0.35 -> 0.40 -> 0.35 -> 0.30
+            // Symmetric 5% volume stepping from default 0.55 -> 0.60 -> 0.50
             app.act(Action::AudioVolume(1), window, cx);
-            assert!((app.theme().volume - 0.40).abs() < 0.001);
+            assert!((app.theme().volume - 0.60).abs() < 0.001);
             app.act(Action::AudioVolume(-2), window, cx);
-            assert!((app.theme().volume - 0.30).abs() < 0.001);
+            assert!((app.theme().volume - 0.50).abs() < 0.001);
+            // Switching built-in themes preserves user-adjusted volume
+            app.act(Action::PickTheme(4), window, cx);
+            assert_eq!(app.theme().id, "totoro");
+            assert!((app.theme().volume - 0.50).abs() < 0.001);
+            app.act(Action::PickTheme(0), window, cx);
+            assert_eq!(app.theme().id, "forest");
+            assert!((app.theme().volume - 0.50).abs() < 0.001);
             // Daily rediscovery picks up the saved highlight
             assert!(app.daily_rediscovery().is_some());
             // Shelf filters
@@ -9097,13 +9916,26 @@ mod tests {
         app.update_in(cx, |app, window, cx| {
             app.act(Action::ToggleBreathing, window, cx);
             assert!(app.breathing_started.is_none());
-            // Reading Light Vial Focus Timer starts near 0% (not fake 18%)
+            // Reading Light Vial Focus Timer modal supports custom duration + steppers + Escape
             app.act(Action::ToggleTimerPicker, window, cx);
             assert!(app.focus_timer_picker_open);
-            app.act(Action::StartFocusTimer(25), window, cx);
+            app.act(Action::StepCustomTimer(5), window, cx);
+            assert_eq!(app.focus_timer_input.read(cx).value().as_str(), "35");
+            app.focus_timer_input
+                .update(cx, |s, cx| s.set_value("0", window, cx));
+            app.act(Action::StartCustomFocusTimer, window, cx);
+            assert!(app.error.is_some());
+            assert!(app.focus_timer_picker_open);
+            app.focus_timer_input
+                .update(cx, |s, cx| s.set_value("38", window, cx));
+            app.act(Action::StartCustomFocusTimer, window, cx);
+            assert!(app.error.is_none());
             assert!(app.focus_timer_started.is_some());
+            assert_eq!(app.focus_timer_total_secs, 38 * 60);
             assert!(!app.focus_timer_picker_open);
             assert!(app.overall_reading_progress() < 0.05);
+            app.act(Action::StartFocusTimer(25), window, cx);
+            assert_eq!(app.focus_timer_total_secs, 25 * 60);
             // Zen Reading Mode & edge reveal hysteresis
             app.active_book = Some(book_id.clone());
             app.page = Page::Reader;
@@ -9332,7 +10164,7 @@ mod tests {
                 "spirited",
                 false,
                 "scene-spirited.png",
-                SoundscapePreset::Cosmos,
+                SoundscapePreset::Train,
                 QuoteCardStyle::Spirited,
             ),
             (
@@ -9415,5 +10247,136 @@ mod tests {
         // Persisted state reloads the selected Miyazaki theme cleanly
         let reopened = Store::open(data).unwrap();
         assert_eq!(reopened.state.theme.id, "lantern");
+    }
+
+    #[gpui::test]
+    fn focus_timer_modal_renders_and_closes_on_escape_and_book_cover_opens(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.bind_keys(bindings());
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().into()).unwrap();
+        store.install_sample().unwrap();
+        store.state.privacy_seen = true;
+        let (app, cx) = cx.add_window_view(|window, cx| test_app(store, window, cx));
+
+        // Clicking the sidebar Quiet Reading Timer card opens the custom duration modal
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let timer_bounds = cx
+            .debug_bounds("vial-trigger")
+            .expect("sidebar quiet timer trigger laid out");
+        cx.simulate_click(timer_bounds.center(), Modifiers::default());
+        app.read_with(cx, |app, _| assert!(app.focus_timer_picker_open));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(cx.debug_bounds("focus-timer-dialog").is_some());
+
+        // Escape closes the timer modal even while the custom minutes input holds focus
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |app, _| assert!(!app.focus_timer_picker_open));
+
+        // Clicking directly on the book cover/body area triggers Action::Open
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let book_bounds = cx
+            .debug_bounds("book-open-0")
+            .expect("clickable book cover body laid out");
+        assert!(book_bounds.size.height > px(180.));
+    }
+
+    #[gpui::test]
+    fn mixer_companion_tts_and_github_sync_ui_render_and_keep_secrets_out_of_state(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.bind_keys(bindings());
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let mut store = Store::open(data.clone()).unwrap();
+        store.install_sample().unwrap();
+        store.state.privacy_seen = true;
+        let book_id = store.state.books[0].id.clone();
+        let (app, cx) = cx.add_window_view(|window, cx| test_app(store, window, cx));
+
+        // 1. Multi-track soundscape mixer modal opens from sidebar, applies recipe, closes on Esc
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let mixer_btn = cx
+            .debug_bounds("mixer-trigger")
+            .expect("sidebar mixer trigger laid out");
+        cx.simulate_click(mixer_btn.center(), Modifiers::default());
+        app.read_with(cx, |app, _| assert!(app.mixer_open));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(cx.debug_bounds("soundscape-mixer-dialog").is_some());
+        app.update_in(cx, |app, window, cx| {
+            app.act(Action::ApplyMixRecipe("sea_train"), window, cx);
+            assert!(app.store.state.soundscape_mix.train > 0.5);
+            assert!(app.store.state.soundscape_mix.piano > 0.3);
+            app.stop_audio_smoothly();
+        });
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |app, _| assert!(!app.mixer_open));
+
+        // 2. Spoiler-free AI companion drawer (Recap + Interactive Character Graph + Poster)
+        app.update_in(cx, |app, window, cx| {
+            app.active_book = Some(book_id.clone());
+            app.page = Page::Reader;
+            app.act(Action::ToggleCompanion, window, cx);
+            assert_eq!(app.drawer, "companion");
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        app.update_in(cx, |app, window, cx| {
+            app.act(Action::CompanionTab(1), window, cx);
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        app.update_in(cx, |app, window, cx| {
+            app.act(Action::OpenCompanionPoster, window, cx);
+            assert!(app.quote_card.is_some());
+            app.act(Action::CloseQuoteCard, window, cx);
+        });
+
+        // 3. Edge-TTS Audiobook Studio drawer renders and updates voice/rate settings
+        app.update_in(cx, |app, window, cx| {
+            app.act(Action::ToggleTtsDrawer, window, cx);
+            assert_eq!(app.drawer, "tts");
+            app.act(Action::TtsVoice("zh-CN-YunxiNeural".into()), window, cx);
+            app.act(Action::TtsRate(1.15), window, cx);
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        // 4. Multi-Provider AI & GitHub Sync Settings save secrets strictly outside state.json
+        app.update_in(cx, |app, window, cx| {
+            app.act(Action::Page(Page::Themes), window, cx);
+            app.act(Action::SelectAiPreset("llamacpp".into()), window, cx);
+            assert_eq!(app.store.state.ai.base_url, "http://127.0.0.1:8080/v1");
+            app.discovered_ai_models = vec!["qwen2.5:7b".into(), "deepseek-r1:7b".into()];
+            app.act(Action::PickDiscoveredModel("qwen2.5:7b".into()), window, cx);
+            assert_eq!(app.store.state.ai.model, "qwen2.5:7b");
+
+            app.act(Action::SelectAiPreset("custom".into()), window, cx);
+            app.ai_base_url_input.update(cx, |s, cx| {
+                s.set_value("https://my-gateway.example/v1/chat/completions", window, cx)
+            });
+            app.ai_key_input
+                .update(cx, |s, cx| s.set_value("sk-secret-ai-never-sync", window, cx));
+            app.act(Action::SaveAiSettings, window, cx);
+
+            app.act(Action::SelectSyncMode("github".into()), window, cx);
+            app.sync_owner_input
+                .update(cx, |s, cx| s.set_value("demo-user", window, cx));
+            app.sync_token_input
+                .update(cx, |s, cx| s.set_value("ghp_secret_never_sync", window, cx));
+            app.act(Action::SaveSyncSettings, window, cx);
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        let state_text = fs::read_to_string(data.join("state.json")).unwrap();
+        assert!(!state_text.contains("sk-secret-ai-never-sync"));
+        assert!(!state_text.contains("ghp_secret_never_sync"));
+        let secrets_text = fs::read_to_string(data.join("secrets.json")).unwrap();
+        assert!(secrets_text.contains("sk-secret-ai-never-sync"));
+        assert!(secrets_text.contains("ghp_secret_never_sync"));
     }
 }

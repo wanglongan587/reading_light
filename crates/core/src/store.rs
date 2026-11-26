@@ -121,6 +121,21 @@ impl Store {
         )
     }
 
+    pub fn load_secrets(&self) -> LocalSecrets {
+        let path = self.root.join("secrets.json");
+        fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<LocalSecrets>(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save_secrets(&self, secrets: &LocalSecrets) -> Result<()> {
+        atomic_write(
+            &self.root.join("secrets.json"),
+            &serde_json::to_vec_pretty(secrets)?,
+        )
+    }
+
     pub fn record(
         &mut self,
         kind: &str,
@@ -154,14 +169,23 @@ impl Store {
             .then(|| self.root.join("books").join(id));
         let previous_books = self.state.books.clone();
         let previous_last_book = self.state.last_book.clone();
+        let previous_deleted = self.state.deleted_book_ids.clone();
         let removed = self.state.books.iter().any(|book| book.id == id);
         self.state.books.retain(|b| b.id != id);
         if self.state.last_book.as_deref() == Some(id) {
             self.state.last_book = None;
         }
+        if removed && !self.state.deleted_book_ids.iter().any(|d| d == id) {
+            self.state.deleted_book_ids.push(id.to_owned());
+            if self.state.deleted_book_ids.len() > 500 {
+                let drain = self.state.deleted_book_ids.len() - 500;
+                self.state.deleted_book_ids.drain(0..drain);
+            }
+        }
         if let Err(error) = self.save() {
             self.state.books = previous_books;
             self.state.last_book = previous_last_book;
+            self.state.deleted_book_ids = previous_deleted;
             return Err(error);
         }
         if removed
@@ -176,9 +200,22 @@ impl Store {
 
     pub fn edit_journal(&mut self, edit: impl FnOnce(&mut Vec<JournalEntry>)) -> Result<()> {
         let previous = self.state.journal.clone();
+        let previous_deleted = self.state.deleted_journal_ids.clone();
         edit(&mut self.state.journal);
+        for old in &previous {
+            if !self.state.journal.iter().any(|cur| cur.id == old.id)
+                && !self.state.deleted_journal_ids.iter().any(|d| d == &old.id)
+            {
+                self.state.deleted_journal_ids.push(old.id.clone());
+            }
+        }
+        if self.state.deleted_journal_ids.len() > 500 {
+            let drain = self.state.deleted_journal_ids.len() - 500;
+            self.state.deleted_journal_ids.drain(0..drain);
+        }
         if let Err(error) = self.save() {
             self.state.journal = previous;
+            self.state.deleted_journal_ids = previous_deleted;
             return Err(error);
         }
         Ok(())
@@ -364,10 +401,24 @@ impl Store {
             };
             (index, book.highlights.remove(index))
         };
+        let previous_deleted = self.state.deleted_highlight_ids.clone();
+        if !self
+            .state
+            .deleted_highlight_ids
+            .iter()
+            .any(|d| d == &removed.id)
+        {
+            self.state.deleted_highlight_ids.push(removed.id.clone());
+            if self.state.deleted_highlight_ids.len() > 500 {
+                let drain = self.state.deleted_highlight_ids.len() - 500;
+                self.state.deleted_highlight_ids.drain(0..drain);
+            }
+        }
         if let Err(error) = self.save() {
             if let Some(book) = self.state.books.iter_mut().find(|book| book.id == book_id) {
                 book.highlights.insert(index, removed);
             }
+            self.state.deleted_highlight_ids = previous_deleted;
             return Err(error);
         }
         Ok(Some(removed))

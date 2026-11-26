@@ -661,7 +661,10 @@ impl Store {
             progress: previous.as_ref().and_then(|book| book.progress),
             chapter: previous.as_ref().and_then(|book| book.chapter.clone()),
             encoding: selected_encoding,
+            updated_at: Some(now()),
+            companion: previous.as_ref().and_then(|book| book.companion.clone()),
         });
+        self.state.deleted_book_ids.retain(|deleted| deleted != &target_id);
         self.save()?;
         Ok(target_id)
     }
