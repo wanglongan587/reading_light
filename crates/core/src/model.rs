@@ -183,7 +183,10 @@ impl AiSettings {
             .next()
             .unwrap_or("");
         let host_no_port = if host.starts_with('[') {
-            host.split(']').next().unwrap_or(host).trim_start_matches('[')
+            host.split(']')
+                .next()
+                .unwrap_or(host)
+                .trim_start_matches('[')
         } else {
             host.split(':').next().unwrap_or(host)
         };

@@ -200,7 +200,9 @@ impl TtsPlayer {
 
     #[allow(dead_code)]
     pub fn set_volume(&self, volume: f32) {
-        let _ = self.cmd_tx.send(TtsCommand::SetVolume(volume.clamp(0.05, 1.0)));
+        let _ = self
+            .cmd_tx
+            .send(TtsCommand::SetVolume(volume.clamp(0.05, 1.0)));
     }
 }
 
@@ -275,15 +277,13 @@ $synth.Dispose()
         .env("GLOW_TTS_WAV", &wav_path)
         .env("GLOW_TTS_TEXT", text)
         .status();
-    let bytes_res = status
-        .map_err(anyhow::Error::from)
-        .and_then(|st| {
-            if !st.success() {
-                Err(anyhow!("Windows 本地语音合成不可用"))
-            } else {
-                std::fs::read(&wav_path).map_err(anyhow::Error::from)
-            }
-        });
+    let bytes_res = status.map_err(anyhow::Error::from).and_then(|st| {
+        if !st.success() {
+            Err(anyhow!("Windows 本地语音合成不可用"))
+        } else {
+            std::fs::read(&wav_path).map_err(anyhow::Error::from)
+        }
+    });
     let _ = std::fs::remove_file(&wav_path);
     let bytes = bytes_res?;
     if bytes.len() < 64 {
@@ -497,24 +497,19 @@ fn tts_worker_loop(
 
         match synth_outcome {
             Ok((audio, engine_label)) => {
-                match rodio::OutputStream::try_default()
+                match crate::soundscape::try_default_output_stream()
                     .map_err(anyhow::Error::from)
                     .and_then(|(stream, handle)| {
                         rodio::Sink::try_new(&handle)
                             .map_err(anyhow::Error::from)
                             .map(|sink| (stream, sink))
-                    })
-                {
+                    }) {
                     Ok((stream, sink)) => {
                         let decode_res = match audio {
-                            SynthAudio::Mp3(bytes) => {
-                                rodio::Decoder::new_mp3(Cursor::new(bytes))
-                                    .map(|src| sink.append(src))
-                            }
-                            SynthAudio::Wav(bytes) => {
-                                rodio::Decoder::new_wav(Cursor::new(bytes))
-                                    .map(|src| sink.append(src))
-                            }
+                            SynthAudio::Mp3(bytes) => rodio::Decoder::new_mp3(Cursor::new(bytes))
+                                .map(|src| sink.append(src)),
+                            SynthAudio::Wav(bytes) => rodio::Decoder::new_wav(Cursor::new(bytes))
+                                .map(|src| sink.append(src)),
                         };
                         match decode_res {
                             Ok(()) => {

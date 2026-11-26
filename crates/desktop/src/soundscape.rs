@@ -412,8 +412,10 @@ impl TrackEngine {
             self.crackle_freq = 1400.0 + self.rng.unit() * 1400.0;
         }
         let crackle = if self.crackle_env > 0.001 {
-            let pop =
-                self.bp_hi_l.process(self.rng.signed(), self.crackle_freq, 1.8) * self.crackle_env;
+            let pop = self
+                .bp_hi_l
+                .process(self.rng.signed(), self.crackle_freq, 1.8)
+                * self.crackle_env;
             self.crackle_env *= 0.990;
             pop
         } else {
@@ -551,10 +553,8 @@ impl TrackEngine {
 
         // Subtle warm felt-piano air pad underneath so loudness stays cozy and continuous
         let pad_env = 0.76 + 0.24 * (t * 0.22).sin() as f32;
-        let bed_l =
-            (Self::sine_hz(t, 174.61) * 0.12 + Self::sine_hz(t, 261.63) * 0.09) * pad_env;
-        let bed_r =
-            (Self::sine_hz(t, 220.00) * 0.11 + Self::sine_hz(t, 329.63) * 0.08) * pad_env;
+        let bed_l = (Self::sine_hz(t, 174.61) * 0.12 + Self::sine_hz(t, 261.63) * 0.09) * pad_env;
+        let bed_r = (Self::sine_hz(t, 220.00) * 0.11 + Self::sine_hz(t, 329.63) * 0.08) * pad_env;
 
         let (nl, nr) = self.advance_pings(true);
         let raw_l = bed_l + nl * 1.45;
@@ -675,7 +675,8 @@ impl SoundscapeSource {
         let mut energy_weight = 0.0_f32;
 
         for i in 0..6 {
-            let target = f32::from_bits(self.track_gains[i].load(Ordering::Relaxed)).clamp(0.0, 1.0);
+            let target =
+                f32::from_bits(self.track_gains[i].load(Ordering::Relaxed)).clamp(0.0, 1.0);
             self.smoothed_gains[i] += (target - self.smoothed_gains[i]) * 0.0025;
             let g = self.smoothed_gains[i];
             if g < 0.001 {
@@ -819,6 +820,56 @@ impl Source for ChimeSource {
     }
 }
 
+/// Anchors Windows COM in the process-wide MTA on a parked daemon thread and primes
+/// `cpal`'s global `IMMDeviceEnumerator` inside that MTA.
+///
+/// `cpal 0.15` initializes a process-global `IMMDeviceEnumerator` inside a `OnceLock`
+/// using thread-local STA COM (`CoInitializeEx(COINIT_APARTMENTTHREADED)`). If the
+/// first caller is a short-lived worker thread (e.g. a test, radio, or TTS thread),
+/// thread exit calls `CoUninitialize()`, tearing down its apartment and invalidating
+/// the global enumerator for subsequent threads (`STATUS_ACCESS_VIOLATION`).
+#[cfg(target_os = "windows")]
+fn ensure_wasapi_mta_anchor() {
+    use std::ffi::c_void;
+    use std::sync::{OnceLock, mpsc};
+
+    #[link(name = "ole32")]
+    unsafe extern "system" {
+        fn CoInitializeEx(pv_reserved: *mut c_void, dw_co_init: u32) -> i32;
+    }
+    const COINIT_MULTITHREADED: u32 = 0x0;
+
+    static ANCHOR: OnceLock<()> = OnceLock::new();
+    ANCHOR.get_or_init(|| {
+        let (tx, rx) = mpsc::sync_channel(0);
+        if std::thread::Builder::new()
+            .name("glow-wasapi-com".into())
+            .spawn(move || {
+                unsafe {
+                    let _ = CoInitializeEx(std::ptr::null_mut(), COINIT_MULTITHREADED);
+                }
+                let _ = rodio::cpal::traits::HostTrait::default_output_device(
+                    &rodio::cpal::default_host(),
+                );
+                let _ = tx.send(());
+                loop {
+                    std::thread::park();
+                }
+            })
+            .is_ok()
+        {
+            let _ = rx.recv();
+        }
+    });
+}
+
+pub fn try_default_output_stream()
+-> Result<(rodio::OutputStream, rodio::OutputStreamHandle), rodio::StreamError> {
+    #[cfg(target_os = "windows")]
+    ensure_wasapi_mta_anchor();
+    rodio::OutputStream::try_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -923,7 +974,7 @@ mod tests {
             }
         }
 
-        if let Ok((_stream, handle)) = rodio::OutputStream::try_default() {
+        if let Ok((_stream, handle)) = try_default_output_stream() {
             let sink = rodio::Sink::try_new(&handle).unwrap();
             sink.set_volume(0.0);
             let pulled = Arc::new(AtomicUsize::new(0));
@@ -936,6 +987,17 @@ mod tests {
             stop_handle.trigger_fade_out();
             let count = pulled.load(Ordering::Relaxed);
             assert!(count > 2_000, "pulled={count}");
+        }
+    }
+
+    #[test]
+    fn default_output_stream_survives_ephemeral_worker_threads() {
+        for _ in 0..3 {
+            std::thread::spawn(|| {
+                let _ = try_default_output_stream();
+            })
+            .join()
+            .expect("audio probe thread should not crash");
         }
     }
 

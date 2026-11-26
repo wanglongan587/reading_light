@@ -48,7 +48,10 @@ fn github_base(settings: &SyncSettings) -> String {
     }
 }
 
-fn validate_github_settings(settings: &SyncSettings, token: &str) -> Result<(String, String, String)> {
+fn validate_github_settings(
+    settings: &SyncSettings,
+    token: &str,
+) -> Result<(String, String, String)> {
     let owner = settings.github_owner.trim();
     let repo = settings.github_repo.trim();
     let branch = if settings.github_branch.trim().is_empty() {
@@ -62,7 +65,10 @@ fn validate_github_settings(settings: &SyncSettings, token: &str) -> Result<(Str
         !owner.contains('/') && !repo.contains('/'),
         "请分别填写用户名与仓库名，不要包含斜杠"
     );
-    ensure!(!token.trim().is_empty(), "请填写 GitHub Personal Access Token");
+    ensure!(
+        !token.trim().is_empty(),
+        "请填写 GitHub Personal Access Token"
+    );
     Ok((owner.to_owned(), repo.to_owned(), branch.to_owned()))
 }
 
@@ -116,7 +122,10 @@ pub fn test_sync_connection(settings: &SyncSettings, token: &str) -> Result<Stri
         "github" => test_github_connection(settings, token),
         "folder" => {
             let folder = settings.folder_path.trim();
-            ensure!(!folder.is_empty(), "请先选择同步文件夹（如坚果云、OneDrive 或 iCloud 目录）");
+            ensure!(
+                !folder.is_empty(),
+                "请先选择同步文件夹（如坚果云、OneDrive 或 iCloud 目录）"
+            );
             let path = Path::new(folder);
             fs::create_dir_all(path).context("无法访问或创建该同步目录")?;
             let probe = path.join(".glow-sync-probe");
@@ -124,7 +133,9 @@ pub fn test_sync_connection(settings: &SyncSettings, token: &str) -> Result<Stri
             let _ = fs::remove_file(&probe);
             Ok(format!("本地同步目录验证通过：{folder}"))
         }
-        _ => Err(anyhow!("请先选择一种同步方式（GitHub 私有仓库 或 本地同步盘目录）。")),
+        _ => Err(anyhow!(
+            "请先选择一种同步方式（GitHub 私有仓库 或 本地同步盘目录）。"
+        )),
     }
 }
 
@@ -219,10 +230,14 @@ fn github_put_file(
 
     let status = resp.status().as_u16();
     if status == 409 {
-        return Err(anyhow!("云端同步快照刚刚被另一台设备更新，请再点一次同步即可自动合并。"));
+        return Err(anyhow!(
+            "云端同步快照刚刚被另一台设备更新，请再点一次同步即可自动合并。"
+        ));
     }
     if status == 401 || status == 403 {
-        return Err(anyhow!("GitHub 拒绝写入，请确认 Token 具备该仓库的 Contents 写入权限。"));
+        return Err(anyhow!(
+            "GitHub 拒绝写入，请确认 Token 具备该仓库的 Contents 写入权限。"
+        ));
     }
     ensure!(
         (200..300).contains(&status),
@@ -301,15 +316,9 @@ fn sync_github(
                         books_uploaded += 1;
                     }
                 }
-            } else if let Some((bytes, _)) = github_get_file(
-                &client,
-                &base,
-                &owner,
-                &repo,
-                &branch,
-                &remote_path,
-                token,
-            )? {
+            } else if let Some((bytes, _)) =
+                github_get_file(&client, &base, &owner, &repo, &branch, &remote_path, token)?
+            {
                 atomic_write(&local_epub, &bytes)?;
                 books_downloaded += 1;
             }

@@ -158,8 +158,8 @@ impl ReadingApp {
             }
             Action::StepMixTrack(track, delta) => {
                 let cur = track.mix_value(&self.store.state.soundscape_mix);
-                let next = (((cur * 10.0).round() as i32 + delta as i32) as f32 / 10.0)
-                    .clamp(0.0, 1.0);
+                let next =
+                    (((cur * 10.0).round() as i32 + delta as i32) as f32 / 10.0).clamp(0.0, 1.0);
                 track.set_mix_value(&mut self.store.state.soundscape_mix, next);
                 self.store.state.soundscape_preset = Some(track.id().into());
                 self.save();
@@ -941,9 +941,7 @@ impl ReadingApp {
                         .child("当前已读内容暂未提取到足够人物，点击上方「AI 深度解析」可从已读正文构建完整关系图谱。"),
                 );
             } else {
-                let selected_idx = self
-                    .companion_selected_char
-                    .min(cache.characters.len() - 1);
+                let selected_idx = self.companion_selected_char.min(cache.characters.len() - 1);
                 let stage_w = 312.0_f32;
                 let stage_h = 224.0_f32;
                 let center_x = stage_w * 0.5;
@@ -1098,16 +1096,15 @@ impl ReadingApp {
                 }
 
                 // Legend strip
-                let legend = h_flex()
-                    .gap_3()
-                    .flex_wrap()
-                    .px_1()
-                    .children([
+                let legend = h_flex().gap_3().flex_wrap().px_1().children(
+                    [
                         ("羁绊", hex(&t.accent)),
                         ("亲缘", 0x34d399u32),
                         ("对立", 0xfb7185u32),
                         ("悬念", 0xf59e0bu32),
-                    ].into_iter().map(|(label, col)| {
+                    ]
+                    .into_iter()
+                    .map(|(label, col)| {
                         h_flex()
                             .gap_1()
                             .items_center()
@@ -1119,7 +1116,8 @@ impl ReadingApp {
                                     .text_color(rgb(hex(&t.muted)))
                                     .child(label),
                             )
-                    }));
+                    }),
+                );
 
                 // Selected character dossier card
                 let ch = &cache.characters[selected_idx];
@@ -1194,7 +1192,11 @@ impl ReadingApp {
                     .filter(|r| r.from == ch.name || r.to == ch.name)
                     .collect();
                 if !linked.is_empty() {
-                    let mut rel_box = v_flex().gap_1().pt_1().border_t_1().border_color(self.border_subtle());
+                    let mut rel_box = v_flex()
+                        .gap_1()
+                        .pt_1()
+                        .border_t_1()
+                        .border_color(self.border_subtle());
                     for rel in linked {
                         let other = if rel.from == ch.name {
                             &rel.to
@@ -1645,19 +1647,18 @@ impl ReadingApp {
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, _, window, cx| {
-                                    this.act(Action::SetMixTrack(preset, toggle_target), window, cx);
+                                    this.act(
+                                        Action::SetMixTrack(preset, toggle_target),
+                                        window,
+                                        cx,
+                                    );
                                 }),
                             )
-                            .child(
-                                div()
-                                    .size(px(8.))
-                                    .rounded_full()
-                                    .bg(if active {
-                                        rgb(0x36c98e)
-                                    } else {
-                                        rgb(hex(&t.muted)).opacity(0.35)
-                                    }),
-                            )
+                            .child(div().size(px(8.)).rounded_full().bg(if active {
+                                rgb(0x36c98e)
+                            } else {
+                                rgb(hex(&t.muted)).opacity(0.35)
+                            }))
                             .child(
                                 v_flex()
                                     .gap_0p5()
@@ -1766,7 +1767,11 @@ impl ReadingApp {
                             .child(
                                 v_flex()
                                     .gap_1()
-                                    .child(self.studio_badge("SOUNDSCAPE MIXER", "6-TRACK AMBIENT STUDIO", true))
+                                    .child(self.studio_badge(
+                                        "SOUNDSCAPE MIXER",
+                                        "6-TRACK AMBIENT STUDIO",
+                                        true,
+                                    ))
                                     .child(
                                         div()
                                             .text_size(px(21.))
@@ -1805,7 +1810,9 @@ impl ReadingApp {
                                             .text_size(px(11.))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&t.muted)))
-                                            .child("独立 6 轨自由叠加（点击名称开关 · ± 微调比例）"),
+                                            .child(
+                                                "独立 6 轨自由叠加（点击名称开关 · ± 微调比例）",
+                                            ),
                                     )
                                     .child(
                                         div()
@@ -2177,7 +2184,11 @@ impl ReadingApp {
                     .child(
                         v_flex()
                             .gap_1()
-                            .child(self.studio_badge("MULTI-DEVICE SYNC", "GITHUB PRIVATE REPO & CLOUD FOLDER", true))
+                            .child(self.studio_badge(
+                                "MULTI-DEVICE SYNC",
+                                "GITHUB PRIVATE REPO & CLOUD FOLDER",
+                                true,
+                            ))
                             .child(
                                 div()
                                     .text_size(px(19.5))

@@ -664,7 +664,9 @@ impl Store {
             updated_at: Some(now()),
             companion: previous.as_ref().and_then(|book| book.companion.clone()),
         });
-        self.state.deleted_book_ids.retain(|deleted| deleted != &target_id);
+        self.state
+            .deleted_book_ids
+            .retain(|deleted| deleted != &target_id);
         self.save()?;
         Ok(target_id)
     }
