@@ -445,6 +445,80 @@ pub fn valid_soundscape_preset(value: &str) -> bool {
     )
 }
 
+pub fn valid_radio_lamp_color(value: &str) -> bool {
+    matches!(value, "amber" | "ember" | "starry" | "rose")
+}
+
+pub fn valid_radio_lamp_mode(value: &str) -> bool {
+    matches!(value, "audio" | "breathe_478" | "steady")
+}
+
+pub fn valid_radio_stream_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    !trimmed.is_empty()
+        && trimmed.len() <= 1024
+        && (trimmed.starts_with("http://") || trimmed.starts_with("https://"))
+        && !trimmed.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct CustomRadioStation {
+    pub id: String,
+    pub name: String,
+    pub subtitle: String,
+    pub frequency_mhz: f32,
+    /// "online" | "local_dir"
+    pub kind: String,
+    pub stream_url: String,
+    pub tags: Vec<String>,
+}
+
+impl Default for CustomRadioStation {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            subtitle: String::new(),
+            frequency_mhz: 98.5,
+            kind: "online".into(),
+            stream_url: String::new(),
+            tags: vec![],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct RadioSettings {
+    pub current_station_id: String,
+    /// "amber" | "ember" | "starry" | "rose"
+    pub lamp_color: String,
+    /// "audio" | "breathe_478" | "steady"
+    pub lamp_mode: String,
+    pub volume: f32,
+    pub favorites: Vec<String>,
+    pub custom_stations: Vec<CustomRadioStation>,
+    /// Local machine audio folder for the personal tape station (never synced).
+    pub local_audio_folder: Option<String>,
+    pub host_voice: String,
+}
+
+impl Default for RadioSettings {
+    fn default() -> Self {
+        Self {
+            current_station_id: "glow-night-talk".into(),
+            lamp_color: "amber".into(),
+            lamp_mode: "audio".into(),
+            volume: 0.72,
+            favorites: vec!["glow-night-talk".into(), "lofi-rain".into()],
+            custom_stations: vec![],
+            local_audio_folder: None,
+            host_voice: "zh-CN-XiaoxiaoNeural".into(),
+        }
+    }
+}
+
 pub fn valid_cfi(value: &str) -> bool {
     value.starts_with("epubcfi(")
         && value.ends_with(')')
@@ -650,6 +724,8 @@ pub struct State {
     #[serde(default)]
     pub tts: TtsSettings,
     #[serde(default)]
+    pub radio: RadioSettings,
+    #[serde(default)]
     pub sync: SyncSettings,
     #[serde(default)]
     pub deleted_book_ids: Vec<String>,
@@ -680,6 +756,7 @@ impl Default for State {
             ai: AiSettings::default(),
             soundscape_mix: SoundscapeMix::default(),
             tts: TtsSettings::default(),
+            radio: RadioSettings::default(),
             sync: SyncSettings::default(),
             deleted_book_ids: vec![],
             deleted_journal_ids: vec![],

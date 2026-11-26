@@ -1749,3 +1749,417 @@ pub fn breathing_orb_canvas(snap: MotionSnapshot, elapsed_secs: f32) -> impl Int
     )
     .size(px(108.))
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RadioLampColor {
+    Amber,
+    Ember,
+    Starry,
+    Rose,
+}
+
+impl RadioLampColor {
+    pub const ALL: [Self; 4] = [Self::Amber, Self::Ember, Self::Starry, Self::Rose];
+
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "ember" => Self::Ember,
+            "starry" => Self::Starry,
+            "rose" => Self::Rose,
+            _ => Self::Amber,
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Amber => "amber",
+            Self::Ember => "ember",
+            Self::Starry => "starry",
+            Self::Rose => "rose",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Amber => "琥珀台灯",
+            Self::Ember => "壁炉余烬",
+            Self::Starry => "星夜深海",
+            Self::Rose => "樱粉微光",
+        }
+    }
+
+    /// Returns `(primary_glow, inner_core, outer_aura, night_stage_bg)` hex RGB colors.
+    pub fn palette(self) -> (u32, u32, u32, u32) {
+        match self {
+            Self::Amber => (0xf4a261, 0xfff1d0, 0xd97745, 0x110e12),
+            Self::Ember => (0xe06d53, 0xffd29d, 0xa83e2d, 0x130d10),
+            Self::Starry => (0x5a96bd, 0xd8f3ff, 0x2b4c7e, 0x0b1019),
+            Self::Rose => (0xe5989b, 0xffe5ec, 0x9c6684, 0x130f16),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RadioLampMode {
+    Audio,
+    Breathe478,
+    Steady,
+}
+
+impl RadioLampMode {
+    pub const ALL: [Self; 3] = [Self::Audio, Self::Breathe478, Self::Steady];
+
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "breathe_478" => Self::Breathe478,
+            "steady" => Self::Steady,
+            _ => Self::Audio,
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Audio => "audio",
+            Self::Breathe478 => "breathe_478",
+            Self::Steady => "steady",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Audio => "声波轻漾",
+            Self::Breathe478 => "4-7-8 助眠呼吸",
+            Self::Steady => "恒定暖灯",
+        }
+    }
+
+    pub fn hint(self) -> &'static str {
+        match self {
+            Self::Audio => "随电台人声与旋律温柔起伏",
+            Self::Breathe478 => "吸气 4s · 屏息 7s · 呼气 8s",
+            Self::Steady => "安静常亮的床头微光",
+        }
+    }
+}
+
+/// Multi-layer GPU healing breathing lamp centerpiece for the Glow FM late-night radio page.
+/// Supports 4 warm color temperatures, 3 breathing cadences (audio-reactive / 4-7-8 / steady),
+/// live RMS resonance ripples, drifting night fireflies, and sleep-timer dimming.
+#[allow(clippy::too_many_arguments)]
+pub fn radio_breathing_lamp_canvas(
+    snap: MotionSnapshot,
+    lamp_color: RadioLampColor,
+    lamp_mode: RadioLampMode,
+    audio_level: f32,
+    breathe_elapsed: f32,
+    playing: bool,
+    dim_factor: f32,
+    pure_glow: bool,
+) -> impl IntoElement {
+    let (primary_hex, core_hex, outer_hex, _) = lamp_color.palette();
+    let dim = dim_factor.clamp(0.08, 1.0);
+    let level = if playing {
+        audio_level.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let canvas_sz = if pure_glow { 336.0 } else { 216.0 };
+
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let ox = f32::from(bounds.origin.x);
+            let oy = f32::from(bounds.origin.y);
+            let w = f32::from(bounds.size.width).max(1.0);
+            let h = f32::from(bounds.size.height).max(1.0);
+            let cx = ox + w * 0.5;
+            let cy = oy + h * 0.5;
+            let center = point(px(cx), px(cy));
+            let max_r = (w.min(h) * 0.36).max(34.0);
+            let p = if snap.reduced_motion { 0.0 } else { snap.phase };
+
+            let breath_factor = if snap.reduced_motion {
+                0.78 + level * 0.06
+            } else {
+                match lamp_mode {
+                    RadioLampMode::Audio => {
+                        let natural = 0.70 + 0.12 * (p * 0.72).sin();
+                        (natural + level * 0.20).clamp(0.54, 1.06)
+                    }
+                    RadioLampMode::Breathe478 => {
+                        let bp = breathing_phase(breathe_elapsed);
+                        (bp.radius_factor + level * 0.05).clamp(0.42, 1.06)
+                    }
+                    RadioLampMode::Steady => 0.80 + 0.025 * (p * 0.45).sin(),
+                }
+            };
+
+            let core_r = max_r * breath_factor;
+            let primary = Hsla::from(rgb(primary_hex));
+            let core = Hsla::from(rgb(core_hex));
+            let outer = Hsla::from(rgb(outer_hex));
+
+            // 1. Wide ambient room-warmth bloom
+            paint_glow_orb(
+                window,
+                center,
+                core_r * 1.08,
+                if pure_glow { 142.0 } else { 108.0 },
+                outer.opacity((0.26 + level * 0.14) * dim),
+            );
+            // 2. Mid soothing breathing glow
+            paint_glow_orb(
+                window,
+                center,
+                core_r * 0.82,
+                if pure_glow { 84.0 } else { 64.0 },
+                primary.opacity((0.40 + level * 0.16) * dim),
+            );
+
+            // 3. Delicate concentric sound/breath ripples
+            for (idx, (scale, base_alpha)) in
+                [(1.28_f32, 0.11_f32), (1.06, 0.18), (0.86, 0.24)]
+                    .into_iter()
+                    .enumerate()
+            {
+                let ripple_wave = if snap.reduced_motion {
+                    0.0
+                } else {
+                    (p * 0.85 + idx as f32 * 1.4).sin() * 3.5 + level * (6.0 + idx as f32 * 3.0)
+                };
+                let r = (max_r * scale + ripple_wave).max(16.0);
+                window.paint_quad(PaintQuad {
+                    bounds: Bounds::new(
+                        point(px(cx - r), px(cy - r)),
+                        size(px(r * 2.0), px(r * 2.0)),
+                    ),
+                    corner_radii: Corners::all(px(r)),
+                    background: transparent_black().into(),
+                    border_widths: Edges::all(px(if idx == 2 { 1.3 } else { 1.0 })),
+                    border_color: primary.opacity((base_alpha + level * 0.12) * dim),
+                    border_style: BorderStyle::Solid,
+                });
+            }
+
+            // 4. Translucent glass-lantern breathing core sphere
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(
+                    point(px(cx - core_r), px(cy - core_r)),
+                    size(px(core_r * 2.0), px(core_r * 2.0)),
+                ),
+                corner_radii: Corners::all(px(core_r)),
+                background: linear_gradient(
+                    138.0,
+                    linear_color_stop(core.opacity(0.95 * dim), 0.0),
+                    linear_color_stop(primary.opacity(0.88 * dim), 1.0),
+                ),
+                border_widths: Edges::all(px(1.4)),
+                border_color: core.opacity(0.42 * dim),
+                border_style: BorderStyle::Solid,
+            });
+
+            // 5. Inner warm vacuum-tube heart highlight
+            let heart_r = (core_r * 0.44).max(10.0);
+            let heart_center = point(px(cx - core_r * 0.14), px(cy - core_r * 0.16));
+            paint_glow_orb(
+                window,
+                heart_center,
+                heart_r * 0.72,
+                26.0,
+                core.opacity(0.56 * dim),
+            );
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(
+                    point(
+                        px(f32::from(heart_center.x) - heart_r * 0.52),
+                        px(f32::from(heart_center.y) - heart_r * 0.52),
+                    ),
+                    size(px(heart_r * 1.04), px(heart_r * 1.04)),
+                ),
+                corner_radii: Corners::all(px(heart_r * 0.52)),
+                background: Hsla::from(rgb(0xffffff).opacity(0.28 * dim)).into(),
+                border_widths: Edges::default(),
+                border_color: transparent_black(),
+                border_style: BorderStyle::default(),
+            });
+
+            // 6. Slow drifting warm firefly motes orbiting the lamp
+            if !snap.reduced_motion {
+                let mote_count = if pure_glow { 14usize } else { 10usize };
+                for i in 0..mote_count {
+                    let seed = i as f32 * 1.618_034;
+                    let angle = p * (0.14 + (i % 3) as f32 * 0.04) + seed * 3.1;
+                    let orbit = max_r * (0.96 + 0.34 * ((seed * 2.1).sin() * 0.5 + 0.5))
+                        + level * 10.0;
+                    let mx = cx + angle.cos() * orbit;
+                    let my = cy + angle.sin() * orbit * 0.86 - ((p * 0.3 + seed).sin() * 6.0);
+                    let twinkle = 0.28 + 0.72 * ((p * 1.2 + seed * 2.5).sin() * 0.5 + 0.5);
+                    let r = 1.4 + (i % 3) as f32 * 0.55;
+                    let col = if i % 2 == 0 {
+                        core.opacity(0.62 * twinkle * dim)
+                    } else {
+                        primary.opacity(0.52 * twinkle * dim)
+                    };
+                    window.paint_quad(PaintQuad {
+                        bounds: Bounds::new(
+                            point(px(mx - r), px(my - r)),
+                            size(px(r * 2.0), px(r * 2.0)),
+                        ),
+                        corner_radii: Corners::all(px(r)),
+                        background: col.into(),
+                        border_widths: Edges::default(),
+                        border_color: transparent_black(),
+                        border_style: BorderStyle::default(),
+                    });
+                }
+            }
+        },
+    )
+    .size(px(canvas_sz))
+}
+
+/// Retro-modern glowing 88.0 – 108.0 MHz FM tuner scale with station starlight beacons
+/// and a luminous amber/rose tuning needle.
+pub fn fm_tuner_dial_canvas(
+    snap: MotionSnapshot,
+    current_mhz: f32,
+    station_markers: Vec<(f32, bool)>,
+    lamp_color: RadioLampColor,
+    playing: bool,
+) -> impl IntoElement {
+    let (primary_hex, core_hex, _, _) = lamp_color.palette();
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let ox = f32::from(bounds.origin.x);
+            let oy = f32::from(bounds.origin.y);
+            let w = f32::from(bounds.size.width).max(1.0);
+            let h = f32::from(bounds.size.height).max(1.0);
+            let pad_x = 18.0_f32;
+            let track_w = (w - pad_x * 2.0).max(20.0);
+            let primary = Hsla::from(rgb(primary_hex));
+            let core = Hsla::from(rgb(core_hex));
+
+            // Recessed vintage radio dial glass frame
+            window.paint_quad(PaintQuad {
+                bounds,
+                corner_radii: Corners::all(px(14.0)),
+                background: Hsla::from(rgb(0x0b0d14).opacity(0.78)).into(),
+                border_widths: Edges::all(px(1.0)),
+                border_color: primary.opacity(0.24),
+                border_style: BorderStyle::Solid,
+            });
+
+            // Subtle horizontal tuner rail
+            let rail_y = oy + h * 0.56;
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(point(px(ox + pad_x), px(rail_y)), size(px(track_w), px(1.2))),
+                corner_radii: Corners::all(px(0.6)),
+                background: primary.opacity(0.22).into(),
+                border_widths: Edges::default(),
+                border_color: transparent_black(),
+                border_style: BorderStyle::default(),
+            });
+
+            // 88.0 to 108.0 MHz precision scale ticks (step 0.2 MHz => 101 ticks)
+            for step in 0..=100usize {
+                let frac = step as f32 / 100.0;
+                let tx = ox + pad_x + frac * track_w;
+                let is_major = step % 10 == 0; // every 2.0 MHz
+                let is_mid = step % 5 == 0; // every 1.0 MHz
+                let tick_h = if is_major {
+                    18.0
+                } else if is_mid {
+                    11.5
+                } else {
+                    6.0
+                };
+                let tick_w = if is_major { 1.6 } else { 1.0 };
+                let alpha = if is_major {
+                    0.62
+                } else if is_mid {
+                    0.36
+                } else {
+                    0.18
+                };
+                window.paint_quad(PaintQuad {
+                    bounds: Bounds::new(
+                        point(px(tx - tick_w * 0.5), px(rail_y - tick_h * 0.45)),
+                        size(px(tick_w), px(tick_h)),
+                    ),
+                    corner_radii: Corners::all(px(0.6)),
+                    background: core.opacity(alpha).into(),
+                    border_widths: Edges::default(),
+                    border_color: transparent_black(),
+                    border_style: BorderStyle::default(),
+                });
+            }
+
+            // Starlight station markers above the rail
+            for &(mhz, is_fav) in &station_markers {
+                let frac = ((mhz - 88.0) / 20.0).clamp(0.0, 1.0);
+                let sx = ox + pad_x + frac * track_w;
+                let sy = oy + 14.0;
+                let r = if is_fav { 3.2 } else { 2.3 };
+                if is_fav {
+                    paint_glow_orb(window, point(px(sx), px(sy)), 3.2, 10.0, primary.opacity(0.55));
+                }
+                window.paint_quad(PaintQuad {
+                    bounds: Bounds::new(
+                        point(px(sx - r), px(sy - r)),
+                        size(px(r * 2.0), px(r * 2.0)),
+                    ),
+                    corner_radii: Corners::all(px(r)),
+                    background: if is_fav {
+                        core.opacity(0.95)
+                    } else {
+                        primary.opacity(0.62)
+                    }
+                    .into(),
+                    border_widths: Edges::default(),
+                    border_color: transparent_black(),
+                    border_style: BorderStyle::default(),
+                });
+            }
+
+            // Luminous analog tuning needle at current frequency
+            let cur_frac = ((current_mhz - 88.0) / 20.0).clamp(0.0, 1.0);
+            let nx = ox + pad_x + cur_frac * track_w;
+            let pulse = if playing && !snap.reduced_motion {
+                0.78 + 0.22 * (snap.phase * 1.8).sin()
+            } else {
+                0.72
+            };
+            paint_glow_orb(
+                window,
+                point(px(nx), px(oy + h * 0.50)),
+                5.5,
+                22.0,
+                primary.opacity(0.58 * pulse),
+            );
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(point(px(nx - 1.3), px(oy + 6.0)), size(px(2.6), px(h - 12.0))),
+                corner_radii: Corners::all(px(1.3)),
+                background: linear_gradient(
+                    180.0,
+                    linear_color_stop(core.opacity(0.98), 0.0),
+                    linear_color_stop(primary.opacity(0.92), 1.0),
+                ),
+                border_widths: Edges::default(),
+                border_color: transparent_black(),
+                border_style: BorderStyle::default(),
+            });
+            // Glowing needle jewel tip
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(point(px(nx - 4.0), px(oy + 4.0)), size(px(8.0), px(5.0))),
+                corner_radii: Corners::all(px(2.5)),
+                background: core.opacity(0.96).into(),
+                border_widths: Edges::default(),
+                border_color: transparent_black(),
+                border_style: BorderStyle::default(),
+            });
+        },
+    )
+    .w_full()
+    .h(px(62.))
+}

@@ -166,6 +166,7 @@ impl ReadingApp {
                 if self.store.state.soundscape_mix.is_silent() {
                     self.stop_audio_smoothly();
                 } else {
+                    self.stop_radio_if_playing();
                     let label = self.start_audio(true)?;
                     self.schedule_motion_frame(window, cx);
                     self.notice = Some(format!("混音台已更新：{label}"));
@@ -178,6 +179,7 @@ impl ReadingApp {
                 if self.store.state.soundscape_mix.is_silent() {
                     self.stop_audio_smoothly();
                 } else {
+                    self.stop_radio_if_playing();
                     let label = self.start_audio(true)?;
                     self.schedule_motion_frame(window, cx);
                     self.notice = Some(format!("混音台已更新：{label}"));
@@ -186,6 +188,7 @@ impl ReadingApp {
             Action::ApplyMixRecipe(recipe_id) => {
                 self.store.state.soundscape_mix = SoundscapeMix::from_recipe(recipe_id);
                 self.save();
+                self.stop_radio_if_playing();
                 let label = self.start_audio(true)?;
                 self.schedule_motion_frame(window, cx);
                 let name = MIXER_RECIPES
@@ -313,6 +316,7 @@ impl ReadingApp {
                 let voice = self.store.state.tts.voice.clone();
                 let rate = self.store.state.tts.rate;
                 let voice_label = tts::voice_by_id(&voice).label;
+                self.stop_radio_if_playing();
                 self.ensure_tts()
                     .start(segments, start_idx, voice, rate, 0.92);
                 self.schedule_motion_frame(window, cx);

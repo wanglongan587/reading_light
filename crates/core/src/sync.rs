@@ -1,4 +1,7 @@
-use crate::model::{Book, Highlight, JournalEntry, SoundscapeMix, State, Theme, now};
+use crate::model::{
+    Book, CustomRadioStation, Highlight, JournalEntry, SoundscapeMix, State, Theme, now,
+    valid_radio_stream_url,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -16,6 +19,8 @@ pub struct SyncSnapshot {
     pub soundscape_mix: SoundscapeMix,
     pub reading_minutes_today: u32,
     pub reading_minutes_date: Option<String>,
+    pub radio_favorites: Vec<String>,
+    pub radio_custom_stations: Vec<CustomRadioStation>,
     pub deleted_book_ids: Vec<String>,
     pub deleted_journal_ids: Vec<String>,
     pub deleted_highlight_ids: Vec<String>,
@@ -33,6 +38,8 @@ impl Default for SyncSnapshot {
             soundscape_mix: SoundscapeMix::default(),
             reading_minutes_today: 0,
             reading_minutes_date: None,
+            radio_favorites: vec![],
+            radio_custom_stations: vec![],
             deleted_book_ids: vec![],
             deleted_journal_ids: vec![],
             deleted_highlight_ids: vec![],
@@ -96,6 +103,14 @@ impl SyncSnapshot {
             soundscape_mix: state.soundscape_mix.clamped(),
             reading_minutes_today: state.reading_minutes_today,
             reading_minutes_date: state.reading_minutes_date.clone(),
+            radio_favorites: state.radio.favorites.clone(),
+            radio_custom_stations: state
+                .radio
+                .custom_stations
+                .iter()
+                .filter(|st| st.kind == "online" && valid_radio_stream_url(&st.stream_url))
+                .cloned()
+                .collect(),
             deleted_book_ids: state.deleted_book_ids.clone(),
             deleted_journal_ids: state.deleted_journal_ids.clone(),
             deleted_highlight_ids: state.deleted_highlight_ids.clone(),
@@ -397,6 +412,51 @@ pub fn merge_state_with_snapshot(local: &State, remote: &SyncSnapshot) -> (State
         _ => {}
     }
 
+    // 5. Merge online custom radio stations & favorite station IDs (never local machine folders)
+    let local_favs: HashSet<String> = local.radio.favorites.iter().cloned().collect();
+    let remote_favs: HashSet<String> = remote.radio_favorites.iter().cloned().collect();
+    for fav in &remote.radio_favorites {
+        if !fav.trim().is_empty() && !local_favs.contains(fav) {
+            merged.radio.favorites.push(fav.clone());
+            report.changed_local = true;
+        }
+    }
+    if local_favs.iter().any(|id| !remote_favs.contains(id)) {
+        report.changed_remote = true;
+    }
+
+    let local_station_ids: HashSet<String> = local
+        .radio
+        .custom_stations
+        .iter()
+        .map(|s| s.id.clone())
+        .collect();
+    let remote_station_ids: HashSet<String> = remote
+        .radio_custom_stations
+        .iter()
+        .map(|s| s.id.clone())
+        .collect();
+    for st in &remote.radio_custom_stations {
+        if st.kind == "online"
+            && !st.id.trim().is_empty()
+            && !st.name.trim().is_empty()
+            && (88.0..=108.0).contains(&st.frequency_mhz)
+            && valid_radio_stream_url(&st.stream_url)
+            && !local_station_ids.contains(&st.id)
+        {
+            merged.radio.custom_stations.push(st.clone());
+            report.changed_local = true;
+        }
+    }
+    if local
+        .radio
+        .custom_stations
+        .iter()
+        .any(|s| s.kind == "online" && !remote_station_ids.contains(&s.id))
+    {
+        report.changed_remote = true;
+    }
+
     merged.deleted_book_ids = deleted_books;
     merged.deleted_journal_ids = deleted_journals;
     merged.deleted_highlight_ids = deleted_highlights;
@@ -526,5 +586,38 @@ mod tests {
         let snapshot = SyncSnapshot::from_state(&remote_state, "PC2".into());
         let (merged, _) = merge_state_with_snapshot(&local, &snapshot);
         assert!(merged.books[0].highlights.is_empty());
+    }
+
+    #[test]
+    fn syncs_online_radio_favorites_and_custom_stations_without_local_paths() {
+        let mut local = State::default();
+        local.radio.local_audio_folder = Some("C:\\Users\\Me\\PrivateMusic".into());
+
+        let mut remote_state = State::default();
+        remote_state.radio.local_audio_folder = Some("/Users/remote/Secret".into());
+        remote_state.radio.favorites.push("classical-nocturne".into());
+        remote_state.radio.custom_stations.push(CustomRadioStation {
+            id: "custom-jazz".into(),
+            name: "东京深夜爵士".into(),
+            subtitle: "温暖萨克斯".into(),
+            frequency_mhz: 92.8,
+            kind: "online".into(),
+            stream_url: "https://example.com/tokyo-jazz.mp3".into(),
+            tags: vec!["jazz".into()],
+        });
+
+        let snapshot = SyncSnapshot::from_state(&remote_state, "Laptop".into());
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+        assert!(!serialized.contains("Secret"));
+        assert!(!serialized.contains("local_audio_folder"));
+
+        let (merged, report) = merge_state_with_snapshot(&local, &snapshot);
+        assert!(report.changed_local);
+        assert!(merged.radio.favorites.iter().any(|f| f == "classical-nocturne"));
+        assert_eq!(merged.radio.custom_stations.len(), 1);
+        assert_eq!(
+            merged.radio.local_audio_folder.as_deref(),
+            Some("C:\\Users\\Me\\PrivateMusic")
+        );
     }
 }

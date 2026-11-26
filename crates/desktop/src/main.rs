@@ -7,6 +7,7 @@ mod mood;
 mod platform;
 mod prism;
 mod quotecard;
+mod radio;
 mod soundscape;
 mod sync_client;
 mod tts;

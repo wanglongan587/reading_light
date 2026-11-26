@@ -46,6 +46,24 @@ impl Store {
             "声景频道设置损坏"
         );
         ensure!(
+            crate::model::valid_radio_lamp_color(&state.radio.lamp_color)
+                && crate::model::valid_radio_lamp_mode(&state.radio.lamp_mode)
+                && (0.05..=1.0).contains(&state.radio.volume),
+            "深夜电台设置损坏"
+        );
+        for station in &state.radio.custom_stations {
+            ensure!(
+                !station.id.trim().is_empty()
+                    && station.id.len() <= 120
+                    && !station.name.trim().is_empty()
+                    && station.name.chars().count() <= 120
+                    && (88.0..=108.0).contains(&station.frequency_mhz)
+                    && (station.kind != "online"
+                        || crate::model::valid_radio_stream_url(&station.stream_url)),
+                "自定义电台配置损坏"
+            );
+        }
+        ensure!(
             state
                 .reader_font_size
                 .is_none_or(|value| (14.0..=36.0).contains(&value))
@@ -694,5 +712,42 @@ mod tests {
         .unwrap();
         let kept_custom = Store::open(custom_root).unwrap();
         assert_eq!(kept_custom.state.theme.accent, "#1F5A44");
+    }
+
+    #[test]
+    fn radio_settings_default_on_legacy_state_and_validate_custom_stations() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let mut store = Store::open(root.clone()).unwrap();
+        assert_eq!(store.state.radio.current_station_id, "glow-night-talk");
+        assert_eq!(store.state.radio.lamp_color, "amber");
+        assert_eq!(store.state.radio.lamp_mode, "audio");
+
+        store.state.radio.lamp_color = "starry".into();
+        store.state.radio.lamp_mode = "breathe_478".into();
+        store.state.radio.custom_stations.push(CustomRadioStation {
+            id: "custom-1".into(),
+            name: "午夜星海".into(),
+            subtitle: "自定义测试流".into(),
+            frequency_mhz: 95.6,
+            kind: "online".into(),
+            stream_url: "https://example.com/stream.mp3".into(),
+            tags: vec!["ambient".into()],
+        });
+        store.save().unwrap();
+
+        let reopened = Store::open(root.clone()).unwrap();
+        assert_eq!(reopened.state.radio.lamp_color, "starry");
+        assert_eq!(reopened.state.radio.custom_stations.len(), 1);
+
+        // Invalid custom URL must be rejected cleanly on open
+        let mut bad = reopened.state.clone();
+        bad.radio.custom_stations[0].stream_url = "file:///etc/passwd".into();
+        fs::write(
+            root.join("state.json"),
+            serde_json::to_vec_pretty(&bad).unwrap(),
+        )
+        .unwrap();
+        assert!(Store::open(root).is_err());
     }
 }

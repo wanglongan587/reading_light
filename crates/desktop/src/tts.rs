@@ -88,9 +88,18 @@ pub struct TtsStatus {
     pub error: Option<String>,
 }
 
-enum SynthAudio {
+pub(crate) enum SynthAudio {
     Mp3(Vec<u8>),
     Wav(Vec<u8>),
+}
+
+pub(crate) fn synthesize_for_radio(
+    rt: &tokio::runtime::Runtime,
+    text: &str,
+    voice: &str,
+    rate: f32,
+) -> Result<(SynthAudio, &'static str)> {
+    synthesize_with_fallback(rt, text, voice, rate)
 }
 
 enum TtsCommand {

@@ -1,10 +1,13 @@
 #[path = "app_features.rs"]
 mod features;
+#[path = "radio_view.rs"]
+mod radio_view;
 
 use crate::{
     mood, platform,
     prism::{self, MotionEngine, MotionSnapshot, ThemeAtmosphere},
     quotecard::{self, QuoteCardDraft, QuoteCardStyle},
+    radio,
     soundscape::{ChimeSource, SoundscapeHandle, SoundscapePreset, SoundscapeSource},
     sync_client, tts,
 };
@@ -65,6 +68,7 @@ enum Page {
     Shelf,
     Reader,
     Mood,
+    Radio,
     Journal,
     Themes,
 }
@@ -186,6 +190,33 @@ enum Action {
     SaveSyncSettings,
     TestSyncConnection,
     RunSyncNow,
+    // Glow FM Late-Night Radio
+    RadioTogglePlay,
+    RadioTuneStation(String),
+    RadioTuneMhz(f32),
+    RadioPrevStation,
+    RadioNextStation,
+    RadioNextSegment,
+    RadioToggleFavorite(String),
+    RadioLampColor(String),
+    RadioLampMode(String),
+    RadioVolume(i8),
+    RadioTogglePureGlow,
+    RadioToggleImmersive,
+    RadioCycleSleepTimer,
+    RadioToggleDrawer,
+    RadioCloseDrawer,
+    RadioDrawerTab(u8),
+    RadioToggleFavFilter,
+    RadioSearchSubmit,
+    RadioSearchTag(&'static str),
+    RadioPreviewHit(usize),
+    RadioAddHit(usize),
+    RadioAddCustomStream,
+    RadioRemoveCustomStation(String),
+    RadioPickLocalFolder,
+    RadioSetHostVoice(String),
+    RadioSaveLineToJournal,
 }
 
 struct PassageGenerated {
@@ -286,6 +317,23 @@ pub struct ReadingApp {
     sync_rx: Option<mpsc::Receiver<anyhow::Result<sync_client::SyncOutcome>>>,
     sync_test_rx: Option<mpsc::Receiver<anyhow::Result<String>>>,
     custom_mood_worker_override: bool,
+    // Glow FM Late-Night Radio state
+    radio_player: Option<radio::RadioPlayer>,
+    radio_status: radio::RadioStatus,
+    radio_audio_level: f32,
+    radio_breathe_started: Instant,
+    radio_pure_glow: bool,
+    radio_hide_sidebar: bool,
+    radio_drawer_open: bool,
+    radio_drawer_tab: u8,
+    radio_only_favorites: bool,
+    radio_sleep_started: Option<Instant>,
+    radio_sleep_total_secs: u32,
+    radio_search_input: Entity<InputState>,
+    radio_search_rx: Option<mpsc::Receiver<anyhow::Result<Vec<radio::OnlineStationHit>>>>,
+    radio_search_results: Vec<radio::OnlineStationHit>,
+    radio_custom_name_input: Entity<InputState>,
+    radio_custom_url_input: Entity<InputState>,
 }
 
 impl ReadingApp {
@@ -413,6 +461,35 @@ impl ReadingApp {
             s.set_value(sync_token_val, window, cx);
             s
         });
+        let radio_search_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("输入电台名或关键词，如 lofi、jazz、piano、sleep…")
+        });
+        cx.subscribe_in(
+            &radio_search_input,
+            window,
+            |this, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) && this.radio_drawer_open {
+                    this.act(Action::RadioSearchSubmit, window, cx);
+                }
+            },
+        )
+        .detach();
+        let radio_custom_name_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("自定义电台名称（如：雨夜东京爵士）"));
+        let radio_custom_url_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("音频流地址（https://...mp3 或 .ogg）")
+        });
+        cx.subscribe_in(
+            &radio_custom_url_input,
+            window,
+            |this, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) && this.radio_drawer_open {
+                    this.act(Action::RadioAddCustomStream, window, cx);
+                }
+            },
+        )
+        .detach();
         let smoke = std::env::args().any(|a| a == "--smoke-test");
         let app = Self {
             store,
@@ -504,6 +581,22 @@ impl ReadingApp {
             sync_rx: None,
             sync_test_rx: None,
             custom_mood_worker_override: false,
+            radio_player: None,
+            radio_status: radio::RadioStatus::default(),
+            radio_audio_level: 0.0,
+            radio_breathe_started: Instant::now(),
+            radio_pure_glow: false,
+            radio_hide_sidebar: false,
+            radio_drawer_open: false,
+            radio_drawer_tab: 0,
+            radio_only_favorites: false,
+            radio_sleep_started: None,
+            radio_sleep_total_secs: 30 * 60,
+            radio_search_input,
+            radio_search_rx: None,
+            radio_search_results: vec![],
+            radio_custom_name_input,
+            radio_custom_url_input,
         };
         app.install_native_theme(cx);
         window.focus(&app.focus, cx);
@@ -741,6 +834,16 @@ impl ReadingApp {
             self.palette_open = false;
             window.focus(&self.focus, cx);
             cx.notify();
+        } else if self.radio_drawer_open {
+            self.radio_drawer_open = false;
+            window.focus(&self.focus, cx);
+            cx.notify();
+        } else if self.page == Page::Radio && self.radio_pure_glow {
+            self.radio_pure_glow = false;
+            cx.notify();
+        } else if self.page == Page::Radio && self.radio_hide_sidebar {
+            self.radio_hide_sidebar = false;
+            cx.notify();
         } else if self.mixer_open {
             self.mixer_open = false;
             window.focus(&self.focus, cx);
@@ -915,6 +1018,7 @@ impl ReadingApp {
             cx.notify();
         }
         self.tick_features(cx);
+        self.tick_radio(cx);
         let messages = self
             .rx
             .as_ref()
@@ -1230,12 +1334,15 @@ impl ReadingApp {
         match action {
             Action::Page(page) => {
                 let was_previewing = self.preview.is_some();
-                self.page = page;
+                self.page = page.clone();
                 self.preview = None;
                 self.draft = None;
                 self.install_native_theme(cx);
                 if was_previewing && self.opened {
                     self.configure(cx);
+                }
+                if page == Page::Radio {
+                    self.schedule_motion_frame(window, cx);
                 }
                 self.save();
             }
@@ -1981,6 +2088,7 @@ impl ReadingApp {
                     self.stop_audio_smoothly();
                     self.notice = Some("已轻声关闭环境声景。".into());
                 } else {
+                    self.stop_radio_if_playing();
                     let label = self.start_audio(false)?;
                     let vol_pct = (self.theme().volume.clamp(0.05, 1.0) * 100.0).round() as u32;
                     self.schedule_motion_frame(window, cx);
@@ -1988,6 +2096,7 @@ impl ReadingApp {
                 }
             }
             Action::Soundscape(preset) => {
+                self.stop_radio_if_playing();
                 self.store.state.soundscape_preset = Some(preset.id().into());
                 self.store.state.soundscape_mix = SoundscapeMix::from_single(preset.id());
                 self.save();
@@ -2061,6 +2170,32 @@ impl ReadingApp {
                     self.open(&id, window, cx)?;
                 }
             }
+            action @ (Action::RadioTogglePlay
+            | Action::RadioTuneStation(_)
+            | Action::RadioTuneMhz(_)
+            | Action::RadioPrevStation
+            | Action::RadioNextStation
+            | Action::RadioNextSegment
+            | Action::RadioToggleFavorite(_)
+            | Action::RadioLampColor(_)
+            | Action::RadioLampMode(_)
+            | Action::RadioVolume(_)
+            | Action::RadioTogglePureGlow
+            | Action::RadioToggleImmersive
+            | Action::RadioCycleSleepTimer
+            | Action::RadioToggleDrawer
+            | Action::RadioCloseDrawer
+            | Action::RadioDrawerTab(_)
+            | Action::RadioToggleFavFilter
+            | Action::RadioSearchSubmit
+            | Action::RadioSearchTag(_)
+            | Action::RadioPreviewHit(_)
+            | Action::RadioAddHit(_)
+            | Action::RadioAddCustomStream
+            | Action::RadioRemoveCustomStation(_)
+            | Action::RadioPickLocalFolder
+            | Action::RadioSetHostVoice(_)
+            | Action::RadioSaveLineToJournal) => self.perform_radio(action, window, cx)?,
             other => self.perform_feature(other, window, cx)?,
         }
         Ok(())
@@ -3852,6 +3987,19 @@ impl ReadingApp {
                     cx,
                 )
                 .toggled(self.drawer == "tts" || self.tts_status.active),
+            )
+            .child(
+                self.button_with_icon(
+                    if self.radio_status.playing && !self.radio_status.paused {
+                        "电台中"
+                    } else {
+                        "电台"
+                    },
+                    IconName::Moon,
+                    Action::Page(Page::Radio),
+                    cx,
+                )
+                .toggled(self.radio_status.playing && !self.radio_status.paused),
             )
             .child(
                 self.button_with_icon("目录", IconName::ListTree, Action::Toc, cx)
@@ -6958,7 +7106,57 @@ impl ReadingApp {
                     let _ = image.save(self.store.root.join("focus-timer-modal.png"));
                 }
                 self.act(Action::CloseTimerPicker, window, cx);
+                self.act(Action::Page(Page::Radio), window, cx);
+                self.act(Action::RadioTuneStation("glow-night-talk".into()), window, cx);
+                self.smoke_step = 49;
+                self.smoke_started = Instant::now();
+            }
+            49 if self.smoke_started.elapsed() > Duration::from_millis(900) => {
+                #[cfg(feature = "ui-test")]
+                if let Ok(image) = window.render_to_image() {
+                    let _ = image.save(self.store.root.join("radio.png"));
+                }
+                self.act(Action::RadioLampColor("starry".into()), window, cx);
+                self.act(Action::RadioLampMode("breathe_478".into()), window, cx);
+                self.act(Action::RadioTogglePureGlow, window, cx);
+                self.smoke_step = 50;
+                self.smoke_started = Instant::now();
+            }
+            50 if self.smoke_started.elapsed() > Duration::from_millis(700) => {
+                #[cfg(feature = "ui-test")]
+                if let Ok(image) = window.render_to_image() {
+                    let _ = image.save(self.store.root.join("radio-pure-glow.png"));
+                }
+                self.act(Action::RadioTogglePureGlow, window, cx);
+                self.act(Action::RadioLampColor("amber".into()), window, cx);
+                self.act(Action::RadioLampMode("audio".into()), window, cx);
+                self.act(Action::RadioToggleDrawer, window, cx);
+                self.smoke_step = 51;
+                self.smoke_started = Instant::now();
+            }
+            51 if self.smoke_started.elapsed() > Duration::from_millis(550) => {
+                #[cfg(feature = "ui-test")]
+                if let Ok(image) = window.render_to_image() {
+                    let _ = image.save(self.store.root.join("radio-drawer.png"));
+                }
+                self.act(Action::RadioCloseDrawer, window, cx);
                 self.act(Action::PickTheme(3), window, cx);
+                self.act(Action::Page(Page::Shelf), window, cx);
+                self.smoke_step = 52;
+                self.smoke_started = Instant::now();
+            }
+            52 if self.smoke_started.elapsed() > Duration::from_millis(600) => {
+                #[cfg(feature = "ui-test")]
+                if let Ok(image) = window.render_to_image() {
+                    let _ = image.save(self.store.root.join("radio-bg-shelf.png"));
+                }
+                if self.radio_status.playing {
+                    println!(
+                        "GLOW_SMOKE radio_ok station={} mhz={:.1}",
+                        self.radio_status.station_id, self.radio_status.frequency_mhz
+                    );
+                }
+                self.stop_radio_if_playing();
                 self.act(Action::Page(Page::Reader), window, cx);
                 self.smoke_step = 5;
                 self.smoke_started = Instant::now();
@@ -7169,6 +7367,7 @@ impl ReadingApp {
         for (label, page, icon) in [
             ("我的书架", Page::Shelf, IconName::LibraryBig),
             ("此刻心情", Page::Mood, IconName::MessageCircleHeart),
+            ("深夜电台", Page::Radio, IconName::AudioLines),
             ("私人日记", Page::Journal, IconName::NotebookPen),
             ("主题与设置", Page::Themes, IconName::Settings2),
         ] {
@@ -7322,6 +7521,9 @@ impl ReadingApp {
             .bg(rgb(hex(&t.background)).opacity(if dark { 0.76 } else { 0.78 }))
             .border_1()
             .border_color(self.border_subtle())
+            .when(self.radio_status.playing && self.page != Page::Radio, |el| {
+                el.child(self.render_sidebar_radio_mini(t, cx))
+            })
             .child(
                 div()
                     .absolute()
@@ -8282,6 +8484,24 @@ impl ReadingApp {
                 Action::Page(Page::Mood),
             ),
             (
+                "导航 · 前往深夜电台（Glow FM）",
+                "暖光呼吸灯 · 复古刻度尺 · 温柔夜话与治愈电台",
+                IconName::AudioLines,
+                Action::Page(Page::Radio),
+            ),
+            (
+                "电台 · 播放 / 暂停深夜电台",
+                "支持切回阅读后台轻声伴听",
+                IconName::Moon,
+                Action::RadioTogglePlay,
+            ),
+            (
+                "电台 · 切换纯享呼吸灯模式",
+                "隐去多余控件，只留床头呼吸暖光",
+                IconName::Sparkles,
+                Action::RadioTogglePureGlow,
+            ),
+            (
                 "导航 · 前往私人微光手账",
                 "情绪光谱、筛选与书摘卡",
                 IconName::NotebookPen,
@@ -9000,6 +9220,8 @@ impl Render for ReadingApp {
         let is_prism = self.is_prism();
         let continuous_flow = !t.reduced_motion
             && (is_prism
+                || self.page == Page::Radio
+                || (self.radio_status.playing && !self.radio_status.paused)
                 || self.audio.is_some()
                 || self.tts_status.active
                 || self.breathing_started.is_some()
@@ -9016,6 +9238,7 @@ impl Render for ReadingApp {
             && self.quote_card.is_none()
             && !self.focus_timer_picker_open
             && !self.mixer_open
+            && !self.radio_drawer_open
             && !self.palette_open
             && self.store.state.privacy_seen
             && (self.drawer.is_empty() || !narrow);
@@ -9035,28 +9258,46 @@ impl Render for ReadingApp {
                 Page::Shelf => self.shelf(cx),
                 Page::Reader => self.reader(window, cx),
                 Page::Mood => self.mood_page(cx),
+                Page::Radio => self.radio_page(window, cx),
                 Page::Journal => self.journal(cx),
                 Page::Themes => self.theme_page(cx),
             }
         };
         let mut main = v_flex().flex_1().h_full().min_w_0();
-        if self.page != Page::Reader
+        let show_top_banner = self.page != Page::Reader
+            && !(self.page == Page::Radio && self.radio_pure_glow);
+        if show_top_banner
             && let Some(message) = self.error.as_ref().or(self.notice.as_ref())
         {
+            let radio_dark_banner = self.page == Page::Radio;
+            let banner_bg = if radio_dark_banner {
+                rgb(0x161218).opacity(0.96)
+            } else {
+                rgb(hex(&t.paper)).opacity(0.96)
+            };
+            let banner_fg = if self.error.is_some() {
+                rgb(if radio_dark_banner { 0xf48c7a } else { 0xb34f36 })
+            } else if radio_dark_banner {
+                let (p_hex, _, _, _) =
+                    prism::RadioLampColor::from_id(&self.store.state.radio.lamp_color).palette();
+                rgb(p_hex)
+            } else {
+                rgb(hex(&t.accent))
+            };
             main = main.child(
                 h_flex()
                     .gap_3()
                     .items_center()
                     .px_5()
                     .py_2p5()
-                    .bg(rgb(hex(&t.paper)).opacity(0.96))
+                    .bg(banner_bg)
                     .border_b_1()
-                    .border_color(self.border_subtle())
-                    .text_color(rgb(if self.error.is_some() {
-                        0xb34f36
+                    .border_color(if radio_dark_banner {
+                        Hsla::from(rgb(0xffffff).opacity(0.08))
                     } else {
-                        hex(&t.accent)
-                    }))
+                        self.border_subtle()
+                    })
+                    .text_color(banner_fg)
                     .child(
                         Icon::new(if self.error.is_some() {
                             IconName::CircleAlert
@@ -9200,7 +9441,9 @@ impl Render for ReadingApp {
             snap.clone(),
             self.page == Page::Reader,
         ));
-        if !self.focus_mode || self.page != Page::Reader {
+        let hide_sidebar = (self.focus_mode && self.page == Page::Reader)
+            || (self.page == Page::Radio && (self.radio_pure_glow || self.radio_hide_sidebar));
+        if !hide_sidebar {
             root = root.child(self.render_sidebar(&t, snap.clone(), cx).relative());
         }
         root = root.child(main.relative());
@@ -9213,6 +9456,9 @@ impl Render for ReadingApp {
         if self.mixer_open {
             root = root.child(self.soundscape_mixer_modal(snap.clone(), cx));
         }
+        if self.radio_drawer_open {
+            root = root.child(self.radio_drawer_modal(cx));
+        }
         if self.palette_open {
             root = root.child(self.command_palette_modal(snap.clone(), cx));
         }
@@ -9223,6 +9469,9 @@ impl Drop for ReadingApp {
     fn drop(&mut self) {
         if let Some(player) = self.tts_player.take() {
             player.stop();
+        }
+        if let Some(radio) = self.radio_player.take() {
+            radio.stop();
         }
         let _ = self.store.save();
         if !cfg!(test)
@@ -10378,5 +10627,100 @@ mod tests {
         let secrets_text = fs::read_to_string(data.join("secrets.json")).unwrap();
         assert!(secrets_text.contains("sk-secret-ai-never-sync"));
         assert!(secrets_text.contains("ghp_secret_never_sync"));
+    }
+
+    #[gpui::test]
+    fn late_night_fm_radio_renders_tunes_pure_glow_custom_stream_and_background_strip(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(gpui_kit::init);
+        cx.update(|cx| cx.bind_keys(bindings()));
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let mut store = Store::open(data.clone()).unwrap();
+        store.install_sample().unwrap();
+        store.state.privacy_seen = true;
+        let (app, cx) = cx.add_window_view(|window, cx| test_app(store, window, cx));
+
+        // 1. Navigate to Glow FM Radio page and draw full breathing lamp & tuner dial
+        app.update_in(cx, |app, window, cx| {
+            app.act(Action::Page(Page::Radio), window, cx);
+            assert_eq!(app.page, Page::Radio);
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(cx.debug_bounds("radio-page").is_some());
+        assert!(cx.debug_bounds("radio-lamp-stage").is_some());
+
+        // 2. Switch lamp colors, breathing modes, tune stations, favorite, and cycle sleep timer
+        app.update_in(cx, |app, window, cx| {
+            app.act(Action::RadioLampColor("starry".into()), window, cx);
+            assert_eq!(app.store.state.radio.lamp_color, "starry");
+            app.act(Action::RadioLampMode("breathe_478".into()), window, cx);
+            assert_eq!(app.store.state.radio.lamp_mode, "breathe_478");
+            app.act(Action::RadioTuneStation("offline-piano-rain".into()), window, cx);
+            assert!(app.radio_status.playing);
+            assert_eq!(app.store.state.radio.current_station_id, "offline-piano-rain");
+            app.act(Action::RadioToggleFavorite("offline-piano-rain".into()), window, cx);
+            assert!(
+                app.store
+                    .state
+                    .radio
+                    .favorites
+                    .iter()
+                    .any(|f| f == "offline-piano-rain")
+            );
+            app.act(Action::RadioCycleSleepTimer, window, cx);
+            assert!(app.radio_sleep_started.is_some());
+            assert_eq!(app.radio_sleep_total_secs, 15 * 60);
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        // 3. Enter Pure-Glow Zen mode, render cleanly, and exit on Escape
+        app.update_in(cx, |app, window, cx| {
+            app.act(Action::RadioTogglePureGlow, window, cx);
+            assert!(app.radio_pure_glow);
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(cx.debug_bounds("radio-pure-glow-stage").is_some());
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |app, _| assert!(!app.radio_pure_glow));
+
+        // 4. Open Explore drawer, add custom online stream URL, verify persistence, close on Esc
+        app.update_in(cx, |app, window, cx| {
+            app.act(Action::RadioToggleDrawer, window, cx);
+            assert!(app.radio_drawer_open);
+            app.act(Action::RadioDrawerTab(1), window, cx);
+            app.radio_custom_name_input
+                .update(cx, |s, cx| s.set_value("海边深夜钢琴", window, cx));
+            app.radio_custom_url_input.update(cx, |s, cx| {
+                s.set_value("https://example.com/late-piano.mp3", window, cx)
+            });
+            app.act(Action::RadioAddCustomStream, window, cx);
+            assert_eq!(app.store.state.radio.custom_stations.len(), 1);
+            assert_eq!(app.store.state.radio.custom_stations[0].name, "海边深夜钢琴");
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |app, _| assert!(!app.radio_drawer_open));
+
+        // 5. Switch back to Shelf while radio keeps playing in background -> sidebar mini strip appears
+        app.update_in(cx, |app, window, cx| {
+            app.act(Action::Page(Page::Shelf), window, cx);
+            assert!(app.radio_status.playing);
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(cx.debug_bounds("sidebar-radio-mini").is_some());
+
+        // 6. Turning on reading soundscape smoothly stops background FM radio (mutual exclusion)
+        app.update_in(cx, |app, window, cx| {
+            let _ = app.act(Action::Soundscape(SoundscapePreset::Rain), window, cx);
+            assert!(!app.radio_status.playing);
+            app.stop_audio_smoothly();
+        });
+
+        let reopened = Store::open(data).unwrap();
+        assert_eq!(reopened.state.radio.lamp_color, "starry");
+        assert_eq!(reopened.state.radio.lamp_mode, "breathe_478");
+        assert_eq!(reopened.state.radio.custom_stations.len(), 1);
     }
 }
