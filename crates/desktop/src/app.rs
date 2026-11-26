@@ -37,7 +37,7 @@ use std::{
     collections::HashSet,
     fs,
     path::PathBuf,
-    sync::mpsc,
+    sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},
 };
 
@@ -201,8 +201,10 @@ enum Action {
     RadioLampColor(String),
     RadioLampMode(String),
     RadioVolume(i8),
+    RadioSetVolume(f32),
     RadioTogglePureGlow,
     RadioToggleImmersive,
+    RadioToggleVisualMode,
     RadioCycleSleepTimer,
     RadioToggleDrawer,
     RadioCloseDrawer,
@@ -324,6 +326,19 @@ pub struct ReadingApp {
     radio_breathe_started: Instant,
     radio_pure_glow: bool,
     radio_hide_sidebar: bool,
+    radio_visual_mode: u8,
+    radio_vinyl_angle: f32,
+    radio_vinyl_vel: f32,
+    radio_tonearm_pos: f32,
+    radio_dial_display_mhz: f32,
+    radio_dial_dragging: bool,
+    radio_drag_mhz: Option<f32>,
+    radio_dial_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    radio_vol_dragging: bool,
+    radio_vol_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    radio_last_motion_at: Instant,
+    radio_last_wheel_at: Instant,
+    radio_toast_at: Option<Instant>,
     radio_drawer_open: bool,
     radio_drawer_tab: u8,
     radio_only_favorites: bool,
@@ -490,6 +505,10 @@ impl ReadingApp {
             },
         )
         .detach();
+        let initial_radio_mhz = {
+            let stations = radio::all_stations(&store.state.radio.custom_stations);
+            radio::station_by_id(&stations, &store.state.radio.current_station_id).frequency_mhz
+        };
         let smoke = std::env::args().any(|a| a == "--smoke-test");
         let app = Self {
             store,
@@ -586,7 +605,20 @@ impl ReadingApp {
             radio_audio_level: 0.0,
             radio_breathe_started: Instant::now(),
             radio_pure_glow: false,
-            radio_hide_sidebar: false,
+            radio_hide_sidebar: true,
+            radio_visual_mode: 0,
+            radio_vinyl_angle: 0.0,
+            radio_vinyl_vel: 0.0,
+            radio_tonearm_pos: 0.0,
+            radio_dial_display_mhz: initial_radio_mhz,
+            radio_dial_dragging: false,
+            radio_drag_mhz: None,
+            radio_dial_bounds: Arc::new(Mutex::new(None)),
+            radio_vol_dragging: false,
+            radio_vol_bounds: Arc::new(Mutex::new(None)),
+            radio_last_motion_at: Instant::now(),
+            radio_last_wheel_at: Instant::now() - Duration::from_secs(1),
+            radio_toast_at: None,
             radio_drawer_open: false,
             radio_drawer_tab: 0,
             radio_only_favorites: false,
@@ -1334,14 +1366,29 @@ impl ReadingApp {
         match action {
             Action::Page(page) => {
                 let was_previewing = self.preview.is_some();
+                let entering_radio = page == Page::Radio && self.page != Page::Radio;
                 self.page = page.clone();
                 self.preview = None;
                 self.draft = None;
+                self.radio_dial_dragging = false;
+                self.radio_drag_mhz = None;
+                self.radio_vol_dragging = false;
                 self.install_native_theme(cx);
                 if was_previewing && self.opened {
                     self.configure(cx);
                 }
                 if page == Page::Radio {
+                    if entering_radio {
+                        self.radio_hide_sidebar = true;
+                    }
+                    self.radio_dial_display_mhz = if self.radio_status.playing
+                        && self.radio_status.frequency_mhz > 0.0
+                    {
+                        self.radio_status.frequency_mhz
+                    } else {
+                        self.current_radio_station().frequency_mhz
+                    };
+                    self.radio_last_motion_at = Instant::now();
                     self.schedule_motion_frame(window, cx);
                 }
                 self.save();
@@ -2180,8 +2227,10 @@ impl ReadingApp {
             | Action::RadioLampColor(_)
             | Action::RadioLampMode(_)
             | Action::RadioVolume(_)
+            | Action::RadioSetVolume(_)
             | Action::RadioTogglePureGlow
             | Action::RadioToggleImmersive
+            | Action::RadioToggleVisualMode
             | Action::RadioCycleSleepTimer
             | Action::RadioToggleDrawer
             | Action::RadioCloseDrawer
@@ -9227,7 +9276,8 @@ impl Render for ReadingApp {
                 || self.breathing_started.is_some()
                 || self.focus_timer_started.is_some());
         let needs_frame = self.motion.step(t.reduced_motion, continuous_flow);
-        if needs_frame {
+        let radio_needs_frame = self.step_radio_motion(t.reduced_motion);
+        if needs_frame || radio_needs_frame {
             self.schedule_motion_frame(window, cx);
         }
         let snap = self.motion_snapshot();
@@ -9264,40 +9314,24 @@ impl Render for ReadingApp {
             }
         };
         let mut main = v_flex().flex_1().h_full().min_w_0();
-        let show_top_banner = self.page != Page::Reader
-            && !(self.page == Page::Radio && self.radio_pure_glow);
+        let show_top_banner = self.page != Page::Reader && self.page != Page::Radio;
         if show_top_banner
             && let Some(message) = self.error.as_ref().or(self.notice.as_ref())
         {
-            let radio_dark_banner = self.page == Page::Radio;
-            let banner_bg = if radio_dark_banner {
-                rgb(0x161218).opacity(0.96)
-            } else {
-                rgb(hex(&t.paper)).opacity(0.96)
-            };
-            let banner_fg = if self.error.is_some() {
-                rgb(if radio_dark_banner { 0xf48c7a } else { 0xb34f36 })
-            } else if radio_dark_banner {
-                let (p_hex, _, _, _) =
-                    prism::RadioLampColor::from_id(&self.store.state.radio.lamp_color).palette();
-                rgb(p_hex)
-            } else {
-                rgb(hex(&t.accent))
-            };
             main = main.child(
                 h_flex()
                     .gap_3()
                     .items_center()
                     .px_5()
                     .py_2p5()
-                    .bg(banner_bg)
+                    .bg(rgb(hex(&t.paper)).opacity(0.96))
                     .border_b_1()
-                    .border_color(if radio_dark_banner {
-                        Hsla::from(rgb(0xffffff).opacity(0.08))
+                    .border_color(self.border_subtle())
+                    .text_color(if self.error.is_some() {
+                        rgb(0xb34f36)
                     } else {
-                        self.border_subtle()
+                        rgb(hex(&t.accent))
                     })
-                    .text_color(banner_fg)
                     .child(
                         Icon::new(if self.error.is_some() {
                             IconName::CircleAlert
@@ -9326,6 +9360,20 @@ impl Render for ReadingApp {
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
                 let reduced = this.theme().reduced_motion;
                 this.motion.on_mouse_move(event.position, reduced);
+                if this.radio_dial_dragging {
+                    if event.pressed_button == Some(MouseButton::Left) {
+                        this.update_radio_dial_drag(event.position, window, cx);
+                    } else {
+                        this.finish_radio_dial_drag(window, cx);
+                    }
+                }
+                if this.radio_vol_dragging {
+                    if event.pressed_button == Some(MouseButton::Left) {
+                        this.update_radio_vol_drag(event.position, window, cx);
+                    } else {
+                        this.finish_radio_vol_drag(cx);
+                    }
+                }
                 if this.focus_mode && this.page == Page::Reader {
                     let y = f32::from(event.position.y);
                     let h = f32::from(window.viewport_size().height).max(1.0);
@@ -9353,6 +9401,18 @@ impl Render for ReadingApp {
                 }
                 cx.notify();
             }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.finish_radio_drags(window, cx);
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.finish_radio_drags(window, cx);
+                }),
+            )
             .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
                 let reduced = this.theme().reduced_motion;
                 let is_prism = this.is_prism();
@@ -10722,5 +10782,155 @@ mod tests {
         assert_eq!(reopened.state.radio.lamp_color, "starry");
         assert_eq!(reopened.state.radio.lamp_mode, "breathe_478");
         assert_eq!(reopened.state.radio.custom_stations.len(), 1);
+    }
+
+    #[gpui::test]
+    fn radio_station_switching_has_zero_layout_jitter_and_dial_is_continuously_draggable(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(gpui_kit::init);
+        cx.update(|cx| cx.bind_keys(bindings()));
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let mut store = Store::open(data).unwrap();
+        store.install_sample().unwrap();
+        store.state.privacy_seen = true;
+        let (app, cx) = cx.add_window_view(|window, cx| test_app(store, window, cx));
+
+        // 1. Entering Page::Radio opens full-viewport immersive stage by default (no bright sidebar)
+        app.update_in(cx, |app, window, cx| {
+            app.act(Action::Page(Page::Radio), window, cx);
+            assert!(app.radio_hide_sidebar, "FM page should open immersive by default");
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        let base_lamp = cx.debug_bounds("radio-lamp-stage").expect("vinyl stage laid out");
+        let base_dial = cx.debug_bounds("radio-dial-track").expect("dial track laid out");
+        let base_play = cx.debug_bounds("radio-play-btn").expect("play btn laid out");
+        assert!(base_lamp.size.width >= px(300.), "hero turntable stage must be large");
+
+        // 2. Switch across EVERY station kind (short 1-line online, 4-line NightHost, BookEchoHost,
+        //    AmbientSynth, LocalFolder), lamp colors, 4-7-8 breathing mode, play/pause, visual toggle.
+        //    Assert ZERO layout jitter (exact identical pixel bounds on every render)!
+        let transitions: Vec<Action> = vec![
+            Action::RadioTuneStation("lofi-rain".into()),
+            Action::RadioTuneStation("glow-night-talk".into()),
+            Action::RadioTuneStation("book-echo-fm".into()),
+            Action::RadioTuneStation("offline-piano-rain".into()),
+            Action::RadioTuneStation("local-tape-fm".into()),
+            Action::RadioLampMode("breathe_478".into()),
+            Action::RadioLampColor("starry".into()),
+            Action::RadioLampColor("rose".into()),
+            Action::RadioTogglePlay,
+            Action::RadioTogglePlay,
+            Action::RadioToggleVisualMode,
+            Action::RadioToggleVisualMode,
+            Action::RadioLampMode("audio".into()),
+            Action::RadioTuneStation("deep-space-sleep".into()),
+        ];
+        for action in transitions {
+            app.update_in(cx, |app, window, cx| {
+                app.act(action.clone(), window, cx);
+            });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            assert_eq!(
+                cx.debug_bounds("radio-lamp-stage").unwrap(),
+                base_lamp,
+                "radio-lamp-stage jittered after {action:?}"
+            );
+            assert_eq!(
+                cx.debug_bounds("radio-dial-track").unwrap(),
+                base_dial,
+                "radio-dial-track jittered after {action:?}"
+            );
+            assert_eq!(
+                cx.debug_bounds("radio-play-btn").unwrap(),
+                base_play,
+                "radio-play-btn jittered after {action:?}"
+            );
+        }
+
+        // 3. Real pointer drag across the 88.0 - 108.0 MHz FM dial track!
+        let dial_bounds = cx.debug_bounds("radio-dial-track").unwrap();
+        let pad = 20.0_f32;
+        let track_w = (f32::from(dial_bounds.size.width) - pad * 2.0).max(20.0);
+        let y_mid = dial_bounds.center().y;
+        let x_for_mhz = |mhz: f32| {
+            let frac = ((mhz - 88.0) / 20.0).clamp(0.0, 1.0);
+            px(f32::from(dial_bounds.origin.x) + pad + frac * track_w)
+        };
+
+        // Start drag near 88.6 MHz (lofi-rain)
+        cx.simulate_mouse_down(point(x_for_mhz(88.6), y_mid), MouseButton::Left, Modifiers::default());
+        app.read_with(cx, |app, _| {
+            assert!(app.radio_dial_dragging);
+            let mhz = app.radio_drag_mhz.expect("drag mhz set");
+            assert!((mhz - 88.6).abs() <= 0.3, "expected ~88.6, got {mhz}");
+        });
+
+        // Drag continuously to mid-band 96.8 MHz (classical-nocturne)
+        cx.simulate_mouse_move(point(x_for_mhz(96.8), y_mid), MouseButton::Left, Modifiers::default());
+        app.read_with(cx, |app, _| {
+            assert!(app.radio_dial_dragging);
+            let mhz = app.radio_drag_mhz.expect("drag mhz updated");
+            assert!((mhz - 96.8).abs() <= 0.3, "expected ~96.8, got {mhz}");
+        });
+
+        // Drag past right boundary (clamps safely to 108.0 MHz), then back to 104.6 MHz (offline-piano-rain)
+        cx.simulate_mouse_move(
+            point(px(f32::from(dial_bounds.right()) + 80.0), y_mid),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        app.read_with(cx, |app, _| {
+            assert_eq!(app.radio_drag_mhz, Some(108.0));
+        });
+        cx.simulate_mouse_move(point(x_for_mhz(104.6), y_mid), MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_up(point(x_for_mhz(104.6), y_mid), MouseButton::Left, Modifiers::default());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        app.read_with(cx, |app, _| {
+            assert!(!app.radio_dial_dragging);
+            assert!(app.radio_drag_mhz.is_none());
+            assert_eq!(app.store.state.radio.current_station_id, "offline-piano-rain");
+            assert!(app.radio_status.playing);
+        });
+        assert_eq!(
+            cx.debug_bounds("radio-dial-track").unwrap(),
+            base_dial,
+            "dial bounds must remain rock-solid after dragging"
+        );
+
+        // 4. Drag the smooth volume slider bar
+        let vol_bounds = cx.debug_bounds("radio-vol-track").expect("volume track laid out");
+        cx.simulate_mouse_down(
+            point(px(f32::from(vol_bounds.origin.x) + 12.0), vol_bounds.center().y),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_move(
+            point(px(f32::from(vol_bounds.right()) - 10.0), vol_bounds.center().y),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            point(px(f32::from(vol_bounds.right()) - 10.0), vol_bounds.center().y),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        app.read_with(cx, |app, _| {
+            assert!(!app.radio_vol_dragging);
+            assert!(app.store.state.radio.volume > 0.85);
+        });
+
+        // 5. Clicking back-to-shelf exits cleanly to Shelf while keeping background FM active
+        let back_bounds = cx.debug_bounds("radio-back-shelf").expect("back-to-shelf button");
+        cx.simulate_click(back_bounds.center(), Modifiers::default());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        app.read_with(cx, |app, _| {
+            assert_eq!(app.page, Page::Shelf);
+            assert!(app.radio_status.playing);
+        });
+        assert!(cx.debug_bounds("sidebar-radio-mini").is_some());
     }
 }

@@ -263,6 +263,69 @@ pub fn nearest_station_for_mhz(stations: &[RadioStation], mhz: f32) -> Option<Ra
         .cloned()
 }
 
+/// Curated atmospheric cover & backdrop artwork per FM station.
+/// Custom stations deterministically map onto one of the 8 bundled scenic illustrations.
+pub fn station_scene_asset(station_id: &str) -> &'static str {
+    match station_id {
+        "lofi-rain" => "scene-night.png",
+        "midnight-jazz" => "scene-lantern.png",
+        "glow-night-talk" => "scene-spirited.png",
+        "classical-nocturne" => "scene-howl.png",
+        "book-echo-fm" => "scene-kiki.png",
+        "deep-space-sleep" => "scene-prism.png",
+        "offline-piano-rain" => "scene-totoro.png",
+        "local-tape-fm" => "scene.png",
+        other => {
+            const POOL: &[&str] = &[
+                "scene-lantern.png",
+                "scene-spirited.png",
+                "scene-night.png",
+                "scene-howl.png",
+                "scene-totoro.png",
+                "scene-kiki.png",
+                "scene-prism.png",
+                "scene.png",
+            ];
+            let mut hash: u64 = 14695981039346656037;
+            for b in other.bytes() {
+                hash ^= b as u64;
+                hash = hash.wrapping_mul(1099511628211);
+            }
+            POOL[(hash as usize) % POOL.len()]
+        }
+    }
+}
+
+/// Computes the exact initial `(now_playing_title, current_line, source_hint)` for a station
+/// synchronously so UI and audio worker agree from frame 0 without post-tune text jumps.
+pub fn initial_copy_for_station(
+    station: &RadioStation,
+    book_echoes: &[NightSegment],
+) -> (String, String, String) {
+    match station.kind {
+        RadioStationKind::NightHost => {
+            if let Some(first) = curated_night_talk_segments().into_iter().next() {
+                return (first.title, first.script, first.source_hint);
+            }
+        }
+        RadioStationKind::BookEchoHost => {
+            if let Some(first) = book_echoes
+                .first()
+                .cloned()
+                .or_else(|| default_book_echo_segments().into_iter().next())
+            {
+                return (first.title, first.script, first.source_hint);
+            }
+        }
+        _ => {}
+    }
+    (
+        station.name.clone(),
+        station.mood_line.clone(),
+        station.subtitle.clone(),
+    )
+}
+
 pub fn curated_night_talk_segments() -> Vec<NightSegment> {
     const ITEMS: &[(&str, &str, &str)] = &[
         (
@@ -879,6 +942,7 @@ impl<S: Source<Item = f32>> Source for MeteredRadioSource<S> {
 
 enum RadioCommand {
     Tune {
+        cmd_gen: u64,
         station: RadioStation,
         volume: f32,
         host_voice: String,
@@ -959,10 +1023,31 @@ impl RadioPlayer {
         local_folder: Option<PathBuf>,
         with_static: bool,
     ) {
-        self.generation.fetch_add(1, Ordering::SeqCst);
+        let cmd_gen = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         self.stream_stop.store(true, Ordering::SeqCst);
         self.set_fade_multiplier(1.0);
+        // Update shared status synchronously so UI ticks never revert back to the previous station
+        // while the audio worker finishes tearing down or connecting.
+        let (title, line, hint) = initial_copy_for_station(&station, &book_echoes);
+        update_status(&self.status, |s| {
+            s.playing = true;
+            s.paused = false;
+            s.tuning = with_static;
+            s.connecting = station.kind == RadioStationKind::OnlineStream;
+            s.fallback_offline = false;
+            s.station_id = station.id.clone();
+            s.station_name = station.name.clone();
+            s.frequency_mhz = station.frequency_mhz;
+            s.kind_label = station.kind.badge_label().into();
+            s.now_playing_title = title;
+            s.current_line = line;
+            s.source_hint = hint;
+            s.stream_meta = None;
+            s.host_speaking = false;
+            s.error = None;
+        });
         let _ = self.cmd_tx.send(RadioCommand::Tune {
+            cmd_gen,
             station,
             volume: volume.clamp(0.05, 1.0),
             host_voice,
@@ -973,16 +1058,35 @@ impl RadioPlayer {
     }
 
     pub fn pause(&self) {
+        self.audio_level.store(0.0_f32.to_bits(), Ordering::Relaxed);
+        update_status(&self.status, |s| {
+            if s.playing {
+                s.paused = true;
+            }
+        });
         let _ = self.cmd_tx.send(RadioCommand::Pause);
     }
 
     pub fn resume(&self) {
+        update_status(&self.status, |s| {
+            if s.playing {
+                s.paused = false;
+            }
+        });
         let _ = self.cmd_tx.send(RadioCommand::Resume);
     }
 
     pub fn stop(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.stream_stop.store(true, Ordering::SeqCst);
+        self.audio_level.store(0.0_f32.to_bits(), Ordering::Relaxed);
+        update_status(&self.status, |s| {
+            s.playing = false;
+            s.paused = false;
+            s.tuning = false;
+            s.connecting = false;
+            s.host_speaking = false;
+        });
         let _ = self.cmd_tx.send(RadioCommand::Stop);
     }
 
@@ -1006,6 +1110,17 @@ impl Drop for RadioPlayer {
 fn update_status(status: &Arc<Mutex<RadioStatus>>, edit: impl FnOnce(&mut RadioStatus)) {
     if let Ok(mut g) = status.lock() {
         edit(&mut g);
+    }
+}
+
+fn update_status_if_current(
+    status: &Arc<Mutex<RadioStatus>>,
+    generation: &Arc<AtomicU64>,
+    expected_gen: u64,
+    edit: impl FnOnce(&mut RadioStatus),
+) {
+    if generation.load(Ordering::SeqCst) == expected_gen {
+        update_status(status, edit);
     }
 }
 
@@ -1259,6 +1374,7 @@ fn radio_worker_loop(
                     }
                 }
                 RadioCommand::Tune {
+                    cmd_gen,
                     station,
                     volume: next_vol,
                     host_voice: next_voice,
@@ -1266,10 +1382,16 @@ fn radio_worker_loop(
                     local_folder,
                     with_static,
                 } => {
+                    if generation.load(Ordering::SeqCst) != cmd_gen {
+                        continue;
+                    }
                     if let Some(pb) = active_playback.take() {
                         pb.stop_all();
                     }
-                    let my_gen = generation.load(Ordering::SeqCst);
+                    let my_gen = cmd_gen;
+                    if generation.load(Ordering::SeqCst) != my_gen {
+                        continue;
+                    }
                     stream_stop.store(false, Ordering::SeqCst);
                     volume = next_vol;
                     host_voice = next_voice;
@@ -1278,7 +1400,9 @@ fn radio_worker_loop(
                     next_host_speak_at = None;
                     current_station = Some(station.clone());
 
-                    update_status(&status, |s| {
+                    let (init_title, init_line, init_hint) =
+                        initial_copy_for_station(&station, &book_echoes);
+                    update_status_if_current(&status, &generation, my_gen, |s| {
                         s.playing = true;
                         s.paused = false;
                         s.tuning = with_static;
@@ -1288,9 +1412,9 @@ fn radio_worker_loop(
                         s.station_name = station.name.clone();
                         s.frequency_mhz = station.frequency_mhz;
                         s.kind_label = station.kind.badge_label().into();
-                        s.now_playing_title = station.name.clone();
-                        s.current_line = station.mood_line.clone();
-                        s.source_hint = station.subtitle.clone();
+                        s.now_playing_title = init_title;
+                        s.current_line = init_line;
+                        s.source_hint = init_hint;
                         s.stream_meta = None;
                         s.host_speaking = false;
                         s.error = None;
@@ -1367,8 +1491,12 @@ fn radio_worker_loop(
                                         })
                                     }) {
                                         Ok(pb) => {
+                                            if generation.load(Ordering::SeqCst) != my_gen {
+                                                pb.stop_all();
+                                                continue;
+                                            }
                                             active_playback = Some(pb);
-                                            update_status(&status, |s| {
+                                            update_status_if_current(&status, &generation, my_gen, |s| {
                                                 s.tuning = false;
                                                 s.connecting = false;
                                                 s.fallback_offline = false;
@@ -1379,6 +1507,9 @@ fn radio_worker_loop(
                                             });
                                         }
                                         Err(_) => {
+                                            if generation.load(Ordering::SeqCst) != my_gen {
+                                                continue;
+                                            }
                                             // Gentle offline fallback bed instead of harsh silence
                                             let fallback_mix = fallback_mix_for_station(&station.id);
                                             if let Ok(pb) = start_bed_playback(
@@ -1390,7 +1521,7 @@ fn radio_worker_loop(
                                             ) {
                                                 active_playback = Some(pb);
                                             }
-                                            update_status(&status, |s| {
+                                            update_status_if_current(&status, &generation, my_gen, |s| {
                                                 s.tuning = false;
                                                 s.connecting = false;
                                                 s.fallback_offline = true;
@@ -1402,6 +1533,9 @@ fn radio_worker_loop(
                                     }
                                 }
                                 Err(_) => {
+                                    if generation.load(Ordering::SeqCst) != my_gen {
+                                        continue;
+                                    }
                                     let fallback_mix = fallback_mix_for_station(&station.id);
                                     if let Ok(pb) = start_bed_playback(
                                         &fallback_mix,
@@ -1412,7 +1546,7 @@ fn radio_worker_loop(
                                     ) {
                                         active_playback = Some(pb);
                                     }
-                                    update_status(&status, |s| {
+                                    update_status_if_current(&status, &generation, my_gen, |s| {
                                         s.tuning = false;
                                         s.connecting = false;
                                         s.fallback_offline = true;
@@ -1462,11 +1596,15 @@ fn radio_worker_loop(
                                 with_static,
                             ) {
                                 Ok(pb) => {
+                                    if generation.load(Ordering::SeqCst) != my_gen {
+                                        pb.stop_all();
+                                        continue;
+                                    }
                                     active_playback = Some(pb);
                                     next_host_speak_at =
                                         Some(Instant::now() + Duration::from_millis(850));
                                     if let Some(first) = night_playlist.first() {
-                                        update_status(&status, |s| {
+                                        update_status_if_current(&status, &generation, my_gen, |s| {
                                             s.tuning = false;
                                             s.connecting = false;
                                             s.now_playing_title = first.title.clone();
@@ -1476,7 +1614,7 @@ fn radio_worker_loop(
                                     }
                                 }
                                 Err(err) => {
-                                    update_status(&status, |s| {
+                                    update_status_if_current(&status, &generation, my_gen, |s| {
                                         s.playing = false;
                                         s.tuning = false;
                                         s.error = Some(err.to_string());
@@ -1502,14 +1640,18 @@ fn radio_worker_loop(
                                 with_static,
                             ) {
                                 Ok(pb) => {
+                                    if generation.load(Ordering::SeqCst) != my_gen {
+                                        pb.stop_all();
+                                        continue;
+                                    }
                                     active_playback = Some(pb);
-                                    update_status(&status, |s| {
+                                    update_status_if_current(&status, &generation, my_gen, |s| {
                                         s.tuning = false;
                                         s.connecting = false;
                                     });
                                 }
                                 Err(err) => {
-                                    update_status(&status, |s| {
+                                    update_status_if_current(&status, &generation, my_gen, |s| {
                                         s.playing = false;
                                         s.tuning = false;
                                         s.error = Some(err.to_string());
@@ -1532,9 +1674,13 @@ fn radio_worker_loop(
                                     &fade_multiplier,
                                     with_static,
                                 ) {
+                                    if generation.load(Ordering::SeqCst) != my_gen {
+                                        pb.stop_all();
+                                        continue;
+                                    }
                                     active_playback = Some(pb);
                                 }
-                                update_status(&status, |s| {
+                                update_status_if_current(&status, &generation, my_gen, |s| {
                                     s.tuning = false;
                                     s.connecting = false;
                                     s.local_track_count = 0;
@@ -1542,7 +1688,7 @@ fn radio_worker_loop(
                                         "点击下方「探索频段 → 本地磁带」选择你的音频文件夹，当前暂以雨夜炉火陪伴"
                                             .into();
                                 });
-                            } else {
+                            } else if generation.load(Ordering::SeqCst) == my_gen {
                                 active_playback = start_local_track_playback(
                                     &local_tracks,
                                     local_idx,
@@ -1580,7 +1726,10 @@ fn radio_worker_loop(
                                 if let Some(h) = &pb.bed_handle {
                                     h.set_ducking(false);
                                 }
-                                update_status(&status, |s| s.host_speaking = false);
+                                let my_gen = generation.load(Ordering::SeqCst);
+                                update_status_if_current(&status, &generation, my_gen, |s| {
+                                    s.host_speaking = false
+                                });
                                 if !night_playlist.is_empty() {
                                     night_idx = (night_idx + 1) % night_playlist.len();
                                 }
@@ -1594,7 +1743,7 @@ fn radio_worker_loop(
                             next_host_speak_at = None;
                             let seg = night_playlist[night_idx % night_playlist.len()].clone();
                             let my_gen = generation.load(Ordering::SeqCst);
-                            update_status(&status, |s| {
+                            update_status_if_current(&status, &generation, my_gen, |s| {
                                 s.now_playing_title = seg.title.clone();
                                 s.current_line = seg.script.clone();
                                 s.source_hint = seg.source_hint.clone();
@@ -1628,7 +1777,7 @@ fn radio_worker_loop(
                                         h.set_ducking(true);
                                     }
                                     host_speaking = true;
-                                    update_status(&status, |s| {
+                                    update_status_if_current(&status, &generation, my_gen, |s| {
                                         s.host_speaking = true;
                                         s.stream_meta = Some(engine_label.into());
                                     });
@@ -1825,5 +1974,54 @@ mod tests {
         let remaining: Vec<f32> = metered.take(40_000).collect();
         assert!(remaining.len() < 40_000, "metered source must end after fade-out");
         assert_eq!(f32::from_bits(level.load(Ordering::Relaxed)), 0.0);
+    }
+
+    #[test]
+    fn station_scene_asset_and_initial_copy_are_deterministic_and_non_empty() {
+        for st in builtin_stations() {
+            let asset = station_scene_asset(&st.id);
+            assert!(asset.ends_with(".png"), "expected png scene for {}", st.id);
+            let (title, line, hint) = initial_copy_for_station(&st, &[]);
+            assert!(!title.is_empty());
+            assert!(!line.is_empty());
+            assert!(!hint.is_empty());
+        }
+        assert_eq!(
+            station_scene_asset("custom-my-jazz"),
+            station_scene_asset("custom-my-jazz")
+        );
+        // NightHost resolves directly to its first monologue letter synchronously
+        let night = station_by_id(&builtin_stations(), "glow-night-talk");
+        let (title, line, _) = initial_copy_for_station(&night, &[]);
+        let first = curated_night_talk_segments().remove(0);
+        assert_eq!(title, first.title);
+        assert_eq!(line, first.script);
+    }
+
+    #[test]
+    fn radio_player_tune_pause_stop_update_status_synchronously_without_stale_revert() {
+        let player = RadioPlayer::new();
+        let stations = builtin_stations();
+        let synth = station_by_id(&stations, "offline-piano-rain");
+        let night = station_by_id(&stations, "glow-night-talk");
+
+        player.tune(synth.clone(), 0.5, tts::VOICES[0].id.into(), vec![], None, false);
+        assert_eq!(player.status().station_id, "offline-piano-rain");
+        assert!(player.status().playing);
+
+        // Rapidly switch to another station: status must immediately reflect the new station
+        player.tune(night.clone(), 0.5, tts::VOICES[0].id.into(), vec![], None, false);
+        let st = player.status();
+        assert_eq!(st.station_id, "glow-night-talk");
+        assert!((st.frequency_mhz - 94.2).abs() < 0.05);
+        assert!(st.playing);
+        assert!(!st.paused);
+
+        player.pause();
+        assert!(player.status().paused);
+        player.resume();
+        assert!(!player.status().paused);
+        player.stop();
+        assert!(!player.status().playing);
     }
 }

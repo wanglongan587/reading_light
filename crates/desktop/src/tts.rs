@@ -222,6 +222,7 @@ fn synthesize_edge_sync(
     voice: &str,
     rate: f32,
 ) -> Result<SynthAudio> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let opt = voice_by_id(voice);
     let rate_str = format_edge_rate(rate);
     let events = rt

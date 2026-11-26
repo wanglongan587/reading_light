@@ -98,6 +98,236 @@ impl ReadingApp {
         (Some(remaining.ceil() as u32), dim)
     }
 
+    fn set_radio_toast(&mut self, msg: impl Into<String>) {
+        self.notice = Some(msg.into());
+        self.radio_toast_at = Some(Instant::now());
+    }
+
+    pub(super) fn step_radio_motion(&mut self, reduced_motion: bool) -> bool {
+        let now = Instant::now();
+        let dt = now
+            .saturating_duration_since(self.radio_last_motion_at)
+            .as_secs_f32()
+            .clamp(0.004, 0.042);
+        self.radio_last_motion_at = now;
+
+        // Auto-fade transient floating radio notice pill without altering layout
+        if self.page == Page::Radio
+            && self.error.is_none()
+            && self
+                .radio_toast_at
+                .is_some_and(|t| t.elapsed() >= Duration::from_millis(2800))
+        {
+            self.radio_toast_at = None;
+            self.notice = None;
+        }
+
+        let playing_active = self.radio_status.playing && !self.radio_status.paused;
+
+        // 1. Vinyl platter angular inertia (smoothly accelerates & gently coasts down)
+        let target_vel = if playing_active && !reduced_motion {
+            0.44_f32 // ~14.3 seconds per serene revolution
+        } else {
+            0.0_f32
+        };
+        if reduced_motion {
+            self.radio_vinyl_vel = 0.0;
+        } else {
+            self.radio_vinyl_vel += (target_vel - self.radio_vinyl_vel) * (dt * 3.6).min(1.0);
+            if self.radio_vinyl_vel.abs() < 0.001 && target_vel == 0.0 {
+                self.radio_vinyl_vel = 0.0;
+            }
+            self.radio_vinyl_angle =
+                (self.radio_vinyl_angle + self.radio_vinyl_vel * dt).rem_euclid(std::f32::consts::TAU);
+        }
+
+        // 2. Tonearm smooth pivot (0.0 parked off disc -> 1.0 engaged on grooves)
+        let target_arm = if self.radio_dial_dragging {
+            0.28_f32
+        } else if playing_active {
+            1.0_f32
+        } else {
+            0.0_f32
+        };
+        if reduced_motion || cfg!(test) {
+            self.radio_tonearm_pos = target_arm;
+        } else {
+            self.radio_tonearm_pos += (target_arm - self.radio_tonearm_pos) * (dt * 6.4).min(1.0);
+            if (target_arm - self.radio_tonearm_pos).abs() < 0.002 {
+                self.radio_tonearm_pos = target_arm;
+            }
+        }
+
+        // 3. Analog FM dial needle smooth glide
+        let target_mhz = self.radio_drag_mhz.unwrap_or_else(|| {
+            if self.radio_status.playing && self.radio_status.frequency_mhz > 0.0 {
+                self.radio_status.frequency_mhz
+            } else {
+                self.current_radio_station().frequency_mhz
+            }
+        });
+        if self.radio_dial_dragging || reduced_motion || cfg!(test) || self.radio_dial_display_mhz <= 0.0 {
+            self.radio_dial_display_mhz = target_mhz;
+        } else {
+            self.radio_dial_display_mhz +=
+                (target_mhz - self.radio_dial_display_mhz) * (dt * 12.0).min(1.0);
+            if (target_mhz - self.radio_dial_display_mhz).abs() < 0.015 {
+                self.radio_dial_display_mhz = target_mhz;
+            }
+        }
+
+        if reduced_motion {
+            return false;
+        }
+        self.page == Page::Radio
+            && (playing_active
+                || self.radio_vinyl_vel.abs() > 0.002
+                || (target_arm - self.radio_tonearm_pos).abs() > 0.004
+                || (target_mhz - self.radio_dial_display_mhz).abs() > 0.02
+                || self.radio_dial_dragging
+                || self.radio_toast_at.is_some())
+    }
+
+    fn mhz_from_dial_x(&self, x: Pixels) -> Option<f32> {
+        let bounds = self.radio_dial_bounds.lock().ok().and_then(|g| *g)?;
+        let pad_x = 20.0_f32;
+        let track_w = (f32::from(bounds.size.width) - pad_x * 2.0).max(20.0);
+        let frac = ((f32::from(x) - (f32::from(bounds.origin.x) + pad_x)) / track_w).clamp(0.0, 1.0);
+        let mhz = 88.0 + frac * 20.0;
+        Some(((mhz * 10.0).round() / 10.0).clamp(88.0, 108.0))
+    }
+
+    pub(super) fn begin_radio_dial_drag(
+        &mut self,
+        pos: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mhz = self
+            .mhz_from_dial_x(pos.x)
+            .unwrap_or_else(|| self.current_radio_station().frequency_mhz);
+        self.radio_dial_dragging = true;
+        self.radio_drag_mhz = Some(mhz);
+        self.radio_dial_display_mhz = mhz;
+        self.schedule_motion_frame(window, cx);
+        cx.notify();
+    }
+
+    pub(super) fn update_radio_dial_drag(
+        &mut self,
+        pos: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.radio_dial_dragging {
+            return;
+        }
+        if let Some(mhz) = self.mhz_from_dial_x(pos.x) {
+            self.radio_drag_mhz = Some(mhz);
+            self.radio_dial_display_mhz = mhz;
+            self.schedule_motion_frame(window, cx);
+        }
+    }
+
+    pub(super) fn finish_radio_dial_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.radio_dial_dragging {
+            return;
+        }
+        self.radio_dial_dragging = false;
+        let Some(mhz) = self.radio_drag_mhz.take() else {
+            cx.notify();
+            return;
+        };
+        let stations = self.all_radio_stations();
+        if let Some(st) = radio::nearest_station_for_mhz(&stations, mhz) {
+            if self.radio_status.playing && self.radio_status.station_id == st.id {
+                // Already tuned to this station: smoothly snap the needle back without interrupting audio
+                if cfg!(test) || self.theme().reduced_motion {
+                    self.radio_dial_display_mhz = st.frequency_mhz;
+                }
+                self.schedule_motion_frame(window, cx);
+                cx.notify();
+            } else {
+                self.act(Action::RadioTuneMhz(mhz), window, cx);
+            }
+        }
+    }
+
+    fn volume_from_bar_x(&self, x: Pixels) -> Option<f32> {
+        let bounds = self.radio_vol_bounds.lock().ok().and_then(|g| *g)?;
+        let pad = 7.0_f32;
+        let track_w = (f32::from(bounds.size.width) - pad * 2.0).max(8.0);
+        let frac = ((f32::from(x) - (f32::from(bounds.origin.x) + pad)) / track_w).clamp(0.0, 1.0);
+        Some((0.05 + frac * 0.95).clamp(0.05, 1.0))
+    }
+
+    pub(super) fn begin_radio_vol_drag(
+        &mut self,
+        pos: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.radio_vol_dragging = true;
+        if let Some(vol) = self.volume_from_bar_x(pos.x) {
+            self.act(Action::RadioSetVolume(vol), window, cx);
+        }
+    }
+
+    pub(super) fn update_radio_vol_drag(
+        &mut self,
+        pos: Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        if !self.radio_vol_dragging {
+            return;
+        }
+        if let Some(vol) = self.volume_from_bar_x(pos.x) {
+            self.store.state.radio.volume = vol;
+            if let Some(p) = &self.radio_player {
+                p.set_volume(vol);
+            }
+        }
+    }
+
+    pub(super) fn finish_radio_vol_drag(&mut self, cx: &mut Context<Self>) {
+        if !self.radio_vol_dragging {
+            return;
+        }
+        self.radio_vol_dragging = false;
+        self.save();
+        cx.notify();
+    }
+
+    pub(super) fn finish_radio_drags(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.finish_radio_dial_drag(window, cx);
+        self.finish_radio_vol_drag(cx);
+    }
+
+    pub(super) fn on_radio_dial_scroll(
+        &mut self,
+        event: &ScrollEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.radio_last_wheel_at.elapsed() < Duration::from_millis(130) {
+            return;
+        }
+        let delta = match event.delta {
+            ScrollDelta::Pixels(p) => f32::from(p.y) + f32::from(p.x),
+            ScrollDelta::Lines(p) => p.y + p.x,
+        };
+        if delta.abs() < 0.05 {
+            return;
+        }
+        self.radio_last_wheel_at = Instant::now();
+        if delta > 0.0 {
+            self.act(Action::RadioPrevStation, window, cx);
+        } else {
+            self.act(Action::RadioNextStation, window, cx);
+        }
+    }
+
     fn tune_to_station(
         &mut self,
         station: RadioStation,
@@ -119,7 +349,14 @@ impl ReadingApp {
         self.store.state.radio.current_station_id = station.id.clone();
         self.save();
 
-        // Optimistically sync UI state so the dial needle and copy respond immediately
+        let echoes = if station.kind == RadioStationKind::BookEchoHost {
+            self.collect_book_echo_segments()
+        } else {
+            vec![]
+        };
+        let (init_title, init_line, init_hint) = radio::initial_copy_for_station(&station, &echoes);
+
+        // Optimistically sync UI state so the dial needle and copy respond immediately with zero flash
         self.radio_status.playing = true;
         self.radio_status.paused = false;
         self.radio_status.tuning = with_static;
@@ -129,19 +366,18 @@ impl ReadingApp {
         self.radio_status.station_name = station.name.clone();
         self.radio_status.frequency_mhz = station.frequency_mhz;
         self.radio_status.kind_label = station.kind.badge_label().into();
-        self.radio_status.now_playing_title = station.name.clone();
-        self.radio_status.current_line = station.mood_line.clone();
-        self.radio_status.source_hint = station.subtitle.clone();
+        self.radio_status.now_playing_title = init_title;
+        self.radio_status.current_line = init_line;
+        self.radio_status.source_hint = init_hint;
         self.radio_status.error = None;
+
+        if cfg!(test) || self.theme().reduced_motion {
+            self.radio_dial_display_mhz = station.frequency_mhz;
+        }
 
         if !cfg!(test) {
             let vol = self.store.state.radio.volume.clamp(0.05, 1.0);
             let host_voice = self.store.state.radio.host_voice.clone();
-            let echoes = if station.kind == RadioStationKind::BookEchoHost {
-                self.collect_book_echo_segments()
-            } else {
-                vec![]
-            };
             let local_folder = self
                 .store
                 .state
@@ -163,7 +399,7 @@ impl ReadingApp {
                     self.radio_search_rx = None;
                     let count = hits.len();
                     self.radio_search_results = hits;
-                    self.notice = Some(if count == 0 {
+                    self.set_radio_toast(if count == 0 {
                         "暂未搜到匹配的 MP3 电台，换个关键词或点选治愈标签试试。".into()
                     } else {
                         format!("已为你找到 {count} 个深夜电台，点击即可试听或收藏到刻度尺。")
@@ -217,7 +453,7 @@ impl ReadingApp {
             if elapsed >= total {
                 self.radio_sleep_started = None;
                 self.stop_radio_if_playing();
-                self.notice = Some("深夜电台伴眠定时已结束，呼吸灯已熄灭，晚安。".into());
+                self.set_radio_toast("深夜电台伴眠定时已结束，呼吸灯已熄灭，晚安。");
                 cx.notify();
             } else {
                 let (_, dim) = self.radio_sleep_remaining_and_dim();
@@ -250,6 +486,7 @@ impl ReadingApp {
                         }
                         self.radio_status.paused = true;
                         self.radio_audio_level = 0.0;
+                        self.schedule_motion_frame(window, cx);
                     }
                 } else {
                     let st = self.current_radio_station();
@@ -262,7 +499,7 @@ impl ReadingApp {
                 let title = st.name.clone();
                 let mhz = st.frequency_mhz;
                 self.tune_to_station(st, true, window, cx);
-                self.notice = Some(format!("已调频至 FM {mhz:.1} · {title}"));
+                self.set_radio_toast(format!("已调频至 FM {mhz:.1} · {title}"));
             }
             Action::RadioTuneMhz(mhz) => {
                 let stations = self.all_radio_stations();
@@ -270,7 +507,7 @@ impl ReadingApp {
                     let title = st.name.clone();
                     let actual = st.frequency_mhz;
                     self.tune_to_station(st, true, window, cx);
-                    self.notice = Some(format!("已吸附至 FM {actual:.1} · {title}"));
+                    self.set_radio_toast(format!("已吸附至 FM {actual:.1} · {title}"));
                 }
             }
             Action::RadioPrevStation => {
@@ -288,7 +525,7 @@ impl ReadingApp {
                     let st = stations[prev_idx].clone();
                     let label = format!("FM {:.1} · {}", st.frequency_mhz, st.name);
                     self.tune_to_station(st, true, window, cx);
-                    self.notice = Some(format!("已调频至 {label}"));
+                    self.set_radio_toast(format!("已调频至 {label}"));
                 }
             }
             Action::RadioNextStation => {
@@ -302,7 +539,7 @@ impl ReadingApp {
                     let st = stations[next_idx].clone();
                     let label = format!("FM {:.1} · {}", st.frequency_mhz, st.name);
                     self.tune_to_station(st, true, window, cx);
-                    self.notice = Some(format!("已调频至 {label}"));
+                    self.set_radio_toast(format!("已调频至 {label}"));
                 }
             }
             Action::RadioNextSegment => {
@@ -323,10 +560,10 @@ impl ReadingApp {
                     .position(|f| f == &id)
                 {
                     self.store.state.radio.favorites.remove(pos);
-                    self.notice = Some("已从红心频段移出。".into());
+                    self.set_radio_toast("已从红心频段移出。");
                 } else {
                     self.store.state.radio.favorites.push(id);
-                    self.notice = Some("已点亮红心收藏，刻度尺上会为你保留这颗星点。".into());
+                    self.set_radio_toast("已点亮红心收藏，刻度尺上会为你保留这颗星点。");
                 }
                 self.save();
             }
@@ -335,7 +572,7 @@ impl ReadingApp {
                 self.store.state.radio.lamp_color = resolved.id().into();
                 self.save();
                 self.schedule_motion_frame(window, cx);
-                self.notice = Some(format!("呼吸灯色温已切至「{}」。", resolved.label()));
+                self.set_radio_toast(format!("氛围灯色温已切至「{}」。", resolved.label()));
             }
             Action::RadioLampMode(mode) => {
                 let resolved = RadioLampMode::from_id(&mode);
@@ -345,7 +582,7 @@ impl ReadingApp {
                 }
                 self.save();
                 self.schedule_motion_frame(window, cx);
-                self.notice = Some(format!(
+                self.set_radio_toast(format!(
                     "呼吸灯律动已切换为「{}」（{}）。",
                     resolved.label(),
                     resolved.hint()
@@ -355,6 +592,14 @@ impl ReadingApp {
                 let steps =
                     (self.store.state.radio.volume * 20.0).round() as i32 + delta as i32;
                 let clamped = (steps as f32 / 20.0).clamp(0.05, 1.0);
+                self.store.state.radio.volume = clamped;
+                if let Some(p) = &self.radio_player {
+                    p.set_volume(clamped);
+                }
+                self.save();
+            }
+            Action::RadioSetVolume(vol) => {
+                let clamped = vol.clamp(0.05, 1.0);
                 self.store.state.radio.volume = clamped;
                 if let Some(p) = &self.radio_player {
                     p.set_volume(clamped);
@@ -375,6 +620,15 @@ impl ReadingApp {
                 }
                 self.schedule_motion_frame(window, cx);
             }
+            Action::RadioToggleVisualMode => {
+                self.radio_visual_mode = if self.radio_visual_mode == 0 { 1 } else { 0 };
+                self.schedule_motion_frame(window, cx);
+                self.set_radio_toast(if self.radio_visual_mode == 0 {
+                    "已切至「旋转黑胶唱片」沉浸主视觉。"
+                } else {
+                    "已切至「治愈呼吸光球」床头氛围主视觉。"
+                });
+            }
             Action::RadioCycleSleepTimer => {
                 let cur_mins = if self.radio_sleep_started.is_some() {
                     self.radio_sleep_total_secs / 60
@@ -392,7 +646,7 @@ impl ReadingApp {
                     if let Some(p) = &self.radio_player {
                         p.set_fade_multiplier(1.0);
                     }
-                    self.notice = Some("已关闭电台伴眠定时。".into());
+                    self.set_radio_toast("已关闭电台伴眠定时。");
                 } else {
                     self.radio_sleep_total_secs = next_mins * 60;
                     self.radio_sleep_started = Some(Instant::now());
@@ -400,8 +654,8 @@ impl ReadingApp {
                         p.set_fade_multiplier(1.0);
                     }
                     self.schedule_motion_frame(window, cx);
-                    self.notice = Some(format!(
-                        "已开启 {next_mins} 分钟伴眠定时：最后 1 分钟音量与呼吸灯将同步缓缓渐暗。"
+                    self.set_radio_toast(format!(
+                        "已开启 {next_mins} 分钟伴眠定时：最后 1 分钟音量与氛围灯将同步渐暗。"
                     ));
                 }
             }
@@ -437,7 +691,7 @@ impl ReadingApp {
                 );
                 let (tx, rx) = mpsc::channel();
                 self.radio_search_rx = Some(rx);
-                self.notice = Some(format!("正在电台库中搜索「{query}」…"));
+                self.set_radio_toast(format!("正在电台库中搜索「{query}」…"));
                 std::thread::spawn(move || {
                     let _ = tx.send(radio::search_online_stations(&query, None));
                 });
@@ -449,7 +703,7 @@ impl ReadingApp {
                 let tag_owned = tag.to_owned();
                 let (tx, rx) = mpsc::channel();
                 self.radio_search_rx = Some(rx);
-                self.notice = Some(format!("正在寻找「{tag}」治愈频段…"));
+                self.set_radio_toast(format!("正在寻找「{tag}」治愈频段…"));
                 std::thread::spawn(move || {
                     let _ = tx.send(radio::search_online_stations("", Some(&tag_owned)));
                 });
@@ -510,7 +764,7 @@ impl ReadingApp {
                     let stations = self.all_radio_stations();
                     let st = radio::station_by_id(&stations, &hit.id);
                     self.tune_to_station(st, true, window, cx);
-                    self.notice = Some(format!(
+                    self.set_radio_toast(format!(
                         "已将「{}」收藏至 FM {:.1} 刻度尺。",
                         hit.name, hit.suggested_mhz
                     ));
@@ -562,7 +816,7 @@ impl ReadingApp {
                 let stations = self.all_radio_stations();
                 let st = radio::station_by_id(&stations, &id);
                 self.tune_to_station(st, true, window, cx);
-                self.notice = Some(format!("已收藏并调频至自定义电台「{name}」(FM {mhz:.1})。"));
+                self.set_radio_toast(format!("已收藏并调频至自定义电台「{name}」(FM {mhz:.1})。"));
             }
             Action::RadioRemoveCustomStation(id) => {
                 self.store
@@ -575,7 +829,7 @@ impl ReadingApp {
                     self.store.state.radio.current_station_id = "glow-night-talk".into();
                 }
                 self.save();
-                self.notice = Some("已移出该自定义电台频段。".into());
+                self.set_radio_toast("已移出该自定义电台频段。");
             }
             Action::RadioPickLocalFolder => {
                 self.hide(cx);
@@ -592,7 +846,7 @@ impl ReadingApp {
                     let stations = self.all_radio_stations();
                     let st = radio::station_by_id(&stations, "local-tape-fm");
                     self.tune_to_station(st, true, window, cx);
-                    self.notice = Some(if count > 0 {
+                    self.set_radio_toast(if count > 0 {
                         format!("已载入本地私藏磁带目录，共发现 {count} 首音频，正在温柔连播。")
                     } else {
                         "已保存该目录，但未找到 MP3 / WAV / OGG 文件，暂以雨夜炉火陪伴。".into()
@@ -612,13 +866,20 @@ impl ReadingApp {
                 {
                     self.tune_to_station(cur, false, window, cx);
                 }
-                self.notice = Some(format!("深夜电台主播音色已切为「{label}」。"));
+                self.set_radio_toast(format!("深夜电台主播音色已切为「{label}」。"));
             }
             Action::RadioSaveLineToJournal => {
-                let line = self.radio_status.current_line.trim().to_owned();
+                let cur = self.current_radio_station();
+                let line = if !self.radio_status.current_line.trim().is_empty()
+                    && self.radio_status.station_id == cur.id
+                {
+                    self.radio_status.current_line.trim().to_owned()
+                } else {
+                    cur.mood_line.clone()
+                };
                 anyhow::ensure!(!line.is_empty(), "当前没有可收藏的夜话句子");
                 let title = if self.radio_status.now_playing_title.is_empty() {
-                    self.current_radio_station().name
+                    cur.name
                 } else {
                     self.radio_status.now_playing_title.clone()
                 };
@@ -633,7 +894,7 @@ impl ReadingApp {
                     },
                     None,
                 )?;
-                self.notice = Some("已把这句深夜电台夜话温柔收入私人手账。".into());
+                self.set_radio_toast("已把这句深夜电台夜话温柔收入私人手账。");
             }
             _ => {}
         }
@@ -761,9 +1022,9 @@ impl ReadingApp {
             .into_any_element()
     }
 
-    // ================= UI: Glow FM Late-Night Sanctuary Page =================
+    // ================= UI: Glow FM Immersive Sanctuary Page =================
     #[inline(never)]
-    pub(super) fn radio_page(&self, _window: &Window, cx: &Context<Self>) -> AnyElement {
+    pub(super) fn radio_page(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
         let snap = self.motion_snapshot();
         let lamp_color = RadioLampColor::from_id(&self.store.state.radio.lamp_color);
         let lamp_mode = RadioLampMode::from_id(&self.store.state.radio.lamp_mode);
@@ -780,38 +1041,70 @@ impl ReadingApp {
             .any(|f| f == &current.id);
         let (sleep_rem, dim_factor) = self.radio_sleep_remaining_and_dim();
         let breathe_elapsed = self.radio_breathe_started.elapsed().as_secs_f32();
+        let station_scene = radio::station_scene_asset(&current.id);
 
-        let display_mhz = if self.radio_status.playing && self.radio_status.frequency_mhz > 0.0 {
+        let station_mhz = if self.radio_status.playing && self.radio_status.frequency_mhz > 0.0 {
             self.radio_status.frequency_mhz
         } else {
             current.frequency_mhz
+        };
+        let dial_mhz = if self.radio_dial_dragging {
+            self.radio_drag_mhz.unwrap_or(self.radio_dial_display_mhz)
+        } else if self.radio_dial_display_mhz >= 88.0 && self.radio_dial_display_mhz <= 108.0 {
+            self.radio_dial_display_mhz
+        } else {
+            station_mhz
+        };
+        let drag_nearest = if self.radio_dial_dragging {
+            radio::nearest_station_for_mhz(&stations, dial_mhz)
+        } else {
+            None
+        };
+        let locked_marker_mhz = drag_nearest
+            .as_ref()
+            .map(|s| s.frequency_mhz)
+            .or(Some(station_mhz));
+
+        let display_mhz = if self.radio_dial_dragging {
+            dial_mhz
+        } else {
+            station_mhz
         };
         let display_name = if self.radio_status.playing && !self.radio_status.station_name.is_empty() {
             self.radio_status.station_name.clone()
         } else {
             current.name.clone()
         };
+        let (fallback_title, fallback_line, fallback_hint) =
+            radio::initial_copy_for_station(&current, &[]);
+        let display_title = if !self.radio_status.now_playing_title.is_empty()
+            && self.radio_status.station_id == current.id
+        {
+            self.radio_status.now_playing_title.clone()
+        } else {
+            fallback_title
+        };
         let display_line = if !self.radio_status.current_line.is_empty()
             && self.radio_status.station_id == current.id
         {
             self.radio_status.current_line.clone()
         } else {
-            current.mood_line.clone()
+            fallback_line
         };
         let display_hint = if !self.radio_status.source_hint.is_empty()
             && self.radio_status.station_id == current.id
         {
             self.radio_status.source_hint.clone()
         } else {
-            current.subtitle.clone()
+            fallback_hint
         };
 
-        let text_warm = rgb(0xf4ebe0);
-        let text_muted = rgb(0xa89f96);
+        let text_warm = rgb(0xf6efe6);
+        let text_muted = rgb(0xaba197);
         let primary = rgb(primary_hex);
         let core = rgb(core_hex);
 
-        // ---- Pure-Glow Zen Mode (Minimalist Bedside Breathing Lamp Only) ----
+        // ---- Pure-Glow Zen Mode (Minimalist Full-Room Bedside Breathing Lamp Only) ----
         if self.radio_pure_glow {
             let bp_cue = if lamp_mode == RadioLampMode::Breathe478 {
                 let bp = prism::breathing_phase(breathe_elapsed);
@@ -824,20 +1117,47 @@ impl ReadingApp {
                 .debug_selector(|| "radio-pure-glow-stage".into())
                 .relative()
                 .size_full()
+                .overflow_hidden()
                 .items_center()
                 .justify_between()
                 .p_8()
                 .bg(rgb(stage_bg_hex))
                 .child(
+                    img(station_scene)
+                        .absolute()
+                        .inset_0()
+                        .size_full()
+                        .object_fit(ObjectFit::Cover)
+                        .opacity(0.11 * dim_factor),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .size_full()
+                        .bg(rgb(stage_bg_hex).opacity(0.84)),
+                )
+                .child(prism::radio_ambient_room_canvas(
+                    snap.clone(),
+                    lamp_color,
+                    lamp_mode,
+                    self.radio_audio_level,
+                    breathe_elapsed,
+                    playing_active,
+                    dim_factor,
+                    true,
+                ))
+                .child(
                     h_flex()
+                        .relative()
                         .w_full()
                         .justify_between()
                         .items_center()
                         .child(
                             div()
-                                .text_size(px(11.))
+                                .text_size(px(11.5))
                                 .font_family(self.ui_font())
-                                .text_color(text_muted.opacity(0.45 * dim_factor))
+                                .text_color(text_muted.opacity(0.55 * dim_factor))
                                 .child(if let Some(rem) = sleep_rem {
                                     format!("伴眠渐暗 {:02}:{:02}", rem / 60, rem % 60)
                                 } else {
@@ -849,16 +1169,16 @@ impl ReadingApp {
                                 .id("radio-exit-pure-glow")
                                 .debug_selector(|| "radio-exit-pure-glow".into())
                                 .cursor_pointer()
-                                .px_3()
+                                .px_3p5()
                                 .py_1p5()
                                 .rounded_full()
-                                .bg(rgb(0xffffff).opacity(0.06))
+                                .bg(rgb(0xffffff).opacity(0.07))
                                 .border_1()
-                                .border_color(rgb(0xffffff).opacity(0.12))
-                                .hover(|s| s.bg(rgb(0xffffff).opacity(0.12)))
+                                .border_color(rgb(0xffffff).opacity(0.14))
+                                .hover(|s| s.bg(rgb(0xffffff).opacity(0.14)))
                                 .text_size(px(11.))
                                 .font_family(self.ui_font())
-                                .text_color(text_muted.opacity(0.75))
+                                .text_color(text_warm.opacity(0.78))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|this, _, window, cx| {
@@ -870,6 +1190,7 @@ impl ReadingApp {
                 )
                 .child(
                     v_flex()
+                        .relative()
                         .items_center()
                         .gap_5()
                         .child(
@@ -892,51 +1213,53 @@ impl ReadingApp {
                                     breathe_elapsed,
                                     playing_active,
                                     dim_factor,
-                                    true,
+                                    368.0,
                                 )),
                         )
                         .child(
                             v_flex()
                                 .items_center()
                                 .gap_2()
-                                .max_w(px(520.))
+                                .max_w(px(560.))
                                 .child(
                                     div()
-                                        .text_size(px(18.))
+                                        .text_size(px(20.))
                                         .font_family(self.display_font())
-                                        .text_color(core.opacity(0.72 * dim_factor))
+                                        .text_color(core.opacity(0.78 * dim_factor))
                                         .child(format!("FM {display_mhz:.1}  ·  {display_name}")),
                                 )
-                                .when_some(bp_cue, |el, cue| {
-                                    el.child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .font_family(self.ui_font())
-                                            .text_color(primary.opacity(0.78 * dim_factor))
-                                            .child(cue),
-                                    )
-                                })
                                 .child(
                                     div()
+                                        .h(px(22.))
+                                        .text_size(px(12.))
+                                        .font_family(self.ui_font())
+                                        .text_color(primary.opacity(0.82 * dim_factor))
+                                        .child(bp_cue.unwrap_or_default()),
+                                )
+                                .child(
+                                    div()
+                                        .h(px(74.))
+                                        .overflow_hidden()
                                         .text_center()
-                                        .text_size(px(13.5))
+                                        .text_size(px(14.))
                                         .font_family(self.display_font())
                                         .line_height(relative(1.75))
-                                        .text_color(text_warm.opacity(0.56 * dim_factor))
+                                        .text_color(text_warm.opacity(0.60 * dim_factor))
                                         .child(display_line),
                                 ),
                         ),
                 )
                 .child(
                     h_flex()
+                        .relative()
                         .gap_3()
                         .items_center()
-                        .px_4()
+                        .px_5()
                         .py_2()
                         .rounded_full()
-                        .bg(rgb(0xffffff).opacity(0.05))
+                        .bg(rgb(0xffffff).opacity(0.06))
                         .border_1()
-                        .border_color(rgb(0xffffff).opacity(0.09))
+                        .border_color(rgb(0xffffff).opacity(0.11))
                         .child(
                             div()
                                 .id("pure-prev-st")
@@ -944,7 +1267,7 @@ impl ReadingApp {
                                 .px_2()
                                 .text_size(px(11.5))
                                 .font_family(self.ui_font())
-                                .text_color(text_muted.opacity(0.70))
+                                .text_color(text_muted.opacity(0.78))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|this, _, window, cx| {
@@ -957,13 +1280,15 @@ impl ReadingApp {
                             div()
                                 .id("pure-play-toggle")
                                 .cursor_pointer()
-                                .px_3p5()
+                                .w(px(64.))
+                                .flex()
+                                .justify_center()
                                 .py_1()
                                 .rounded_full()
-                                .bg(primary.opacity(0.22 * dim_factor))
+                                .bg(primary.opacity(0.24 * dim_factor))
                                 .text_size(px(11.5))
                                 .font_family(self.ui_font())
-                                .text_color(core.opacity(0.88 * dim_factor))
+                                .text_color(core.opacity(0.92 * dim_factor))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|this, _, window, cx| {
@@ -979,7 +1304,7 @@ impl ReadingApp {
                                 .px_2()
                                 .text_size(px(11.5))
                                 .font_family(self.ui_font())
-                                .text_color(text_muted.opacity(0.70))
+                                .text_color(text_muted.opacity(0.78))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|this, _, window, cx| {
@@ -992,23 +1317,37 @@ impl ReadingApp {
                 .into_any_element();
         }
 
-        // ---- Standard Cozy Glow FM Studio Sanctuary ----
-        let status_badge = if self.radio_status.connecting {
-            "调频接入中…"
+        // ---- Immersive Full-Viewport Glow FM Vinyl × Breathing Lamp Sanctuary ----
+        let vp = window.viewport_size();
+        let vp_w = f32::from(vp.width).max(640.0);
+        let vp_h = f32::from(vp.height).max(520.0);
+        let avail_w = if self.radio_hide_sidebar {
+            vp_w
+        } else {
+            (vp_w - 240.0).max(540.0)
+        };
+        let compact = vp_h < 760.0 || avail_w < 940.0;
+        let stage_size = if compact { 324.0_f32 } else { 404.0_f32 };
+        let cover_d = (stage_size * 0.375 * 0.47 * 2.0).round();
+
+        let status_badge = if self.radio_dial_dragging {
+            "手动调频中"
+        } else if self.radio_status.connecting {
+            "信号接入中…"
         } else if self.radio_status.tuning {
-            "拨动调频中…"
+            "电波锁频中…"
         } else if self.radio_status.fallback_offline {
-            "离线柔光代播"
+            "离线微光代播"
         } else if playing_active {
             if self.radio_status.host_speaking {
-                "ON AIR · 主播夜话"
+                "ON AIR · 夜话中"
             } else {
-                "ON AIR · 深夜播映"
+                "ON AIR · 播映中"
             }
         } else if self.radio_status.playing && self.radio_status.paused {
-            "已暂停 · 等你回来"
+            "PAUSED · 已暂停"
         } else {
-            "STANDBY · 轻触开播"
+            "STANDBY · 待开播"
         };
 
         let sleep_label = if let Some(rem) = sleep_rem {
@@ -1017,8 +1356,9 @@ impl ReadingApp {
             "伴眠定时".into()
         };
 
-        let mut top_actions = h_flex().gap_2().items_center().flex_wrap();
-        top_actions = top_actions
+        // 1. Fixed-height floating glass header bar (54px)
+        let mut top_right = h_flex().gap_2().items_center().flex_shrink_0();
+        top_right = top_right
             .child(
                 h_flex()
                     .id("radio-sleep-btn")
@@ -1038,7 +1378,7 @@ impl ReadingApp {
                     .border_color(if sleep_rem.is_some() {
                         primary.opacity(0.55)
                     } else {
-                        rgb(0xffffff).opacity(0.12)
+                        rgb(0xffffff).opacity(0.11)
                     })
                     .hover(|s| s.border_color(primary.opacity(0.6)))
                     .on_mouse_down(
@@ -1072,7 +1412,7 @@ impl ReadingApp {
                     .rounded_full()
                     .bg(rgb(0xffffff).opacity(0.06))
                     .border_1()
-                    .border_color(rgb(0xffffff).opacity(0.12))
+                    .border_color(rgb(0xffffff).opacity(0.11))
                     .hover(|s| s.bg(primary.opacity(0.18)).border_color(primary.opacity(0.5)))
                     .on_mouse_down(
                         MouseButton::Left,
@@ -1088,57 +1428,9 @@ impl ReadingApp {
                             .text_color(text_warm)
                             .child("纯享微光"),
                     ),
-            )
-            .child(
-                h_flex()
-                    .id("radio-immersive-btn")
-                    .debug_selector(|| "radio-immersive-btn".into())
-                    .cursor_pointer()
-                    .gap_1p5()
-                    .items_center()
-                    .px_3()
-                    .py_1p5()
-                    .rounded_full()
-                    .bg(if self.radio_hide_sidebar {
-                        primary.opacity(0.20)
-                    } else {
-                        rgb(0xffffff).opacity(0.06)
-                    })
-                    .border_1()
-                    .border_color(if self.radio_hide_sidebar {
-                        primary.opacity(0.48)
-                    } else {
-                        rgb(0xffffff).opacity(0.12)
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, window, cx| {
-                            this.act(Action::RadioToggleImmersive, window, cx);
-                        }),
-                    )
-                    .child(
-                        Icon::new(if self.radio_hide_sidebar {
-                            IconName::Minimize2
-                        } else {
-                            IconName::Focus
-                        })
-                        .size(px(12.5))
-                        .text_color(text_muted),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .font_family(self.ui_font())
-                            .text_color(text_warm)
-                            .child(if self.radio_hide_sidebar {
-                                "显示侧栏"
-                            } else {
-                                "全屏沉浸"
-                            }),
-                    ),
             );
         if self.active_book.is_some() {
-            top_actions = top_actions.child(
+            top_right = top_right.child(
                 h_flex()
                     .id("radio-back-reader")
                     .cursor_pointer()
@@ -1147,9 +1439,10 @@ impl ReadingApp {
                     .px_3()
                     .py_1p5()
                     .rounded_full()
-                    .bg(primary.opacity(0.14))
+                    .bg(primary.opacity(0.15))
                     .border_1()
-                    .border_color(primary.opacity(0.36))
+                    .border_color(primary.opacity(0.38))
+                    .hover(|s| s.bg(primary.opacity(0.24)))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, window, cx| {
@@ -1168,9 +1461,11 @@ impl ReadingApp {
         }
 
         let top_bar = h_flex()
+            .relative()
             .w_full()
+            .h(px(54.))
+            .flex_shrink_0()
             .px_6()
-            .py_3p5()
             .justify_between()
             .items_center()
             .border_b_1()
@@ -1181,17 +1476,102 @@ impl ReadingApp {
                     .items_center()
                     .child(
                         h_flex()
+                            .id("radio-back-shelf")
+                            .debug_selector(|| "radio-back-shelf".into())
+                            .cursor_pointer()
+                            .gap_1p5()
+                            .items_center()
+                            .px_3()
+                            .py_1p5()
+                            .rounded_full()
+                            .bg(rgb(0xffffff).opacity(0.06))
+                            .border_1()
+                            .border_color(rgb(0xffffff).opacity(0.11))
+                            .hover(|s| s.bg(rgb(0xffffff).opacity(0.12)))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, window, cx| {
+                                    this.act(Action::Page(Page::Shelf), window, cx);
+                                }),
+                            )
+                            .child(
+                                Icon::new(IconName::ArrowLeft)
+                                    .size(px(12.5))
+                                    .text_color(text_warm),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(text_warm)
+                                    .child("返回书架"),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .id("radio-immersive-btn")
+                            .debug_selector(|| "radio-immersive-btn".into())
+                            .cursor_pointer()
+                            .gap_1p5()
+                            .items_center()
+                            .px_2p5()
+                            .py_1p5()
+                            .rounded_full()
+                            .bg(if !self.radio_hide_sidebar {
+                                primary.opacity(0.20)
+                            } else {
+                                rgb(0xffffff).opacity(0.05)
+                            })
+                            .border_1()
+                            .border_color(if !self.radio_hide_sidebar {
+                                primary.opacity(0.45)
+                            } else {
+                                rgb(0xffffff).opacity(0.10)
+                            })
+                            .hover(|s| s.border_color(primary.opacity(0.48)))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, window, cx| {
+                                    this.act(Action::RadioToggleImmersive, window, cx);
+                                }),
+                            )
+                            .child(
+                                Icon::new(if self.radio_hide_sidebar {
+                                    IconName::PanelLeftOpen
+                                } else {
+                                    IconName::PanelLeftClose
+                                })
+                                .size(px(12.5))
+                                .text_color(text_muted),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(text_muted)
+                                    .child(if self.radio_hide_sidebar {
+                                        "侧栏"
+                                    } else {
+                                        "收起侧栏"
+                                    }),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .w(px(122.))
+                            .justify_center()
                             .gap_1p5()
                             .items_center()
                             .px_2p5()
                             .py_1()
                             .rounded_full()
-                            .bg(primary.opacity(0.16))
+                            .bg(primary.opacity(0.15))
                             .border_1()
-                            .border_color(primary.opacity(0.38))
+                            .border_color(primary.opacity(0.36))
                             .child(
                                 div()
                                     .size(px(6.))
+                                    .flex_shrink_0()
                                     .rounded_full()
                                     .bg(if playing_active { primary } else { text_muted }),
                             )
@@ -1207,45 +1587,497 @@ impl ReadingApp {
                         div()
                             .text_size(px(11.))
                             .font_family(self.ui_font())
-                            .text_color(text_muted)
-                            .child(format!("深夜电台 · GLOW FM  ·  {}", local_clock_hm())),
+                            .text_color(text_muted.opacity(0.85))
+                            .child(format!("GLOW FM · {}", local_clock_hm())),
                     ),
             )
-            .child(top_actions);
+            .child(top_right);
 
-        // Breathing 4-7-8 subtle cadence hint if enabled
-        let breath_hint_pill = if lamp_mode == RadioLampMode::Breathe478 {
-            let bp = prism::breathing_phase(breathe_elapsed);
-            Some(
-                h_flex()
-                    .gap_2()
+        // 2. Left Hero Visual Stage: Spinning Vinyl Turntable OR Breathing Glow Orb (fixed size!)
+        let turntable_visual: AnyElement = if self.radio_visual_mode == 0 {
+            div()
+                .relative()
+                .size(px(stage_size))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(prism::radio_vinyl_underlay_canvas(
+                    snap.clone(),
+                    lamp_color,
+                    lamp_mode,
+                    self.radio_audio_level,
+                    breathe_elapsed,
+                    self.radio_vinyl_angle,
+                    playing_active,
+                    self.radio_dial_dragging,
+                    dim_factor,
+                    stage_size,
+                ))
+                .child(
+                    div()
+                        .absolute()
+                        .size(px(cover_d))
+                        .rounded(px(cover_d * 0.5))
+                        .overflow_hidden()
+                        .child(
+                            img(station_scene)
+                                .size(px(cover_d))
+                                .rounded(px(cover_d * 0.5))
+                                .object_fit(ObjectFit::Cover)
+                                .opacity(0.94 * dim_factor),
+                        ),
+                )
+                .child(prism::radio_vinyl_overlay_canvas(
+                    snap.clone(),
+                    lamp_color,
+                    self.radio_audio_level,
+                    self.radio_vinyl_angle,
+                    self.radio_tonearm_pos,
+                    playing_active,
+                    dim_factor,
+                    stage_size,
+                ))
+                .into_any_element()
+        } else {
+            prism::radio_breathing_lamp_canvas(
+                snap.clone(),
+                lamp_color,
+                lamp_mode,
+                self.radio_audio_level,
+                breathe_elapsed,
+                playing_active,
+                dim_factor,
+                stage_size,
+            )
+            .into_any_element()
+        };
+
+        let left_hero = v_flex()
+            .flex_shrink_0()
+            .w(px(stage_size))
+            .items_center()
+            .gap_1p5()
+            .child(
+                div()
+                    .id("radio-lamp-stage")
+                    .debug_selector(|| "radio-lamp-stage".into())
+                    .cursor_pointer()
+                    .size(px(stage_size))
+                    .flex()
                     .items_center()
-                    .px_3p5()
-                    .py_1()
-                    .rounded_full()
-                    .bg(primary.opacity(0.14))
-                    .border_1()
-                    .border_color(primary.opacity(0.32))
+                    .justify_center()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                            if event.click_count >= 2 {
+                                this.act(Action::RadioTogglePureGlow, window, cx);
+                            }
+                        }),
+                    )
+                    .child(turntable_visual),
+            )
+            .child(
+                div()
+                    .h(px(18.))
+                    .text_size(px(10.))
+                    .font_family(self.ui_font())
+                    .text_color(text_muted.opacity(0.62))
+                    .child(if self.radio_visual_mode == 0 {
+                        "旋转黑胶唱片 · 双击进入纯享微光"
+                    } else {
+                        "床头呼吸氛围灯 · 双击进入纯享微光"
+                    }),
+            );
+
+        // 3. Right Editorial Lyric / Night-Talk & Fixed 2x4 Station Preset Stage (ZERO JITTER!)
+        let is_host_or_local = matches!(
+            current.kind,
+            RadioStationKind::NightHost
+                | RadioStationKind::BookEchoHost
+                | RadioStationKind::LocalFolder
+        );
+        let subtitle_line = if lamp_mode == RadioLampMode::Breathe478 {
+            let bp = prism::breathing_phase(breathe_elapsed);
+            format!("4-7-8 助眠呼吸 · {} {}s · {}", bp.label, bp.seconds_left, bp.cue)
+        } else {
+            display_hint
+        };
+
+        let card_h = if compact { 164.0_f32 } else { 196.0_f32 };
+        let lyric_card = v_flex()
+            .w_full()
+            .h(px(card_h))
+            .flex_shrink_0()
+            .rounded_2xl()
+            .bg(rgb(0x0b0c12).opacity(0.48))
+            .border_1()
+            .border_color(primary.opacity(0.22))
+            .overflow_hidden()
+            .child(
+                v_flex()
+                    .id("radio-story-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px_5()
+                    .py_4()
+                    .gap_2()
                     .child(
-                        div()
-                            .text_size(px(11.5))
-                            .font_family(self.display_font())
-                            .text_color(core)
-                            .child(format!("{} · {}s", bp.label, bp.seconds_left)),
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(primary.opacity(0.88))
+                                    .text_ellipsis()
+                                    .child(format!("✦  {display_title}")),
+                            )
+                            .child(self.waveform_bars(playing_active, &[4., 10., 6., 12., 5.])),
                     )
                     .child(
                         div()
-                            .text_size(px(10.5))
-                            .font_family(self.ui_font())
-                            .text_color(text_muted)
-                            .child(bp.cue),
+                            .text_size(px(if compact { 14.5 } else { 15.5 }))
+                            .font_family(self.display_font())
+                            .line_height(relative(1.85))
+                            .text_color(text_warm.opacity(0.92))
+                            .child(display_line),
                     ),
             )
-        } else {
-            None
-        };
+            .child(
+                h_flex()
+                    .h(px(38.))
+                    .flex_shrink_0()
+                    .px_4()
+                    .items_center()
+                    .justify_between()
+                    .bg(rgb(0xffffff).opacity(0.025))
+                    .border_t_1()
+                    .border_color(rgb(0xffffff).opacity(0.07))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(10.))
+                            .font_family(self.ui_font())
+                            .text_color(text_muted.opacity(0.75))
+                            .text_ellipsis()
+                            .child(if self.radio_status.fallback_offline {
+                                "离线微光琴韵温柔代播中".to_owned()
+                            } else if let Some(meta) = &self.radio_status.stream_meta {
+                                meta.clone()
+                            } else {
+                                "沉浸伴听 · 切回书架仍可在后台轻声播放".to_owned()
+                            }),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .flex_shrink_0()
+                            .when(is_host_or_local, |el| {
+                                el.child(
+                                    div()
+                                        .id("radio-next-segment")
+                                        .cursor_pointer()
+                                        .px_2p5()
+                                        .py_1()
+                                        .rounded_full()
+                                        .bg(rgb(0xffffff).opacity(0.07))
+                                        .border_1()
+                                        .border_color(rgb(0xffffff).opacity(0.11))
+                                        .hover(|s| s.border_color(primary.opacity(0.55)))
+                                        .text_size(px(10.))
+                                        .font_family(self.ui_font())
+                                        .text_color(text_warm.opacity(0.86))
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(|this, _, window, cx| {
+                                                this.act(Action::RadioNextSegment, window, cx);
+                                            }),
+                                        )
+                                        .child(if current.kind == RadioStationKind::LocalFolder {
+                                            "下一首"
+                                        } else {
+                                            "换一句"
+                                        }),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .id("radio-save-journal")
+                                    .cursor_pointer()
+                                    .px_2p5()
+                                    .py_1()
+                                    .rounded_full()
+                                    .bg(primary.opacity(0.14))
+                                    .border_1()
+                                    .border_color(primary.opacity(0.32))
+                                    .hover(|s| s.bg(primary.opacity(0.24)))
+                                    .text_size(px(10.))
+                                    .font_family(self.ui_font())
+                                    .text_color(core)
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, window, cx| {
+                                            this.act(Action::RadioSaveLineToJournal, window, cx);
+                                        }),
+                                    )
+                                    .child("收入手账"),
+                            ),
+                    ),
+            );
 
-        // Interactive 88.0 - 108.0 MHz FM dial bar (20 responsive hit slots overlaid on GPU scale)
+        // Fixed-height 2×4 symmetrical station preset grid (76px total — NEVER wraps or shifts!)
+        let mut preset_slots: Vec<RadioStation> = stations.iter().take(8).cloned().collect();
+        if stations.len() > 8
+            && !preset_slots.iter().any(|s| s.id == current.id)
+            && let Some(last) = preset_slots.last_mut()
+        {
+            *last = current.clone();
+        }
+        let render_preset_row = |slice: &[RadioStation]| {
+            let mut row = h_flex().w_full().h(px(34.)).gap_1p5().items_center();
+            for st in slice {
+                let active = st.id == current.id;
+                let previewed = drag_nearest.as_ref().is_some_and(|d| d.id == st.id);
+                let fav = self
+                    .store
+                    .state
+                    .radio
+                    .favorites
+                    .iter()
+                    .any(|f| f == &st.id);
+                let sid = st.id.clone();
+                row = row.child(
+                    h_flex()
+                        .id(SharedString::from(format!("fm-pill-{}", st.id)))
+                        .cursor_pointer()
+                        .flex_1()
+                        .min_w_0()
+                        .h(px(34.))
+                        .gap_1()
+                        .items_center()
+                        .px_2p5()
+                        .rounded_xl()
+                        .bg(if previewed {
+                            primary.opacity(0.32)
+                        } else if active {
+                            primary.opacity(0.22)
+                        } else {
+                            rgb(0xffffff).opacity(0.045)
+                        })
+                        .border_1()
+                        .border_color(if previewed || active {
+                            primary.opacity(0.68)
+                        } else {
+                            rgb(0xffffff).opacity(0.09)
+                        })
+                        .hover(|s| s.border_color(primary.opacity(0.55)))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, window, cx| {
+                                this.act(Action::RadioTuneStation(sid.clone()), window, cx);
+                            }),
+                        )
+                        .child(
+                            div()
+                                .size(px(5.5))
+                                .flex_shrink_0()
+                                .rounded_full()
+                                .bg(if active || previewed {
+                                    core
+                                } else if fav {
+                                    primary
+                                } else {
+                                    text_muted.opacity(0.45)
+                                }),
+                        )
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_size(px(9.5))
+                                .font_family(self.ui_font())
+                                .text_color(if active || previewed { core } else { text_muted })
+                                .child(format!("{:.1}", st.frequency_mhz)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(px(10.5))
+                                .font_family(self.ui_font())
+                                .text_color(if active || previewed {
+                                    text_warm
+                                } else {
+                                    text_muted
+                                })
+                                .text_ellipsis()
+                                .child(st.name.clone()),
+                        ),
+                );
+            }
+            row
+        };
+        let row1_end = preset_slots.len().min(4);
+        let preset_grid = v_flex()
+            .w_full()
+            .h(px(74.))
+            .flex_shrink_0()
+            .gap_1p5()
+            .child(render_preset_row(&preset_slots[..row1_end]))
+            .child(render_preset_row(&preset_slots[row1_end..]));
+
+        let right_editorial = v_flex()
+            .flex_1()
+            .min_w_0()
+            .max_w(px(540.))
+            .gap_3()
+            .child(
+                // Fixed-height station headline (42px)
+                h_flex()
+                    .w_full()
+                    .h(px(42.))
+                    .flex_shrink_0()
+                    .gap_3()
+                    .items_center()
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .w(px(116.))
+                            .text_size(px(28.))
+                            .font_family(self.display_font())
+                            .text_color(if self.radio_dial_dragging { primary } else { core })
+                            .child(format!("FM {display_mhz:.1}")),
+                    )
+                    .child(
+                        div()
+                            .w(px(1.))
+                            .h(px(22.))
+                            .flex_shrink_0()
+                            .bg(rgb(0xffffff).opacity(0.18)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(21.))
+                            .font_family(self.display_font())
+                            .text_color(text_warm)
+                            .text_ellipsis()
+                            .child(
+                                drag_nearest
+                                    .as_ref()
+                                    .map(|s| s.name.clone())
+                                    .unwrap_or(display_name),
+                            ),
+                    )
+                    .child({
+                        let fav_id = current.id.clone();
+                        div()
+                            .id("radio-fav-btn")
+                            .debug_selector(|| "radio-fav-btn".into())
+                            .cursor_pointer()
+                            .flex_shrink_0()
+                            .size(px(34.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_full()
+                            .bg(if is_fav {
+                                primary.opacity(0.24)
+                            } else {
+                                rgb(0xffffff).opacity(0.06)
+                            })
+                            .border_1()
+                            .border_color(if is_fav {
+                                primary.opacity(0.65)
+                            } else {
+                                rgb(0xffffff).opacity(0.12)
+                            })
+                            .hover(|s| s.border_color(primary.opacity(0.6)))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, window, cx| {
+                                    this.act(
+                                        Action::RadioToggleFavorite(fav_id.clone()),
+                                        window,
+                                        cx,
+                                    );
+                                }),
+                            )
+                            .child(
+                                Icon::new(IconName::Heart)
+                                    .size(px(14.))
+                                    .text_color(if is_fav { primary } else { text_muted }),
+                            )
+                    }),
+            )
+            .child(
+                // Fixed-height badge + subtitle / 4-7-8 cadence slot (26px)
+                h_flex()
+                    .w_full()
+                    .h(px(26.))
+                    .flex_shrink_0()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .px_2p5()
+                            .py_0p5()
+                            .rounded_full()
+                            .bg(primary.opacity(0.16))
+                            .border_1()
+                            .border_color(primary.opacity(0.32))
+                            .text_size(px(10.))
+                            .font_family(self.ui_font())
+                            .text_color(core)
+                            .child(current.kind.badge_label()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(11.5))
+                            .font_family(self.ui_font())
+                            .text_color(if lamp_mode == RadioLampMode::Breathe478 {
+                                core.opacity(0.88)
+                            } else {
+                                text_muted
+                            })
+                            .text_ellipsis()
+                            .child(subtitle_line),
+                    ),
+            )
+            .child(lyric_card)
+            .child(preset_grid);
+
+        let hero_stage = div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .px_8()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                h_flex()
+                    .w_full()
+                    .max_w(px(1060.))
+                    .items_center()
+                    .justify_center()
+                    .gap(px(if compact { 24. } else { 44. }))
+                    .child(left_hero)
+                    .child(right_editorial),
+            );
+
+        // 4. Full-Width Draggable Analog 88.0 – 108.0 MHz FM Tuner Deck (fixed 96px)
         let markers: Vec<(f32, bool)> = stations
             .iter()
             .map(|s| {
@@ -1255,347 +2087,118 @@ impl ReadingApp {
                 )
             })
             .collect();
-        let mut hit_strip = h_flex()
-            .absolute()
-            .inset_0()
-            .px(px(18.))
-            .items_center();
-        for band in 0..20usize {
-            let slot_mhz = 88.5 + band as f32;
-            hit_strip = hit_strip.child(
-                div()
-                    .id(SharedString::from(format!("fm-band-{band}")))
-                    .cursor_pointer()
-                    .flex_1()
-                    .h_full()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _, window, cx| {
-                            this.act(Action::RadioTuneMhz(slot_mhz), window, cx);
-                        }),
-                    ),
-            );
-        }
-
-        let dial_card = v_flex()
+        let tuner_status_text = if let Some(ref target) = drag_nearest {
+            format!(
+                "拖动调频 FM {:.1}  →  松手吸附 FM {:.1} · {}",
+                dial_mhz, target.frequency_mhz, target.name
+            )
+        } else {
+            format!("当前锁频 FM {:.1} · {}", station_mhz, current.name)
+        };
+        let tuner_deck = div()
+            .relative()
             .w_full()
-            .max_w(px(760.))
-            .px_4()
-            .py_3()
-            .gap_2()
-            .rounded_2xl()
-            .bg(rgb(0xffffff).opacity(0.035))
-            .border_1()
-            .border_color(primary.opacity(0.20))
+            .flex_shrink_0()
+            .px_8()
+            .pb_2p5()
+            .flex()
+            .justify_center()
             .child(
-                h_flex()
-                    .justify_between()
-                    .items_center()
-                    .px_2()
-                    .children(["88", "90", "92", "94", "96", "98", "100", "102", "104", "106", "108 MHz"].into_iter().map(
-                        |lbl| {
-                            div()
-                                .text_size(px(9.5))
-                                .font_family(self.ui_font())
-                                .text_color(text_muted.opacity(0.75))
-                                .child(lbl)
-                        },
-                    )),
-            )
-            .child(
-                div()
-                    .relative()
+                v_flex()
                     .w_full()
-                    .child(prism::fm_tuner_dial_canvas(
-                        snap.clone(),
-                        display_mhz,
-                        markers,
-                        lamp_color,
-                        playing_active,
-                    ))
-                    .child(hit_strip),
-            )
-            .child({
-                let mut pills = h_flex().gap_1p5().flex_wrap().justify_center().pt_1();
-                for st in stations.iter().take(10) {
-                    let active = st.id == current.id;
-                    let fav = self
-                        .store
-                        .state
-                        .radio
-                        .favorites
-                        .iter()
-                        .any(|f| f == &st.id);
-                    let sid = st.id.clone();
-                    pills = pills.child(
+                    .max_w(px(1060.))
+                    .h(px(96.))
+                    .px_4()
+                    .py_2()
+                    .justify_between()
+                    .rounded_2xl()
+                    .bg(rgb(0x0b0c12).opacity(0.46))
+                    .border_1()
+                    .border_color(if self.radio_dial_dragging {
+                        primary.opacity(0.48)
+                    } else {
+                        primary.opacity(0.20)
+                    })
+                    .child(
                         h_flex()
-                            .id(SharedString::from(format!("fm-pill-{}", st.id)))
-                            .cursor_pointer()
-                            .gap_1()
+                            .h(px(16.))
+                            .justify_between()
                             .items_center()
-                            .px_2p5()
-                            .py_1()
-                            .rounded_full()
-                            .bg(if active {
-                                primary.opacity(0.24)
-                            } else {
-                                rgb(0xffffff).opacity(0.045)
-                            })
-                            .border_1()
-                            .border_color(if active {
-                                primary.opacity(0.70)
-                            } else {
-                                rgb(0xffffff).opacity(0.10)
-                            })
-                            .hover(|s| s.border_color(primary.opacity(0.55)))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, window, cx| {
-                                    this.act(Action::RadioTuneStation(sid.clone()), window, cx);
-                                }),
-                            )
-                            .when(fav, |el| {
-                                el.child(
-                                    Icon::new(IconName::Heart)
-                                        .size(px(9.5))
-                                        .text_color(primary),
-                                )
-                            })
+                            .px_1()
                             .child(
                                 div()
                                     .text_size(px(10.))
                                     .font_family(self.ui_font())
-                                    .text_color(if active { core } else { text_muted })
-                                    .child(format!("{:.1}", st.frequency_mhz)),
+                                    .text_color(text_muted.opacity(0.76))
+                                    .child("88.0 — 108.0 MHz  ·  按住指针左右拖动调频 / 滚轮切台"),
                             )
                             .child(
                                 div()
                                     .text_size(px(10.5))
                                     .font_family(self.ui_font())
-                                    .text_color(if active { text_warm } else { text_muted })
-                                    .child(st.name.clone()),
+                                    .text_color(if self.radio_dial_dragging { core } else { primary })
+                                    .child(tuner_status_text),
                             ),
-                    );
-                }
-                pills
-            });
-
-        // Subtle monologue / track helper actions
-        let is_host_or_local = matches!(
-            current.kind,
-            RadioStationKind::NightHost
-                | RadioStationKind::BookEchoHost
-                | RadioStationKind::LocalFolder
-        );
-        let mut story_actions = h_flex().gap_2().items_center().justify_center();
-        if is_host_or_local {
-            story_actions = story_actions.child(
-                div()
-                    .id("radio-next-segment")
-                    .cursor_pointer()
-                    .px_2p5()
-                    .py_1()
-                    .rounded_full()
-                    .bg(rgb(0xffffff).opacity(0.06))
-                    .border_1()
-                    .border_color(rgb(0xffffff).opacity(0.11))
-                    .hover(|s| s.border_color(primary.opacity(0.5)))
-                    .text_size(px(10.5))
-                    .font_family(self.ui_font())
-                    .text_color(text_muted)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, window, cx| {
-                            this.act(Action::RadioNextSegment, window, cx);
-                        }),
                     )
-                    .child(if current.kind == RadioStationKind::LocalFolder {
-                        "下一首磁带"
-                    } else {
-                        "换一句夜话"
-                    }),
-            );
-        }
-        if matches!(
-            current.kind,
-            RadioStationKind::NightHost | RadioStationKind::BookEchoHost
-        ) {
-            story_actions = story_actions.child(
-                div()
-                    .id("radio-save-journal")
-                    .cursor_pointer()
-                    .px_2p5()
-                    .py_1()
-                    .rounded_full()
-                    .bg(rgb(0xffffff).opacity(0.06))
-                    .border_1()
-                    .border_color(rgb(0xffffff).opacity(0.11))
-                    .hover(|s| s.border_color(primary.opacity(0.5)))
-                    .text_size(px(10.5))
-                    .font_family(self.ui_font())
-                    .text_color(text_muted)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, window, cx| {
-                            this.act(Action::RadioSaveLineToJournal, window, cx);
-                        }),
+                    .child(
+                        h_flex()
+                            .h(px(13.))
+                            .justify_between()
+                            .items_center()
+                            .px_3()
+                            .children(
+                                [
+                                    "88", "90", "92", "94", "96", "98", "100", "102", "104",
+                                    "106", "108 MHz",
+                                ]
+                                .into_iter()
+                                .map(|lbl| {
+                                    div()
+                                        .text_size(px(9.))
+                                        .font_family(self.ui_font())
+                                        .text_color(text_muted.opacity(0.68))
+                                        .child(lbl)
+                                }),
+                            ),
                     )
-                    .child("收入微光手账"),
-            );
-        }
-
-        let center_stage = v_flex()
-            .id("radio-center-scroll")
-            .overflow_y_scroll()
-            .flex_1()
-            .min_h_0()
-            .w_full()
-            .items_center()
-            .px_6()
-            .py_2p5()
-            .gap_2p5()
-            .child(
-                v_flex()
-                    .items_center()
-                    .gap_1()
                     .child(
                         div()
-                            .id("radio-lamp-stage")
-                            .debug_selector(|| "radio-lamp-stage".into())
-                            .cursor_pointer()
+                            .id("radio-dial-track")
+                            .debug_selector(|| "radio-dial-track".into())
+                            .relative()
+                            .w_full()
+                            .h(px(54.))
+                            .cursor(if self.radio_dial_dragging {
+                                CursorStyle::ClosedHand
+                            } else {
+                                CursorStyle::OpenHand
+                            })
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                                    if event.click_count >= 2 {
-                                        this.act(Action::RadioTogglePureGlow, window, cx);
-                                    }
+                                    this.begin_radio_dial_drag(event.position, window, cx);
+                                    cx.stop_propagation();
                                 }),
                             )
-                            .child(prism::radio_breathing_lamp_canvas(
+                            .on_scroll(cx.listener(
+                                |this, event: &ScrollEvent, window, cx| {
+                                    this.on_radio_dial_scroll(event, window, cx);
+                                },
+                            ))
+                            .child(prism::fm_tuner_dial_canvas(
                                 snap.clone(),
+                                dial_mhz,
+                                locked_marker_mhz,
+                                markers,
                                 lamp_color,
-                                lamp_mode,
-                                self.radio_audio_level,
-                                breathe_elapsed,
                                 playing_active,
-                                dim_factor,
-                                false,
+                                self.radio_dial_dragging,
+                                Arc::clone(&self.radio_dial_bounds),
                             )),
-                    )
-                    .when_some(breath_hint_pill, |el, pill| el.child(pill))
-                    .child(
-                        div()
-                            .text_size(px(9.5))
-                            .font_family(self.ui_font())
-                            .text_color(text_muted.opacity(0.58))
-                            .child("双击光晕进入纯享微光 · 闭上眼睛听一会儿"),
                     ),
-            )
-            // Station headline + Favorite Heart + Warm Late-Night Copy
-            .child(
-                v_flex()
-                    .items_center()
-                    .gap_2()
-                    .max_w(px(620.))
-                    .child(
-                        h_flex()
-                            .gap_2p5()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                div()
-                                    .text_size(px(26.))
-                                    .font_family(self.display_font())
-                                    .text_color(core)
-                                    .child(format!("FM {display_mhz:.1}")),
-                            )
-                            .child(
-                                div()
-                                    .w(px(1.))
-                                    .h(px(18.))
-                                    .bg(rgb(0xffffff).opacity(0.18)),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(20.))
-                                    .font_family(self.display_font())
-                                    .text_color(text_warm)
-                                    .child(display_name),
-                            )
-                            .child({
-                                let fav_id = current.id.clone();
-                                div()
-                                    .id("radio-fav-btn")
-                                    .debug_selector(|| "radio-fav-btn".into())
-                                    .cursor_pointer()
-                                    .p_1p5()
-                                    .rounded_full()
-                                    .bg(if is_fav {
-                                        primary.opacity(0.24)
-                                    } else {
-                                        rgb(0xffffff).opacity(0.06)
-                                    })
-                                    .border_1()
-                                    .border_color(if is_fav {
-                                        primary.opacity(0.65)
-                                    } else {
-                                        rgb(0xffffff).opacity(0.12)
-                                    })
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |this, _, window, cx| {
-                                            this.act(
-                                                Action::RadioToggleFavorite(fav_id.clone()),
-                                                window,
-                                                cx,
-                                            );
-                                        }),
-                                    )
-                                    .child(
-                                        Icon::new(IconName::Heart)
-                                            .size(px(13.5))
-                                            .text_color(if is_fav { primary } else { text_muted }),
-                                    )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .text_center()
-                            .text_size(px(14.5))
-                            .font_family(self.display_font())
-                            .line_height(relative(1.75))
-                            .text_color(text_warm.opacity(0.90))
-                            .child(display_line),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                div()
-                                    .px_2()
-                                    .py_0p5()
-                                    .rounded_full()
-                                    .bg(primary.opacity(0.14))
-                                    .text_size(px(9.5))
-                                    .font_family(self.ui_font())
-                                    .text_color(core)
-                                    .child(current.kind.badge_label()),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .font_family(self.ui_font())
-                                    .text_color(text_muted)
-                                    .child(display_hint),
-                            ),
-                    )
-                    .when(is_host_or_local, |el| el.child(story_actions)),
-            )
-            .child(dial_card);
+            );
 
-        // ---- Bottom Cozy Control Dock (Lamp swatches + Transport + Volume + Explore) ----
+        // 5. Bottom Immersive Glass Control Dock (fixed 70px, rock-solid 3-zone grid!)
         let mut lamp_swatches = h_flex().gap_1p5().items_center();
         for c in RadioLampColor::ALL {
             let (c_hex, _, _, _) = c.palette();
@@ -1620,7 +2223,7 @@ impl ReadingApp {
                             this.act(Action::RadioLampColor(cid.clone()), window, cx);
                         }),
                     )
-                    .child(div().size(px(14.)).rounded_full().bg(rgb(c_hex))),
+                    .child(div().size(px(13.)).rounded_full().bg(rgb(c_hex))),
             );
         }
 
@@ -1628,6 +2231,11 @@ impl ReadingApp {
         for m in RadioLampMode::ALL {
             let active = m == lamp_mode;
             let mid = m.id().to_owned();
+            let short_label = match m {
+                RadioLampMode::Audio => "声波",
+                RadioLampMode::Breathe478 => "4-7-8",
+                RadioLampMode::Steady => "暖灯",
+            };
             mode_pills = mode_pills.child(
                 div()
                     .id(SharedString::from(format!("lamp-mode-{}", m.id())))
@@ -1656,50 +2264,79 @@ impl ReadingApp {
                             this.act(Action::RadioLampMode(mid.clone()), window, cx);
                         }),
                     )
-                    .child(m.label()),
+                    .child(short_label),
             );
         }
 
         let vol_pct = (self.store.state.radio.volume.clamp(0.05, 1.0) * 100.0).round() as u32;
         let bottom_dock = h_flex()
+            .relative()
             .w_full()
+            .h(px(70.))
+            .flex_shrink_0()
             .px_6()
-            .py_3p5()
             .justify_between()
             .items_center()
             .gap_4()
             .bg(rgb(0x090a0f).opacity(0.76))
             .border_t_1()
             .border_color(primary.opacity(0.18))
-            .child(
-                v_flex()
-                    .gap_1p5()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                div()
-                                    .text_size(px(10.))
-                                    .font_family(self.ui_font())
-                                    .text_color(text_muted)
-                                    .child(format!("呼吸灯 · {}", lamp_color.label())),
-                            )
-                            .child(lamp_swatches),
-                    )
-                    .child(mode_pills),
-            )
-            // Center Transport Cluster
+            // Left: Breathing Lamp Color + Cadence + Vinyl/Orb visual toggle
             .child(
                 h_flex()
-                    .gap_3()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_2p5()
+                    .items_center()
+                    .child(lamp_swatches)
+                    .child(div().w(px(1.)).h(px(18.)).bg(rgb(0xffffff).opacity(0.12)))
+                    .child(mode_pills)
+                    .child(div().w(px(1.)).h(px(18.)).bg(rgb(0xffffff).opacity(0.12)))
+                    .child(
+                        div()
+                            .id("radio-visual-toggle")
+                            .debug_selector(|| "radio-visual-toggle".into())
+                            .cursor_pointer()
+                            .px_2p5()
+                            .py_1()
+                            .rounded_lg()
+                            .bg(rgb(0xffffff).opacity(0.06))
+                            .border_1()
+                            .border_color(rgb(0xffffff).opacity(0.12))
+                            .hover(|s| s.border_color(primary.opacity(0.55)))
+                            .text_size(px(10.))
+                            .font_family(self.ui_font())
+                            .text_color(text_warm.opacity(0.88))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, window, cx| {
+                                    this.act(Action::RadioToggleVisualMode, window, cx);
+                                }),
+                            )
+                            .child(if self.radio_visual_mode == 0 {
+                                "切光球"
+                            } else {
+                                "切黑胶"
+                            }),
+                    ),
+            )
+            // Center: Rock-solid fixed-width circular Transport Cluster (NEVER shifts!)
+            .child(
+                h_flex()
+                    .w(px(176.))
+                    .flex_shrink_0()
+                    .justify_center()
+                    .gap_4()
                     .items_center()
                     .child(
                         div()
                             .id("radio-prev-btn")
                             .debug_selector(|| "radio-prev-btn".into())
                             .cursor_pointer()
-                            .p_2()
+                            .size(px(36.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
                             .rounded_full()
                             .bg(rgb(0xffffff).opacity(0.06))
                             .border_1()
@@ -1718,14 +2355,14 @@ impl ReadingApp {
                             ),
                     )
                     .child(
-                        h_flex()
+                        div()
                             .id("radio-play-btn")
                             .debug_selector(|| "radio-play-btn".into())
                             .cursor_pointer()
-                            .gap_2()
+                            .size(px(48.))
+                            .flex()
                             .items_center()
-                            .px_6()
-                            .py_2p5()
+                            .justify_center()
                             .rounded_full()
                             .bg(primary)
                             .hover(|s| s.opacity(0.92))
@@ -1738,25 +2375,12 @@ impl ReadingApp {
                             )
                             .child(
                                 Icon::new(if playing_active {
-                                    IconName::Volume2
+                                    IconName::Pause
                                 } else {
-                                    IconName::AudioLines
+                                    IconName::Play
                                 })
-                                .size(px(15.))
+                                .size(px(19.))
                                 .text_color(rgb(0x141010)),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(13.))
-                                    .font_family(self.ui_font())
-                                    .text_color(rgb(0x141010))
-                                    .child(if playing_active {
-                                        "暂停电台"
-                                    } else if self.radio_status.playing {
-                                        "继续收听"
-                                    } else {
-                                        "点亮并开播"
-                                    }),
                             ),
                     )
                     .child(
@@ -1764,7 +2388,10 @@ impl ReadingApp {
                             .id("radio-next-btn")
                             .debug_selector(|| "radio-next-btn".into())
                             .cursor_pointer()
-                            .p_2()
+                            .size(px(36.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
                             .rounded_full()
                             .bg(rgb(0xffffff).opacity(0.06))
                             .border_1()
@@ -1783,16 +2410,19 @@ impl ReadingApp {
                             ),
                     ),
             )
-            // Right Volume + Explore Drawer Trigger
+            // Right: Draggable Smooth Volume Slider + Explore Drawer Trigger
             .child(
                 h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .justify_end()
                     .gap_2p5()
                     .items_center()
                     .child(
                         h_flex()
                             .gap_1()
                             .items_center()
-                            .px_2()
+                            .px_2p5()
                             .py_1()
                             .rounded_full()
                             .bg(rgb(0xffffff).opacity(0.05))
@@ -1802,7 +2432,7 @@ impl ReadingApp {
                                 div()
                                     .id("radio-vol-down")
                                     .cursor_pointer()
-                                    .px_1p5()
+                                    .px_1()
                                     .text_size(px(12.))
                                     .text_color(text_warm)
                                     .on_mouse_down(
@@ -1815,16 +2445,32 @@ impl ReadingApp {
                             )
                             .child(
                                 div()
-                                    .text_size(px(10.5))
-                                    .font_family(self.ui_font())
-                                    .text_color(text_muted)
-                                    .child(format!("{vol_pct}%")),
+                                    .id("radio-vol-track")
+                                    .debug_selector(|| "radio-vol-track".into())
+                                    .cursor(if self.radio_vol_dragging {
+                                        CursorStyle::ClosedHand
+                                    } else {
+                                        CursorStyle::OpenHand
+                                    })
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                                            this.begin_radio_vol_drag(event.position, window, cx);
+                                            cx.stop_propagation();
+                                        }),
+                                    )
+                                    .child(prism::radio_volume_bar_canvas(
+                                        self.store.state.radio.volume,
+                                        lamp_color,
+                                        self.radio_vol_dragging,
+                                        Arc::clone(&self.radio_vol_bounds),
+                                    )),
                             )
                             .child(
                                 div()
                                     .id("radio-vol-up")
                                     .cursor_pointer()
-                                    .px_1p5()
+                                    .px_1()
                                     .text_size(px(12.))
                                     .text_color(text_warm)
                                     .on_mouse_down(
@@ -1834,6 +2480,15 @@ impl ReadingApp {
                                         }),
                                     )
                                     .child("+"),
+                            )
+                            .child(
+                                div()
+                                    .w(px(30.))
+                                    .text_right()
+                                    .text_size(px(10.))
+                                    .font_family(self.ui_font())
+                                    .text_color(text_muted)
+                                    .child(format!("{vol_pct}%")),
                             ),
                     )
                     .child(
@@ -1841,6 +2496,7 @@ impl ReadingApp {
                             .id("radio-drawer-btn")
                             .debug_selector(|| "radio-drawer-btn".into())
                             .cursor_pointer()
+                            .flex_shrink_0()
                             .gap_1p5()
                             .items_center()
                             .px_3p5()
@@ -1871,16 +2527,88 @@ impl ReadingApp {
                     ),
             );
 
+        // 6. Floating non-layout-shifting toast pill (absolute overlay -> 0px layout impact!)
+        let floating_toast = self.error.as_ref().or(self.notice.as_ref()).map(|msg| {
+            let is_err = self.error.is_some();
+            div()
+                .absolute()
+                .top(px(62.))
+                .left_0()
+                .right_0()
+                .flex()
+                .justify_center()
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .px_4()
+                        .py_1p5()
+                        .rounded_full()
+                        .bg(rgb(0x131118).opacity(0.90))
+                        .border_1()
+                        .border_color(if is_err {
+                            rgb(0xf48c7a).opacity(0.55)
+                        } else {
+                            primary.opacity(0.42)
+                        })
+                        .shadow_md()
+                        .child(
+                            Icon::new(if is_err {
+                                IconName::CircleAlert
+                            } else {
+                                IconName::Sparkles
+                            })
+                            .size(px(12.5))
+                            .text_color(if is_err { rgb(0xf48c7a) } else { core }),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .font_family(self.ui_font())
+                                .text_color(if is_err { rgb(0xf48c7a) } else { text_warm })
+                                .child(msg.clone()),
+                        ),
+                )
+        });
+
         v_flex()
             .id("radio-page")
             .debug_selector(|| "radio-page".into())
             .relative()
             .size_full()
+            .overflow_hidden()
             .bg(rgb(stage_bg_hex))
             .text_color(text_warm)
+            .child(
+                img(station_scene)
+                    .absolute()
+                    .inset_0()
+                    .size_full()
+                    .object_fit(ObjectFit::Cover)
+                    .opacity(0.22 * dim_factor),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .size_full()
+                    .bg(rgb(stage_bg_hex).opacity(0.76)),
+            )
+            .child(prism::radio_ambient_room_canvas(
+                snap,
+                lamp_color,
+                lamp_mode,
+                self.radio_audio_level,
+                breathe_elapsed,
+                playing_active,
+                dim_factor,
+                false,
+            ))
             .child(top_bar)
-            .child(center_stage)
+            .child(hero_stage)
+            .child(tuner_deck)
             .child(bottom_dock)
+            .when_some(floating_toast, |el, toast| el.child(toast))
             .into_any_element()
     }
 

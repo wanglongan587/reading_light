@@ -2767,6 +2767,7 @@ dependencies = [
  "reqwest",
  "rfd",
  "rodio",
+ "rustls",
  "serde",
  "serde_json",
  "tempfile",

@@ -16,6 +16,7 @@ extern crate gpui_kit as gpui;
 use gpui_kit::*;
 
 fn main() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     if let Err(error) = run() {
         eprintln!("微光阅读启动失败：{error:#}");
         if !std::env::args().any(|a| a == "--smoke-test" || a == "--check-mood") {

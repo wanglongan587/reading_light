@@ -1,6 +1,7 @@
 use gpui_kit::*;
 use std::{
     collections::VecDeque,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -1842,11 +1843,35 @@ impl RadioLampMode {
     }
 }
 
-/// Multi-layer GPU healing breathing lamp centerpiece for the Glow FM late-night radio page.
-/// Supports 4 warm color temperatures, 3 breathing cadences (audio-reactive / 4-7-8 / steady),
-/// live RMS resonance ripples, drifting night fireflies, and sleep-timer dimming.
+fn radio_breath_factor(
+    reduced_motion: bool,
+    phase: f32,
+    lamp_mode: RadioLampMode,
+    level: f32,
+    breathe_elapsed: f32,
+) -> f32 {
+    if reduced_motion {
+        0.78 + level * 0.06
+    } else {
+        match lamp_mode {
+            RadioLampMode::Audio => {
+                let natural = 0.72 + 0.11 * (phase * 0.68).sin();
+                (natural + level * 0.22).clamp(0.54, 1.08)
+            }
+            RadioLampMode::Breathe478 => {
+                let bp = breathing_phase(breathe_elapsed);
+                (bp.radius_factor + level * 0.05).clamp(0.42, 1.08)
+            }
+            RadioLampMode::Steady => 0.82 + 0.025 * (phase * 0.42).sin(),
+        }
+    }
+}
+
+/// Full-viewport GPU breathing ambient room atmosphere behind the Glow FM immersive stage.
+/// Paints volumetric multi-zone warm halos synced to audio/4-7-8 breath cadence, drifting firefly
+/// bokeh dust across the room, and soft cinema vignette framing.
 #[allow(clippy::too_many_arguments)]
-pub fn radio_breathing_lamp_canvas(
+pub fn radio_ambient_room_canvas(
     snap: MotionSnapshot,
     lamp_color: RadioLampColor,
     lamp_mode: RadioLampMode,
@@ -1856,6 +1881,225 @@ pub fn radio_breathing_lamp_canvas(
     dim_factor: f32,
     pure_glow: bool,
 ) -> impl IntoElement {
+    let (primary_hex, core_hex, outer_hex, stage_bg_hex) = lamp_color.palette();
+    let dim = dim_factor.clamp(0.08, 1.0);
+    let level = if playing {
+        audio_level.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let ox = f32::from(bounds.origin.x);
+            let oy = f32::from(bounds.origin.y);
+            let w = f32::from(bounds.size.width).max(1.0);
+            let h = f32::from(bounds.size.height).max(1.0);
+            let p = if snap.reduced_motion { 0.0 } else { snap.phase };
+            let breath = radio_breath_factor(snap.reduced_motion, p, lamp_mode, level, breathe_elapsed);
+
+            let primary = Hsla::from(rgb(primary_hex));
+            let core = Hsla::from(rgb(core_hex));
+            let outer = Hsla::from(rgb(outer_hex));
+            let stage_bg = Hsla::from(rgb(stage_bg_hex));
+
+            // 1. Primary volumetric breathing lamp wash behind hero turntable / orb
+            let main_x = if pure_glow { ox + w * 0.50 } else { ox + w * 0.30 };
+            let main_y = if pure_glow { oy + h * 0.48 } else { oy + h * 0.45 };
+            let drift_x = if snap.reduced_motion { 0.0 } else { (p * 0.24).sin() * 14.0 };
+            let drift_y = if snap.reduced_motion { 0.0 } else { (p * 0.19).cos() * 10.0 };
+            let base_r = (w.min(h) * if pure_glow { 0.30 } else { 0.28 }).max(110.0) * breath;
+
+            paint_glow_orb(
+                window,
+                point(px(main_x + drift_x), px(main_y + drift_y)),
+                base_r * 0.96,
+                210.0,
+                outer.opacity((0.24 + level * 0.14) * dim),
+            );
+            paint_glow_orb(
+                window,
+                point(px(main_x - drift_x * 0.4), px(main_y - drift_y * 0.4)),
+                base_r * 0.62,
+                138.0,
+                primary.opacity((0.22 + level * 0.12) * dim),
+            );
+
+            // 2. Counterweight atmospheric blooms across opposite corners for cinema depth
+            if !pure_glow {
+                paint_glow_orb(
+                    window,
+                    point(px(ox + w * 0.80 - drift_x * 0.8), px(oy + h * 0.25 + drift_y)),
+                    (w.min(h) * 0.18).max(70.0) * (0.85 + 0.15 * breath),
+                    175.0,
+                    outer.opacity((0.15 + level * 0.08) * dim),
+                );
+                paint_glow_orb(
+                    window,
+                    point(px(ox + w * 0.55), px(oy + h * 0.86)),
+                    (w.min(h) * 0.16).max(60.0),
+                    150.0,
+                    primary.opacity((0.12 + level * 0.07) * dim),
+                );
+            }
+
+            // 3. Soft drifting night fireflies & warm starlight bokeh across the room
+            if !snap.reduced_motion {
+                let mote_count = if pure_glow { 26usize } else { 22usize };
+                for i in 0..mote_count {
+                    let seed = i as f32 * 1.618_034;
+                    let fx = ((seed * 0.73 + p * 0.008 * (1.0 + (i % 3) as f32 * 0.35))
+                        .rem_euclid(1.0))
+                        * w
+                        + ox;
+                    let fy_base = ((seed * 1.37).rem_euclid(1.0)) * h + oy;
+                    let fy = fy_base + (p * (0.28 + (i % 4) as f32 * 0.07) + seed * 4.0).sin() * 14.0;
+                    let twinkle = 0.20 + 0.80 * ((p * 0.95 + seed * 3.1).sin() * 0.5 + 0.5);
+                    let r = 1.2 + (i % 4) as f32 * 0.55;
+                    let col = if i % 3 == 0 {
+                        core.opacity(0.36 * twinkle * dim)
+                    } else {
+                        primary.opacity(0.28 * twinkle * dim)
+                    };
+                    if i % 5 == 0 {
+                        paint_glow_orb(window, point(px(fx), px(fy)), r * 1.6, 12.0, col.opacity(0.45));
+                    }
+                    window.paint_quad(PaintQuad {
+                        bounds: Bounds::new(
+                            point(px(fx - r), px(fy - r)),
+                            size(px(r * 2.0), px(r * 2.0)),
+                        ),
+                        corner_radii: Corners::all(px(r)),
+                        background: col.into(),
+                        border_widths: Edges::default(),
+                        border_color: transparent_black(),
+                        border_style: BorderStyle::default(),
+                    });
+                }
+            }
+
+            // 4. Subtle top & bottom gradient scrim so controls float cleanly over the ambient glow
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(point(px(ox), px(oy)), size(px(w), px(74.0))),
+                corner_radii: Corners::default(),
+                background: linear_gradient(
+                    180.0,
+                    linear_color_stop(stage_bg.opacity(0.76), 0.0),
+                    linear_color_stop(stage_bg.opacity(0.0), 1.0),
+                ),
+                border_widths: Edges::default(),
+                border_color: transparent_black(),
+                border_style: BorderStyle::default(),
+            });
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(
+                    point(px(ox), px(oy + (h - 92.0).max(0.0))),
+                    size(px(w), px(92.0)),
+                ),
+                corner_radii: Corners::default(),
+                background: linear_gradient(
+                    180.0,
+                    linear_color_stop(stage_bg.opacity(0.0), 0.0),
+                    linear_color_stop(stage_bg.opacity(0.84), 1.0),
+                ),
+                border_widths: Edges::default(),
+                border_color: transparent_black(),
+                border_style: BorderStyle::default(),
+            });
+        },
+    )
+    .absolute()
+    .inset_0()
+    .size_full()
+}
+
+/// Paints a smooth curved wedge fan between `r_inner` and `r_outer` spanning `start_angle..end_angle`.
+#[allow(clippy::too_many_arguments)]
+fn paint_radial_wedge(
+    window: &mut Window,
+    cx: f32,
+    cy: f32,
+    r_inner: f32,
+    r_outer: f32,
+    start_angle: f32,
+    end_angle: f32,
+    steps: usize,
+    color: Hsla,
+) {
+    if color.a <= 0.002 || r_outer <= r_inner || steps < 2 {
+        return;
+    }
+    let mut pb = PathBuilder::fill();
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let a = start_angle + (end_angle - start_angle) * t;
+        let pt = point(px(cx + a.cos() * r_outer), px(cy + a.sin() * r_outer));
+        if i == 0 {
+            pb.move_to(pt);
+        } else {
+            pb.line_to(pt);
+        }
+    }
+    for i in (0..=steps).rev() {
+        let t = i as f32 / steps as f32;
+        let a = start_angle + (end_angle - start_angle) * t;
+        pb.line_to(point(px(cx + a.cos() * r_inner), px(cy + a.sin() * r_inner)));
+    }
+    pb.close();
+    if let Ok(path) = pb.build() {
+        window.paint_path(path, color);
+    }
+}
+
+/// Paints a smooth circular arc stroke around `(cx, cy)` with radius `r`.
+#[allow(clippy::too_many_arguments)]
+fn paint_arc_stroke(
+    window: &mut Window,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    start_angle: f32,
+    end_angle: f32,
+    width: f32,
+    steps: usize,
+    color: Hsla,
+) {
+    if color.a <= 0.002 || r <= 1.0 || width <= 0.1 || steps < 2 {
+        return;
+    }
+    let mut pb = PathBuilder::stroke(px(width));
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let a = start_angle + (end_angle - start_angle) * t;
+        let pt = point(px(cx + a.cos() * r), px(cy + a.sin() * r));
+        if i == 0 {
+            pb.move_to(pt);
+        } else {
+            pb.line_to(pt);
+        }
+    }
+    if let Ok(path) = pb.build() {
+        window.paint_path(path, color);
+    }
+}
+
+/// Underlay GPU canvas for the NetEase Cloud Music × MineRadio spinning vinyl turntable:
+/// breathing ambient aura, 64-bar radial audio spectrum corona, frosted glass rim, matte obsidian
+/// platter, micro-grooves, rotating anisotropic specular reflections, and strobe rim dots.
+#[allow(clippy::too_many_arguments)]
+pub fn radio_vinyl_underlay_canvas(
+    snap: MotionSnapshot,
+    lamp_color: RadioLampColor,
+    lamp_mode: RadioLampMode,
+    audio_level: f32,
+    breathe_elapsed: f32,
+    vinyl_angle: f32,
+    playing: bool,
+    dragging_dial: bool,
+    dim_factor: f32,
+    stage_size: f32,
+) -> impl IntoElement {
     let (primary_hex, core_hex, outer_hex, _) = lamp_color.palette();
     let dim = dim_factor.clamp(0.08, 1.0);
     let level = if playing {
@@ -1863,7 +2107,6 @@ pub fn radio_breathing_lamp_canvas(
     } else {
         0.0
     };
-    let canvas_sz = if pure_glow { 336.0 } else { 216.0 };
 
     canvas(
         |_, _, _| (),
@@ -1875,24 +2118,566 @@ pub fn radio_breathing_lamp_canvas(
             let cx = ox + w * 0.5;
             let cy = oy + h * 0.5;
             let center = point(px(cx), px(cy));
-            let max_r = (w.min(h) * 0.36).max(34.0);
+            let disc_r = (w.min(h) * 0.375).max(88.0);
+            let label_r = disc_r * 0.47;
+            let p = if snap.reduced_motion { 0.0 } else { snap.phase };
+            let spin = if snap.reduced_motion { 0.0 } else { vinyl_angle };
+            let breath = radio_breath_factor(snap.reduced_motion, p, lamp_mode, level, breathe_elapsed);
+
+            let primary = Hsla::from(rgb(primary_hex));
+            let core = Hsla::from(rgb(core_hex));
+            let outer = Hsla::from(rgb(outer_hex));
+
+            // 1. Volumetric breathing lamp aura glowing right behind the vinyl platter
+            paint_glow_orb(
+                window,
+                center,
+                disc_r * (0.90 + 0.16 * breath),
+                115.0,
+                outer.opacity((0.30 + level * 0.18) * dim),
+            );
+            paint_glow_orb(
+                window,
+                center,
+                disc_r * (0.74 + 0.12 * breath),
+                66.0,
+                primary.opacity((0.36 + level * 0.22) * dim),
+            );
+
+            // 2. Concentric soft breathing / soundwave ripples
+            for (idx, (scale, base_alpha)) in
+                [(1.25_f32, 0.10_f32), (1.13, 0.17)].into_iter().enumerate()
+            {
+                let wave = if snap.reduced_motion {
+                    0.0
+                } else {
+                    (p * 0.80 + idx as f32 * 1.5).sin() * 3.0
+                        + (breath - 0.78) * 18.0
+                        + level * (8.0 + idx as f32 * 3.0)
+                };
+                let r = (disc_r * scale + wave).max(disc_r + 10.0);
+                window.paint_quad(PaintQuad {
+                    bounds: Bounds::new(
+                        point(px(cx - r), px(cy - r)),
+                        size(px(r * 2.0), px(r * 2.0)),
+                    ),
+                    corner_radii: Corners::all(px(r)),
+                    background: transparent_black().into(),
+                    border_widths: Edges::all(px(1.0)),
+                    border_color: primary.opacity((base_alpha + level * 0.14) * dim),
+                    border_style: BorderStyle::Solid,
+                });
+            }
+
+            // 3. 64-bar radial audio spectrum corona orbiting around the vinyl platter
+            let bars = 64usize;
+            let bar_r_in = disc_r + 8.5;
+            for i in 0..bars {
+                let frac = i as f32 / bars as f32;
+                let a = frac * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+                let h1 = (a * 3.0 + p * 1.9).sin() * 0.5 + 0.5;
+                let h2 = (a * 7.0 - p * 2.7 + 1.1).sin() * 0.5 + 0.5;
+                let h3 = (a * 11.0 + p * 3.4).sin() * 0.5 + 0.5;
+                let energy = if dragging_dial {
+                    0.28 + 0.52 * h3
+                } else if playing {
+                    let active_lvl = (level * 1.35 + 0.22).clamp(0.22, 1.0);
+                    (0.18 + 0.82 * (h1 * 0.45 + h2 * 0.35 + h3 * 0.20)) * active_lvl
+                } else {
+                    0.08 + 0.08 * h1
+                };
+                let bar_len = if snap.reduced_motion {
+                    4.0 + level * 8.0
+                } else {
+                    3.0 + energy * 24.0
+                };
+                let r_out = bar_r_in + bar_len;
+                let mut pb = PathBuilder::stroke(px(2.1));
+                pb.move_to(point(px(cx + a.cos() * bar_r_in), px(cy + a.sin() * bar_r_in)));
+                pb.line_to(point(px(cx + a.cos() * r_out), px(cy + a.sin() * r_out)));
+                if let Ok(path) = pb.build() {
+                    let bar_col = if i % 4 == 0 {
+                        core.opacity((0.22 + energy * 0.62) * dim)
+                    } else {
+                        primary.opacity((0.18 + energy * 0.56) * dim)
+                    };
+                    window.paint_path(path, bar_col);
+                }
+            }
+
+            // 4. Frosted smoked-glass platter bezel ring (classic NetEase Cloud Music ring)
+            let bezel_r = disc_r + 5.0;
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(
+                    point(px(cx - bezel_r), px(cy - bezel_r)),
+                    size(px(bezel_r * 2.0), px(bezel_r * 2.0)),
+                ),
+                corner_radii: Corners::all(px(bezel_r)),
+                background: Hsla::from(rgb(0xffffff).opacity(0.055 * dim)).into(),
+                border_widths: Edges::all(px(1.2)),
+                border_color: core.opacity(0.18 * dim),
+                border_style: BorderStyle::Solid,
+            });
+
+            // 5. Matte black vinyl platter disc
+            paint_glow_orb(
+                window,
+                point(px(cx), px(cy + 6.0)),
+                disc_r * 0.94,
+                32.0,
+                Hsla::from(rgb(0x000000).opacity(0.55)),
+            );
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(
+                    point(px(cx - disc_r), px(cy - disc_r)),
+                    size(px(disc_r * 2.0), px(disc_r * 2.0)),
+                ),
+                corner_radii: Corners::all(px(disc_r)),
+                background: linear_gradient(
+                    135.0,
+                    linear_color_stop(Hsla::from(rgb(0x1f222d)), 0.0),
+                    linear_color_stop(Hsla::from(rgb(0x0a0b10)), 1.0),
+                ),
+                border_widths: Edges::all(px(1.4)),
+                border_color: Hsla::from(rgb(0xffffff).opacity(0.14 * dim)),
+                border_style: BorderStyle::Solid,
+            });
+
+            // 6. Rotating anisotropic specular light-sheen fans across the black vinyl grooves
+            let groove_in = label_r + 6.0;
+            let groove_out = disc_r - 3.5;
+            for offset in [0.0_f32, std::f32::consts::PI] {
+                paint_radial_wedge(
+                    window,
+                    cx,
+                    cy,
+                    groove_in,
+                    groove_out,
+                    spin + offset + 0.42,
+                    spin + offset + 1.08,
+                    12,
+                    Hsla::from(rgb(0xffffff).opacity(0.075 * dim)),
+                );
+                paint_radial_wedge(
+                    window,
+                    cx,
+                    cy,
+                    groove_in,
+                    groove_out,
+                    spin + offset + 0.62,
+                    spin + offset + 0.88,
+                    8,
+                    core.opacity(0.070 * dim),
+                );
+                paint_radial_wedge(
+                    window,
+                    cx,
+                    cy,
+                    groove_in,
+                    groove_out,
+                    spin + offset - 0.88,
+                    spin + offset - 0.44,
+                    10,
+                    primary.opacity(0.095 * dim),
+                );
+            }
+
+            // 7. 14 Precision concentric vinyl micro-grooves
+            let groove_count = 14usize;
+            for i in 0..groove_count {
+                let frac = (i as f32 + 0.5) / groove_count as f32;
+                let r = groove_in + frac * (groove_out - groove_in);
+                let is_track_break = i == 4 || i == 9;
+                let alpha = if is_track_break { 0.14 } else { 0.055 };
+                window.paint_quad(PaintQuad {
+                    bounds: Bounds::new(
+                        point(px(cx - r), px(cy - r)),
+                        size(px(r * 2.0), px(r * 2.0)),
+                    ),
+                    corner_radii: Corners::all(px(r)),
+                    background: transparent_black().into(),
+                    border_widths: Edges::all(px(if is_track_break { 1.1 } else { 0.7 })),
+                    border_color: Hsla::from(rgb(0xffffff).opacity(alpha * dim)),
+                    border_style: BorderStyle::Solid,
+                });
+            }
+
+            // 8. Rotating luminous groove glint arcs & Technics-style strobe rim calibration dots
+            for (idx, r_frac) in [0.28_f32, 0.58, 0.82].into_iter().enumerate() {
+                let r = groove_in + r_frac * (groove_out - groove_in);
+                let a0 = spin + idx as f32 * 2.09;
+                paint_arc_stroke(
+                    window,
+                    cx,
+                    cy,
+                    r,
+                    a0,
+                    a0 + 0.78,
+                    1.2,
+                    14,
+                    core.opacity(0.28 * dim),
+                );
+            }
+            let strobe_r = disc_r - 3.2;
+            for i in 0..24usize {
+                let a = spin + (i as f32 / 24.0) * std::f32::consts::TAU;
+                let sx = cx + a.cos() * strobe_r;
+                let sy = cy + a.sin() * strobe_r;
+                let dot_r = if i % 6 == 0 { 1.7 } else { 1.05 };
+                window.paint_quad(PaintQuad {
+                    bounds: Bounds::new(
+                        point(px(sx - dot_r), px(sy - dot_r)),
+                        size(px(dot_r * 2.0), px(dot_r * 2.0)),
+                    ),
+                    corner_radii: Corners::all(px(dot_r)),
+                    background: if i % 6 == 0 {
+                        core.opacity(0.62 * dim)
+                    } else {
+                        primary.opacity(0.32 * dim)
+                    }
+                    .into(),
+                    border_widths: Edges::default(),
+                    border_color: transparent_black(),
+                    border_style: BorderStyle::default(),
+                });
+            }
+        },
+    )
+    .size(px(stage_size))
+}
+
+/// Overlay GPU canvas painted directly on top of the circular center album artwork:
+/// rotating orbital label ring, spinning constellation/starlight ticks, brushed brass center
+/// spindle cap, and an animated NetEase Cloud Music style metallic stylus tonearm!
+#[allow(clippy::too_many_arguments)]
+pub fn radio_vinyl_overlay_canvas(
+    snap: MotionSnapshot,
+    lamp_color: RadioLampColor,
+    audio_level: f32,
+    vinyl_angle: f32,
+    tonearm_pos: f32,
+    playing: bool,
+    dim_factor: f32,
+    stage_size: f32,
+) -> impl IntoElement {
+    let (primary_hex, core_hex, _, _) = lamp_color.palette();
+    let dim = dim_factor.clamp(0.08, 1.0);
+    let level = if playing {
+        audio_level.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let arm_t = tonearm_pos.clamp(0.0, 1.0);
+
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let ox = f32::from(bounds.origin.x);
+            let oy = f32::from(bounds.origin.y);
+            let w = f32::from(bounds.size.width).max(1.0);
+            let h = f32::from(bounds.size.height).max(1.0);
+            let cx = ox + w * 0.5;
+            let cy = oy + h * 0.5;
+            let disc_r = (w.min(h) * 0.375).max(88.0);
+            let label_r = disc_r * 0.47;
+            let spin = if snap.reduced_motion { 0.0 } else { vinyl_angle };
+
+            let primary = Hsla::from(rgb(primary_hex));
+            let core = Hsla::from(rgb(core_hex));
+
+            // 1. Rotating glass glint wedge over circular album cover so the medallion visibly spins
+            paint_radial_wedge(
+                window,
+                cx,
+                cy,
+                16.0,
+                label_r - 1.5,
+                spin + 0.30,
+                spin + 1.15,
+                10,
+                Hsla::from(rgb(0xffffff).opacity(0.11 * dim)),
+            );
+            paint_radial_wedge(
+                window,
+                cx,
+                cy,
+                16.0,
+                label_r - 1.5,
+                spin + std::f32::consts::PI + 0.30,
+                spin + std::f32::consts::PI + 1.15,
+                10,
+                primary.opacity(0.09 * dim),
+            );
+
+            // 2. Engraved metallic label collar & rotating 24-tick orbital compass ring
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(
+                    point(px(cx - label_r), px(cy - label_r)),
+                    size(px(label_r * 2.0), px(label_r * 2.0)),
+                ),
+                corner_radii: Corners::all(px(label_r)),
+                background: transparent_black().into(),
+                border_widths: Edges::all(px(2.0)),
+                border_color: core.opacity(0.55 * dim),
+                border_style: BorderStyle::Solid,
+            });
+            let inner_ring_r = label_r - 7.5;
+            paint_arc_stroke(
+                window,
+                cx,
+                cy,
+                inner_ring_r,
+                spin + 0.2,
+                spin + 2.6,
+                1.2,
+                20,
+                core.opacity(0.68 * dim),
+            );
+            paint_arc_stroke(
+                window,
+                cx,
+                cy,
+                inner_ring_r,
+                spin + std::f32::consts::PI + 0.2,
+                spin + std::f32::consts::PI + 2.6,
+                1.2,
+                20,
+                primary.opacity(0.62 * dim),
+            );
+
+            // Rotating orbital ticks & 4 bright cardinal star markers around the album cover
+            for i in 0..24usize {
+                let a = spin + (i as f32 / 24.0) * std::f32::consts::TAU;
+                let is_cardinal = i % 6 == 0;
+                if is_cardinal {
+                    let sx = cx + a.cos() * (label_r - 7.5);
+                    let sy = cy + a.sin() * (label_r - 7.5);
+                    let r = 2.6;
+                    window.paint_quad(PaintQuad {
+                        bounds: Bounds::new(
+                            point(px(sx - r), px(sy - r)),
+                            size(px(r * 2.0), px(r * 2.0)),
+                        ),
+                        corner_radii: Corners::all(px(r)),
+                        background: core.opacity(0.92 * dim).into(),
+                        border_widths: Edges::default(),
+                        border_color: transparent_black(),
+                        border_style: BorderStyle::default(),
+                    });
+                } else {
+                    let r0 = label_r - 5.2;
+                    let r1 = label_r - 2.0;
+                    let mut pb = PathBuilder::stroke(px(1.0));
+                    pb.move_to(point(px(cx + a.cos() * r0), px(cy + a.sin() * r0)));
+                    pb.line_to(point(px(cx + a.cos() * r1), px(cy + a.sin() * r1)));
+                    if let Ok(path) = pb.build() {
+                        window.paint_path(path, core.opacity(0.38 * dim));
+                    }
+                }
+            }
+
+            // 3. Brushed obsidian & warm brass center spindle cap
+            let collar_r = 16.0_f32;
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(
+                    point(px(cx - collar_r), px(cy - collar_r)),
+                    size(px(collar_r * 2.0), px(collar_r * 2.0)),
+                ),
+                corner_radii: Corners::all(px(collar_r)),
+                background: Hsla::from(rgb(0x0c0d13).opacity(0.88)).into(),
+                border_widths: Edges::all(px(1.4)),
+                border_color: core.opacity(0.45 * dim),
+                border_style: BorderStyle::Solid,
+            });
+            let pin_r = 5.6_f32;
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(
+                    point(px(cx - pin_r), px(cy - pin_r)),
+                    size(px(pin_r * 2.0), px(pin_r * 2.0)),
+                ),
+                corner_radii: Corners::all(px(pin_r)),
+                background: linear_gradient(
+                    135.0,
+                    linear_color_stop(core.opacity(0.95), 0.0),
+                    linear_color_stop(primary.opacity(0.90), 1.0),
+                ),
+                border_widths: Edges::default(),
+                border_color: transparent_black(),
+                border_style: BorderStyle::default(),
+            });
+
+            // 4. Animated brushed-champagne metallic stylus tonearm (top-right gimbal mount)
+            let pivot_x = cx + disc_r * 0.92;
+            let pivot_y = cy - disc_r * 0.92;
+            // Smooth interpolation from parked (-14 deg, outside vinyl) to playing (+12 deg, mid-grooves)
+            let theta = (-14.0_f32 + arm_t * 26.0_f32).to_radians();
+            let arm_len = disc_r * 0.78;
+            let head_len = disc_r * 0.195;
+            let back_len = disc_r * 0.165;
+
+            let ux = -theta.sin();
+            let uy = theta.cos();
+            let back_x = pivot_x - ux * back_len;
+            let back_y = pivot_y - uy * back_len;
+            let elbow_x = pivot_x + ux * arm_len;
+            let elbow_y = pivot_y + uy * arm_len;
+
+            let head_theta = theta + 22.0_f32.to_radians();
+            let hx = -head_theta.sin();
+            let hy = head_theta.cos();
+            let tip_x = elbow_x + hx * head_len;
+            let tip_y = elbow_y + hy * head_len;
+
+            // Subtle drop shadow underneath the tonearm
+            {
+                let mut shadow_pb = PathBuilder::stroke(px(5.2));
+                shadow_pb.move_to(point(px(back_x + 2.0), px(back_y + 4.0)));
+                shadow_pb.line_to(point(px(elbow_x + 2.0), px(elbow_y + 4.0)));
+                shadow_pb.line_to(point(px(tip_x + 2.0), px(tip_y + 4.0)));
+                if let Ok(path) = shadow_pb.build() {
+                    window.paint_path(path, Hsla::from(rgb(0x000000).opacity(0.42)));
+                }
+            }
+
+            // Counterweight cylinder behind gimbal pivot
+            {
+                let mut cw_pb = PathBuilder::stroke(px(8.5));
+                cw_pb.move_to(point(
+                    px(pivot_x - ux * (back_len * 0.45)),
+                    px(pivot_y - uy * (back_len * 0.45)),
+                ));
+                cw_pb.line_to(point(px(back_x), px(back_y)));
+                if let Ok(path) = cw_pb.build() {
+                    window.paint_path(path, Hsla::from(rgb(0x2a2d3a).opacity(0.95)));
+                }
+            }
+
+            // Brushed metallic tubular arm shaft
+            {
+                let mut arm_pb = PathBuilder::stroke(px(3.6));
+                arm_pb.move_to(point(px(back_x), px(back_y)));
+                arm_pb.line_to(point(px(elbow_x), px(elbow_y)));
+                arm_pb.line_to(point(px(tip_x), px(tip_y)));
+                if let Ok(path) = arm_pb.build() {
+                    window.paint_path(
+                        path,
+                        linear_gradient(
+                            135.0,
+                            linear_color_stop(core.opacity(0.92 * dim), 0.0),
+                            linear_color_stop(Hsla::from(rgb(0x9b958e).opacity(0.88 * dim)), 1.0),
+                        ),
+                    );
+                }
+            }
+
+            // Matte obsidian headshell cartridge at the stylus end
+            {
+                let shell_start_x = elbow_x + hx * (head_len * 0.25);
+                let shell_start_y = elbow_y + hy * (head_len * 0.25);
+                let mut head_pb = PathBuilder::stroke(px(8.0));
+                head_pb.move_to(point(px(shell_start_x), px(shell_start_y)));
+                head_pb.line_to(point(px(tip_x), px(tip_y)));
+                if let Ok(path) = head_pb.build() {
+                    window.paint_path(path, Hsla::from(rgb(0x1b1d26).opacity(0.98)));
+                }
+                let mut accent_pb = PathBuilder::stroke(px(2.0));
+                accent_pb.move_to(point(px(shell_start_x), px(shell_start_y)));
+                accent_pb.line_to(point(px(tip_x), px(tip_y)));
+                if let Ok(path) = accent_pb.build() {
+                    window.paint_path(path, core.opacity(0.75 * dim));
+                }
+            }
+
+            // Tiny luminous ON AIR stylus tip jewel when engaged
+            if arm_t > 0.65 && playing {
+                paint_glow_orb(
+                    window,
+                    point(px(tip_x), px(tip_y)),
+                    3.2,
+                    12.0,
+                    primary.opacity((0.62 + level * 0.30) * dim),
+                );
+                let r = 2.4;
+                window.paint_quad(PaintQuad {
+                    bounds: Bounds::new(
+                        point(px(tip_x - r), px(tip_y - r)),
+                        size(px(r * 2.0), px(r * 2.0)),
+                    ),
+                    corner_radii: Corners::all(px(r)),
+                    background: core.opacity(0.95 * dim).into(),
+                    border_widths: Edges::default(),
+                    border_color: transparent_black(),
+                    border_style: BorderStyle::default(),
+                });
+            }
+
+            // Brushed gimbal pivot assembly on top
+            for (r, bg, border) in [
+                (17.5_f32, Hsla::from(rgb(0x1d202a).opacity(0.96)), core.opacity(0.35 * dim)),
+                (11.0_f32, Hsla::from(rgb(0x2f3342).opacity(0.96)), core.opacity(0.50 * dim)),
+                (4.6_f32, core.opacity(0.92 * dim), transparent_black()),
+            ] {
+                window.paint_quad(PaintQuad {
+                    bounds: Bounds::new(
+                        point(px(pivot_x - r), px(pivot_y - r)),
+                        size(px(r * 2.0), px(r * 2.0)),
+                    ),
+                    corner_radii: Corners::all(px(r)),
+                    background: bg.into(),
+                    border_widths: if border.a > 0.01 {
+                        Edges::all(px(1.2))
+                    } else {
+                        Edges::default()
+                    },
+                    border_color: border,
+                    border_style: BorderStyle::Solid,
+                });
+            }
+        },
+    )
+    .absolute()
+    .inset_0()
+    .size(px(stage_size))
+}
+
+/// Multi-layer GPU healing breathing lamp centerpiece for Glow FM orb mode & Pure-Glow Zen mode.
+/// Supports 4 warm color temperatures, 3 breathing cadences (audio-reactive / 4-7-8 / steady),
+/// live RMS resonance ripples, drifting night fireflies, and sleep-timer dimming.
+#[allow(clippy::too_many_arguments)]
+pub fn radio_breathing_lamp_canvas(
+    snap: MotionSnapshot,
+    lamp_color: RadioLampColor,
+    lamp_mode: RadioLampMode,
+    audio_level: f32,
+    breathe_elapsed: f32,
+    playing: bool,
+    dim_factor: f32,
+    stage_size: f32,
+) -> impl IntoElement {
+    let (primary_hex, core_hex, outer_hex, _) = lamp_color.palette();
+    let dim = dim_factor.clamp(0.08, 1.0);
+    let level = if playing {
+        audio_level.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let pure_glow = stage_size >= 340.0;
+
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let ox = f32::from(bounds.origin.x);
+            let oy = f32::from(bounds.origin.y);
+            let w = f32::from(bounds.size.width).max(1.0);
+            let h = f32::from(bounds.size.height).max(1.0);
+            let cx = ox + w * 0.5;
+            let cy = oy + h * 0.5;
+            let center = point(px(cx), px(cy));
+            let max_r = (w.min(h) * 0.34).max(40.0);
             let p = if snap.reduced_motion { 0.0 } else { snap.phase };
 
-            let breath_factor = if snap.reduced_motion {
-                0.78 + level * 0.06
-            } else {
-                match lamp_mode {
-                    RadioLampMode::Audio => {
-                        let natural = 0.70 + 0.12 * (p * 0.72).sin();
-                        (natural + level * 0.20).clamp(0.54, 1.06)
-                    }
-                    RadioLampMode::Breathe478 => {
-                        let bp = breathing_phase(breathe_elapsed);
-                        (bp.radius_factor + level * 0.05).clamp(0.42, 1.06)
-                    }
-                    RadioLampMode::Steady => 0.80 + 0.025 * (p * 0.45).sin(),
-                }
-            };
+            let breath_factor =
+                radio_breath_factor(snap.reduced_motion, p, lamp_mode, level, breathe_elapsed);
 
             let core_r = max_r * breath_factor;
             let primary = Hsla::from(rgb(primary_hex));
@@ -1903,31 +2688,31 @@ pub fn radio_breathing_lamp_canvas(
             paint_glow_orb(
                 window,
                 center,
-                core_r * 1.08,
-                if pure_glow { 142.0 } else { 108.0 },
-                outer.opacity((0.26 + level * 0.14) * dim),
+                core_r * 1.12,
+                if pure_glow { 148.0 } else { 116.0 },
+                outer.opacity((0.28 + level * 0.16) * dim),
             );
             // 2. Mid soothing breathing glow
             paint_glow_orb(
                 window,
                 center,
-                core_r * 0.82,
-                if pure_glow { 84.0 } else { 64.0 },
-                primary.opacity((0.40 + level * 0.16) * dim),
+                core_r * 0.84,
+                if pure_glow { 88.0 } else { 70.0 },
+                primary.opacity((0.42 + level * 0.18) * dim),
             );
 
             // 3. Delicate concentric sound/breath ripples
             for (idx, (scale, base_alpha)) in
-                [(1.28_f32, 0.11_f32), (1.06, 0.18), (0.86, 0.24)]
+                [(1.32_f32, 0.10_f32), (1.10, 0.18), (0.88, 0.26)]
                     .into_iter()
                     .enumerate()
             {
                 let ripple_wave = if snap.reduced_motion {
                     0.0
                 } else {
-                    (p * 0.85 + idx as f32 * 1.4).sin() * 3.5 + level * (6.0 + idx as f32 * 3.0)
+                    (p * 0.85 + idx as f32 * 1.4).sin() * 3.8 + level * (7.0 + idx as f32 * 3.5)
                 };
-                let r = (max_r * scale + ripple_wave).max(16.0);
+                let r = (max_r * scale + ripple_wave).max(18.0);
                 window.paint_quad(PaintQuad {
                     bounds: Bounds::new(
                         point(px(cx - r), px(cy - r)),
@@ -1936,7 +2721,7 @@ pub fn radio_breathing_lamp_canvas(
                     corner_radii: Corners::all(px(r)),
                     background: transparent_black().into(),
                     border_widths: Edges::all(px(if idx == 2 { 1.3 } else { 1.0 })),
-                    border_color: primary.opacity((base_alpha + level * 0.12) * dim),
+                    border_color: primary.opacity((base_alpha + level * 0.14) * dim),
                     border_style: BorderStyle::Solid,
                 });
             }
@@ -1953,20 +2738,20 @@ pub fn radio_breathing_lamp_canvas(
                     linear_color_stop(core.opacity(0.95 * dim), 0.0),
                     linear_color_stop(primary.opacity(0.88 * dim), 1.0),
                 ),
-                border_widths: Edges::all(px(1.4)),
-                border_color: core.opacity(0.42 * dim),
+                border_widths: Edges::all(px(1.5)),
+                border_color: core.opacity(0.46 * dim),
                 border_style: BorderStyle::Solid,
             });
 
             // 5. Inner warm vacuum-tube heart highlight
-            let heart_r = (core_r * 0.44).max(10.0);
+            let heart_r = (core_r * 0.44).max(12.0);
             let heart_center = point(px(cx - core_r * 0.14), px(cy - core_r * 0.16));
             paint_glow_orb(
                 window,
                 heart_center,
                 heart_r * 0.72,
-                26.0,
-                core.opacity(0.56 * dim),
+                28.0,
+                core.opacity(0.58 * dim),
             );
             window.paint_quad(PaintQuad {
                 bounds: Bounds::new(
@@ -1977,7 +2762,7 @@ pub fn radio_breathing_lamp_canvas(
                     size(px(heart_r * 1.04), px(heart_r * 1.04)),
                 ),
                 corner_radii: Corners::all(px(heart_r * 0.52)),
-                background: Hsla::from(rgb(0xffffff).opacity(0.28 * dim)).into(),
+                background: Hsla::from(rgb(0xffffff).opacity(0.30 * dim)).into(),
                 border_widths: Edges::default(),
                 border_color: transparent_black(),
                 border_style: BorderStyle::default(),
@@ -1985,20 +2770,20 @@ pub fn radio_breathing_lamp_canvas(
 
             // 6. Slow drifting warm firefly motes orbiting the lamp
             if !snap.reduced_motion {
-                let mote_count = if pure_glow { 14usize } else { 10usize };
+                let mote_count = if pure_glow { 16usize } else { 12usize };
                 for i in 0..mote_count {
                     let seed = i as f32 * 1.618_034;
                     let angle = p * (0.14 + (i % 3) as f32 * 0.04) + seed * 3.1;
-                    let orbit = max_r * (0.96 + 0.34 * ((seed * 2.1).sin() * 0.5 + 0.5))
-                        + level * 10.0;
+                    let orbit = max_r * (0.98 + 0.34 * ((seed * 2.1).sin() * 0.5 + 0.5))
+                        + level * 12.0;
                     let mx = cx + angle.cos() * orbit;
                     let my = cy + angle.sin() * orbit * 0.86 - ((p * 0.3 + seed).sin() * 6.0);
                     let twinkle = 0.28 + 0.72 * ((p * 1.2 + seed * 2.5).sin() * 0.5 + 0.5);
-                    let r = 1.4 + (i % 3) as f32 * 0.55;
+                    let r = 1.5 + (i % 3) as f32 * 0.55;
                     let col = if i % 2 == 0 {
-                        core.opacity(0.62 * twinkle * dim)
+                        core.opacity(0.65 * twinkle * dim)
                     } else {
-                        primary.opacity(0.52 * twinkle * dim)
+                        primary.opacity(0.55 * twinkle * dim)
                     };
                     window.paint_quad(PaintQuad {
                         bounds: Bounds::new(
@@ -2015,72 +2800,129 @@ pub fn radio_breathing_lamp_canvas(
             }
         },
     )
-    .size(px(canvas_sz))
+    .size(px(stage_size))
 }
 
-/// Retro-modern glowing 88.0 – 108.0 MHz FM tuner scale with station starlight beacons
-/// and a luminous amber/rose tuning needle.
+/// Retro-modern draggable 88.0 – 108.0 MHz analog FM tuner glass scale.
+/// Records exact layout bounds for smooth continuous mouse dragging, illuminates ticks around
+/// the active needle, highlights magnetic target station beacons, and enlarges the tactile glass
+/// drag handle while scrubbing frequencies.
+#[allow(clippy::too_many_arguments)]
 pub fn fm_tuner_dial_canvas(
     snap: MotionSnapshot,
-    current_mhz: f32,
+    display_mhz: f32,
+    nearest_station_mhz: Option<f32>,
     station_markers: Vec<(f32, bool)>,
     lamp_color: RadioLampColor,
     playing: bool,
+    dragging: bool,
+    bounds_slot: Arc<Mutex<Option<Bounds<Pixels>>>>,
 ) -> impl IntoElement {
     let (primary_hex, core_hex, _, _) = lamp_color.palette();
     canvas(
         |_, _, _| (),
         move |bounds, _, window, _| {
+            if let Ok(mut slot) = bounds_slot.lock() {
+                *slot = Some(bounds);
+            }
             let ox = f32::from(bounds.origin.x);
             let oy = f32::from(bounds.origin.y);
             let w = f32::from(bounds.size.width).max(1.0);
             let h = f32::from(bounds.size.height).max(1.0);
-            let pad_x = 18.0_f32;
+            let pad_x = 20.0_f32;
             let track_w = (w - pad_x * 2.0).max(20.0);
             let primary = Hsla::from(rgb(primary_hex));
             let core = Hsla::from(rgb(core_hex));
 
-            // Recessed vintage radio dial glass frame
+            // 1. Recessed smoked-glass vintage radio dial window
             window.paint_quad(PaintQuad {
                 bounds,
                 corner_radii: Corners::all(px(14.0)),
-                background: Hsla::from(rgb(0x0b0d14).opacity(0.78)).into(),
+                background: linear_gradient(
+                    180.0,
+                    linear_color_stop(Hsla::from(rgb(0x090b12).opacity(0.84)), 0.0),
+                    linear_color_stop(Hsla::from(rgb(0x12141e).opacity(0.76)), 1.0),
+                ),
                 border_widths: Edges::all(px(1.0)),
-                border_color: primary.opacity(0.24),
+                border_color: if dragging {
+                    primary.opacity(0.55)
+                } else {
+                    primary.opacity(0.24)
+                },
                 border_style: BorderStyle::Solid,
             });
-
-            // Subtle horizontal tuner rail
-            let rail_y = oy + h * 0.56;
+            // Subtle glass top highlight strip
             window.paint_quad(PaintQuad {
-                bounds: Bounds::new(point(px(ox + pad_x), px(rail_y)), size(px(track_w), px(1.2))),
-                corner_radii: Corners::all(px(0.6)),
-                background: primary.opacity(0.22).into(),
+                bounds: Bounds::new(
+                    point(px(ox + 10.0), px(oy + 1.5)),
+                    size(px((w - 20.0).max(4.0)), px(1.0)),
+                ),
+                corner_radii: Corners::all(px(0.5)),
+                background: Hsla::from(rgb(0xffffff).opacity(0.11)).into(),
                 border_widths: Edges::default(),
                 border_color: transparent_black(),
                 border_style: BorderStyle::default(),
             });
 
-            // 88.0 to 108.0 MHz precision scale ticks (step 0.2 MHz => 101 ticks)
+            // 2. Horizontal brass-tinted tuner rail
+            let rail_y = oy + h * 0.62;
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(point(px(ox + pad_x), px(rail_y)), size(px(track_w), px(1.5))),
+                corner_radii: Corners::all(px(0.75)),
+                background: primary.opacity(0.24).into(),
+                border_widths: Edges::default(),
+                border_color: transparent_black(),
+                border_style: BorderStyle::default(),
+            });
+
+            let cur_frac = ((display_mhz - 88.0) / 20.0).clamp(0.0, 1.0);
+            let nx = ox + pad_x + cur_frac * track_w;
+
+            // Active backlit fill along the rail from 88 MHz up to the tuning needle
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(
+                    point(px(ox + pad_x), px(rail_y - 0.5)),
+                    size(px((cur_frac * track_w).max(2.0)), px(2.5)),
+                ),
+                corner_radii: Corners::all(px(1.25)),
+                background: linear_gradient(
+                    90.0,
+                    linear_color_stop(primary.opacity(0.15), 0.0),
+                    linear_color_stop(primary.opacity(0.68), 1.0),
+                ),
+                border_widths: Edges::default(),
+                border_color: transparent_black(),
+                border_style: BorderStyle::default(),
+            });
+
+            // 3. Precision 88.0 to 108.0 MHz scale ticks (backlit warmth near needle!)
             for step in 0..=100usize {
                 let frac = step as f32 / 100.0;
                 let tx = ox + pad_x + frac * track_w;
-                let is_major = step % 10 == 0; // every 2.0 MHz
-                let is_mid = step % 5 == 0; // every 1.0 MHz
+                let dist_mhz = ((88.0 + frac * 20.0) - display_mhz).abs();
+                let proximity = (1.0 - dist_mhz / 2.2).clamp(0.0, 1.0);
+                let is_major = step % 10 == 0;
+                let is_mid = step % 5 == 0;
                 let tick_h = if is_major {
-                    18.0
+                    18.0 + proximity * 4.0
                 } else if is_mid {
-                    11.5
+                    11.5 + proximity * 3.0
                 } else {
-                    6.0
+                    6.0 + proximity * 2.5
                 };
                 let tick_w = if is_major { 1.6 } else { 1.0 };
-                let alpha = if is_major {
-                    0.62
+                let alpha = (if is_major {
+                    0.56
                 } else if is_mid {
-                    0.36
+                    0.34
                 } else {
-                    0.18
+                    0.16
+                } + proximity * 0.36)
+                    .clamp(0.0, 0.96);
+                let col = if proximity > 0.25 {
+                    core.opacity(alpha)
+                } else {
+                    core.opacity(alpha * 0.85)
                 };
                 window.paint_quad(PaintQuad {
                     bounds: Bounds::new(
@@ -2088,21 +2930,42 @@ pub fn fm_tuner_dial_canvas(
                         size(px(tick_w), px(tick_h)),
                     ),
                     corner_radii: Corners::all(px(0.6)),
-                    background: core.opacity(alpha).into(),
+                    background: col.into(),
                     border_widths: Edges::default(),
                     border_color: transparent_black(),
                     border_style: BorderStyle::default(),
                 });
             }
 
-            // Starlight station markers above the rail
+            // 4. Starlight station beacons along upper rail (magnetic lock halo on nearest station!)
             for &(mhz, is_fav) in &station_markers {
                 let frac = ((mhz - 88.0) / 20.0).clamp(0.0, 1.0);
                 let sx = ox + pad_x + frac * track_w;
-                let sy = oy + 14.0;
-                let r = if is_fav { 3.2 } else { 2.3 };
-                if is_fav {
-                    paint_glow_orb(window, point(px(sx), px(sy)), 3.2, 10.0, primary.opacity(0.55));
+                let sy = oy + 12.5;
+                let is_locked = nearest_station_mhz.is_some_and(|m| (m - mhz).abs() < 0.08);
+                let r = if is_locked {
+                    3.8
+                } else if is_fav {
+                    3.0
+                } else {
+                    2.2
+                };
+                if is_locked {
+                    paint_glow_orb(window, point(px(sx), px(sy)), 5.0, 14.0, primary.opacity(0.75));
+                    let ring_r = 6.5;
+                    window.paint_quad(PaintQuad {
+                        bounds: Bounds::new(
+                            point(px(sx - ring_r), px(sy - ring_r)),
+                            size(px(ring_r * 2.0), px(ring_r * 2.0)),
+                        ),
+                        corner_radii: Corners::all(px(ring_r)),
+                        background: transparent_black().into(),
+                        border_widths: Edges::all(px(1.1)),
+                        border_color: core.opacity(0.75),
+                        border_style: BorderStyle::Solid,
+                    });
+                } else if is_fav {
+                    paint_glow_orb(window, point(px(sx), px(sy)), 3.0, 9.0, primary.opacity(0.48));
                 }
                 window.paint_quad(PaintQuad {
                     bounds: Bounds::new(
@@ -2110,8 +2973,8 @@ pub fn fm_tuner_dial_canvas(
                         size(px(r * 2.0), px(r * 2.0)),
                     ),
                     corner_radii: Corners::all(px(r)),
-                    background: if is_fav {
-                        core.opacity(0.95)
+                    background: if is_locked || is_fav {
+                        core.opacity(0.96)
                     } else {
                         primary.opacity(0.62)
                     }
@@ -2122,44 +2985,128 @@ pub fn fm_tuner_dial_canvas(
                 });
             }
 
-            // Luminous analog tuning needle at current frequency
-            let cur_frac = ((current_mhz - 88.0) / 20.0).clamp(0.0, 1.0);
-            let nx = ox + pad_x + cur_frac * track_w;
-            let pulse = if playing && !snap.reduced_motion {
-                0.78 + 0.22 * (snap.phase * 1.8).sin()
+            // 5. Tactile draggable luminous tuning needle & glass-brass thumb handle
+            let pulse = if dragging {
+                1.0
+            } else if playing && !snap.reduced_motion {
+                0.80 + 0.20 * (snap.phase * 1.7).sin()
             } else {
-                0.72
+                0.74
             };
             paint_glow_orb(
                 window,
                 point(px(nx), px(oy + h * 0.50)),
-                5.5,
-                22.0,
-                primary.opacity(0.58 * pulse),
+                if dragging { 8.5 } else { 5.8 },
+                if dragging { 28.0 } else { 20.0 },
+                primary.opacity((if dragging { 0.78 } else { 0.55 }) * pulse),
             );
+            // Vertical luminous needle beam (starts cleanly below upper starlight beacons)
+            let beam_w = if dragging { 3.0 } else { 2.4 };
+            let beam_top = oy + 19.5;
+            let beam_h = (h - 24.5).max(8.0);
             window.paint_quad(PaintQuad {
-                bounds: Bounds::new(point(px(nx - 1.3), px(oy + 6.0)), size(px(2.6), px(h - 12.0))),
-                corner_radii: Corners::all(px(1.3)),
+                bounds: Bounds::new(
+                    point(px(nx - beam_w * 0.5), px(beam_top)),
+                    size(px(beam_w), px(beam_h)),
+                ),
+                corner_radii: Corners::all(px(beam_w * 0.5)),
                 background: linear_gradient(
                     180.0,
                     linear_color_stop(core.opacity(0.98), 0.0),
-                    linear_color_stop(primary.opacity(0.92), 1.0),
+                    linear_color_stop(primary.opacity(0.94), 1.0),
                 ),
                 border_widths: Edges::default(),
                 border_color: transparent_black(),
                 border_style: BorderStyle::default(),
             });
-            // Glowing needle jewel tip
+            // Center tactile glass-brass slider knob directly on the rail (signals drag affordance!)
+            let knob_r = if dragging { 8.0 } else { 6.0 };
             window.paint_quad(PaintQuad {
-                bounds: Bounds::new(point(px(nx - 4.0), px(oy + 4.0)), size(px(8.0), px(5.0))),
-                corner_radii: Corners::all(px(2.5)),
-                background: core.opacity(0.96).into(),
-                border_widths: Edges::default(),
-                border_color: transparent_black(),
-                border_style: BorderStyle::default(),
+                bounds: Bounds::new(
+                    point(px(nx - knob_r), px(rail_y - knob_r)),
+                    size(px(knob_r * 2.0), px(knob_r * 2.0)),
+                ),
+                corner_radii: Corners::all(px(knob_r)),
+                background: core.opacity(if dragging { 0.98 } else { 0.90 }).into(),
+                border_widths: Edges::all(px(1.8)),
+                border_color: primary.opacity(0.95),
+                border_style: BorderStyle::Solid,
             });
         },
     )
     .w_full()
-    .h(px(62.))
+    .h(px(54.))
+}
+
+/// Smooth draggable glowing volume rail canvas for the Glow FM bottom dock.
+pub fn radio_volume_bar_canvas(
+    volume: f32,
+    lamp_color: RadioLampColor,
+    dragging: bool,
+    bounds_slot: Arc<Mutex<Option<Bounds<Pixels>>>>,
+) -> impl IntoElement {
+    let (primary_hex, core_hex, _, _) = lamp_color.palette();
+    let frac = volume.clamp(0.05, 1.0);
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            if let Ok(mut slot) = bounds_slot.lock() {
+                *slot = Some(bounds);
+            }
+            let ox = f32::from(bounds.origin.x);
+            let oy = f32::from(bounds.origin.y);
+            let w = f32::from(bounds.size.width).max(1.0);
+            let h = f32::from(bounds.size.height).max(1.0);
+            let pad = 7.0_f32;
+            let track_w = (w - pad * 2.0).max(8.0);
+            let cy = oy + h * 0.5;
+            let primary = Hsla::from(rgb(primary_hex));
+            let core = Hsla::from(rgb(core_hex));
+
+            // Base rail
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(point(px(ox + pad), px(cy - 2.0)), size(px(track_w), px(4.0))),
+                corner_radii: Corners::all(px(2.0)),
+                background: Hsla::from(rgb(0xffffff).opacity(0.14)).into(),
+                border_widths: Edges::default(),
+                border_color: transparent_black(),
+                border_style: BorderStyle::default(),
+            });
+
+            // Filled volume portion
+            let fill_w = (track_w * frac).max(3.0);
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(point(px(ox + pad), px(cy - 2.0)), size(px(fill_w), px(4.0))),
+                corner_radii: Corners::all(px(2.0)),
+                background: linear_gradient(
+                    90.0,
+                    linear_color_stop(primary.opacity(0.65), 0.0),
+                    linear_color_stop(core.opacity(0.95), 1.0),
+                ),
+                border_widths: Edges::default(),
+                border_color: transparent_black(),
+                border_style: BorderStyle::default(),
+            });
+
+            // Glowing thumb knob
+            let kx = ox + pad + track_w * frac;
+            let kr = if dragging { 6.2 } else { 4.8 };
+            if dragging {
+                paint_glow_orb(window, point(px(kx), px(cy)), 5.5, 14.0, primary.opacity(0.65));
+            }
+            window.paint_quad(PaintQuad {
+                bounds: Bounds::new(
+                    point(px(kx - kr), px(cy - kr)),
+                    size(px(kr * 2.0), px(kr * 2.0)),
+                ),
+                corner_radii: Corners::all(px(kr)),
+                background: core.opacity(0.96).into(),
+                border_widths: Edges::all(px(1.2)),
+                border_color: primary.opacity(0.90),
+                border_style: BorderStyle::Solid,
+            });
+        },
+    )
+    .w(px(92.))
+    .h(px(24.))
 }
