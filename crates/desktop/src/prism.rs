@@ -1,6 +1,6 @@
 use gpui_kit::*;
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -3109,4 +3109,247 @@ pub fn radio_volume_bar_canvas(
     )
     .w(px(92.))
     .h(px(24.))
+}
+
+const VINYL_COVER_PX: usize = 192;
+
+struct DecodedSquareCover {
+    /// Pre-cropped 192x192 BGRA source buffer matching GPUI `RenderImage` channel order.
+    bgra: Vec<u8>,
+}
+
+/// Caches decoded station cover squares and manages a single live rotated GPU `RenderImage`
+/// (dropping the previous sprite atlas entry on each rotation step so VRAM stays O(1)).
+pub struct VinylCoverCache {
+    decoded: HashMap<&'static str, DecodedSquareCover>,
+    active_scene: &'static str,
+    active_angle: f32,
+    active_dim: f32,
+    active_image: Option<Arc<RenderImage>>,
+}
+
+impl VinylCoverCache {
+    pub fn new() -> Self {
+        Self {
+            decoded: HashMap::new(),
+            active_scene: "",
+            active_angle: -10.0,
+            active_dim: -1.0,
+            active_image: None,
+        }
+    }
+
+    fn decode_scene(scene_asset: &'static str) -> Option<DecodedSquareCover> {
+        let bytes = crate::platform::Assets.load(scene_asset).ok().flatten()?;
+        let dyn_img =
+            image::load_from_memory_with_format(bytes.as_ref(), image::ImageFormat::Png).ok()?;
+        let rgba = dyn_img.to_rgba8();
+        let (sw, sh) = rgba.dimensions();
+        if sw == 0 || sh == 0 {
+            return None;
+        }
+        // Center square crop ("object-fit: cover") bilinearly sampled to VINYL_COVER_PX^2 in BGRA
+        let side = sw.min(sh) as f32;
+        let crop_x = (sw as f32 - side) * 0.5;
+        let crop_y = (sh as f32 - side) * 0.5;
+        let raw = rgba.as_raw();
+        let mut bgra = vec![0u8; VINYL_COVER_PX * VINYL_COVER_PX * 4];
+        let max_x = (sw - 1) as f32;
+        let max_y = (sh - 1) as f32;
+
+        for y in 0..VINYL_COVER_PX {
+            let fy = (crop_y + ((y as f32 + 0.5) / VINYL_COVER_PX as f32) * side - 0.5)
+                .clamp(0.0, max_y);
+            let y0 = fy.floor() as usize;
+            let y1 = (y0 + 1).min(sh as usize - 1);
+            let ty = fy - y0 as f32;
+            for x in 0..VINYL_COVER_PX {
+                let fx = (crop_x + ((x as f32 + 0.5) / VINYL_COVER_PX as f32) * side - 0.5)
+                    .clamp(0.0, max_x);
+                let x0 = fx.floor() as usize;
+                let x1 = (x0 + 1).min(sw as usize - 1);
+                let tx = fx - x0 as f32;
+
+                let idx00 = (y0 * sw as usize + x0) * 4;
+                let idx10 = (y0 * sw as usize + x1) * 4;
+                let idx01 = (y1 * sw as usize + x0) * 4;
+                let idx11 = (y1 * sw as usize + x1) * 4;
+
+                let sample = |ch: usize| -> u8 {
+                    let c00 = raw[idx00 + ch] as f32;
+                    let c10 = raw[idx10 + ch] as f32;
+                    let c01 = raw[idx01 + ch] as f32;
+                    let c11 = raw[idx11 + ch] as f32;
+                    let top = c00 + (c10 - c00) * tx;
+                    let bot = c01 + (c11 - c01) * tx;
+                    (top + (bot - top) * ty).round().clamp(0.0, 255.0) as u8
+                };
+
+                let dst = (y * VINYL_COVER_PX + x) * 4;
+                bgra[dst] = sample(2);     // B
+                bgra[dst + 1] = sample(1); // G
+                bgra[dst + 2] = sample(0); // R
+                bgra[dst + 3] = sample(3); // A
+            }
+        }
+        Some(DecodedSquareCover { bgra })
+    }
+
+    fn build_rotated_image(
+        src: &DecodedSquareCover,
+        angle: f32,
+        dim: f32,
+    ) -> Option<Arc<RenderImage>> {
+        let sz = VINYL_COVER_PX;
+        let half = (sz as f32 - 1.0) * 0.5;
+        let r_max = half - 0.5;
+        let (sin_a, cos_a) = angle.sin_cos();
+        let dim_scale = (0.94 * dim).clamp(0.08, 1.0);
+        let max_coord = (sz - 1) as f32;
+        let mut out = vec![0u8; sz * sz * 4];
+
+        for y in 0..sz {
+            let dy = y as f32 - half;
+            for x in 0..sz {
+                let dx = x as f32 - half;
+                let dist = (dx * dx + dy * dy).sqrt();
+                if dist > r_max + 1.0 {
+                    continue;
+                }
+                let edge_alpha = ((r_max + 0.5 - dist) / 1.4).clamp(0.0, 1.0);
+                if edge_alpha <= 0.002 {
+                    continue;
+                }
+                // Inverse clockwise rotation in screen coords (+X right, +Y down)
+                let sx = (half + dx * cos_a + dy * sin_a).clamp(0.0, max_coord);
+                let sy = (half - dx * sin_a + dy * cos_a).clamp(0.0, max_coord);
+                let x0 = sx.floor() as usize;
+                let y0 = sy.floor() as usize;
+                let x1 = (x0 + 1).min(sz - 1);
+                let y1 = (y0 + 1).min(sz - 1);
+                let tx = sx - x0 as f32;
+                let ty = sy - y0 as f32;
+
+                let i00 = (y0 * sz + x0) * 4;
+                let i10 = (y0 * sz + x1) * 4;
+                let i01 = (y1 * sz + x0) * 4;
+                let i11 = (y1 * sz + x1) * 4;
+
+                let dst = (y * sz + x) * 4;
+                for ch in 0..3 {
+                    let c00 = src.bgra[i00 + ch] as f32;
+                    let c10 = src.bgra[i10 + ch] as f32;
+                    let c01 = src.bgra[i01 + ch] as f32;
+                    let c11 = src.bgra[i11 + ch] as f32;
+                    let top = c00 + (c10 - c00) * tx;
+                    let bot = c01 + (c11 - c01) * tx;
+                    out[dst + ch] = ((top + (bot - top) * ty) * dim_scale)
+                        .round()
+                        .clamp(0.0, 255.0) as u8;
+                }
+                out[dst + 3] = (255.0 * edge_alpha).round().clamp(0.0, 255.0) as u8;
+            }
+        }
+        let buf = image::RgbaImage::from_raw(sz as u32, sz as u32, out)?;
+        let frame = image::Frame::new(buf);
+        Some(Arc::new(RenderImage::new(smallvec::smallvec![frame])))
+    }
+
+    pub fn image_for_angle(
+        &mut self,
+        scene_asset: &'static str,
+        angle: f32,
+        dim: f32,
+    ) -> (Option<Arc<RenderImage>>, Option<Arc<RenderImage>>) {
+        let normalized_angle = angle.rem_euclid(std::f32::consts::TAU);
+        let angle_delta = (normalized_angle - self.active_angle).abs();
+        let wrapped_delta = angle_delta.min((std::f32::consts::TAU - angle_delta).abs());
+        let needs_rebuild = self.active_image.is_none()
+            || self.active_scene != scene_asset
+            || wrapped_delta >= 0.012
+            || (dim - self.active_dim).abs() >= 0.03;
+
+        if !needs_rebuild {
+            return (self.active_image.clone(), None);
+        }
+
+        if !self.decoded.contains_key(scene_asset) {
+            if let Some(decoded) = Self::decode_scene(scene_asset) {
+                self.decoded.insert(scene_asset, decoded);
+            } else {
+                return (self.active_image.clone(), None);
+            }
+        }
+
+        let Some(src) = self.decoded.get(scene_asset) else {
+            return (self.active_image.clone(), None);
+        };
+        let Some(next) = Self::build_rotated_image(src, normalized_angle, dim) else {
+            return (self.active_image.clone(), None);
+        };
+
+        let stale = self.active_image.replace(Arc::clone(&next));
+        self.active_scene = scene_asset;
+        self.active_angle = normalized_angle;
+        self.active_dim = dim;
+        (Some(next), stale)
+    }
+}
+
+/// GPU canvas painting the genuinely spinning circular center album artwork on the vinyl platter.
+pub fn radio_vinyl_cover_canvas(
+    scene_asset: &'static str,
+    vinyl_angle: f32,
+    dim_factor: f32,
+    cover_d: f32,
+    reduced_motion: bool,
+    cache: Arc<Mutex<VinylCoverCache>>,
+) -> impl IntoElement {
+    let spin = if reduced_motion { 0.0 } else { vinyl_angle };
+    let dim = dim_factor.clamp(0.08, 1.0);
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let (current, stale) = match cache.lock() {
+                Ok(mut guard) => guard.image_for_angle(scene_asset, spin, dim),
+                Err(_) => (None, None),
+            };
+            if let Some(old) = stale {
+                let _ = window.drop_image(old);
+            }
+            if let Some(img) = current {
+                let r = f32::from(bounds.size.width).min(f32::from(bounds.size.height)) * 0.5;
+                let _ = window.paint_image(bounds, bounds, Corners::all(px(r)), img, 0, false);
+            }
+        },
+    )
+    .size(px(cover_d))
+}
+
+#[cfg(test)]
+mod vinyl_cover_tests {
+    use super::*;
+    use core::prelude::v1::test;
+
+    #[test]
+    fn vinyl_cover_cache_decodes_and_rotates_circular_bgra_frames() {
+        let mut cache = VinylCoverCache::new();
+        let (img0, stale0) = cache.image_for_angle("scene-spirited.png", 0.0, 1.0);
+        assert!(stale0.is_none());
+        let img0 = img0.expect("decoded initial vinyl cover");
+        let bytes0 = img0.as_bytes(0).expect("frame 0 bytes").to_vec();
+        assert_eq!(bytes0.len(), VINYL_COVER_PX * VINYL_COVER_PX * 4);
+        // Top-left corner outside circular mask must be fully transparent
+        assert_eq!(bytes0[3], 0);
+        // Center pixel inside circle must be opaque
+        let mid = ((VINYL_COVER_PX / 2) * VINYL_COVER_PX + (VINYL_COVER_PX / 2)) * 4;
+        assert_eq!(bytes0[mid + 3], 255);
+
+        // Rotating by 1.2 rad produces a genuinely rotated frame and returns the stale one for atlas cleanup
+        let (img1, stale1) = cache.image_for_angle("scene-spirited.png", 1.2, 1.0);
+        assert!(stale1.is_some());
+        let img1 = img1.expect("decoded rotated vinyl cover");
+        let bytes1 = img1.as_bytes(0).expect("rotated bytes");
+        assert_ne!(bytes0.as_slice(), bytes1);
+    }
 }

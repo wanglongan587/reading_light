@@ -1619,13 +1619,14 @@ impl ReadingApp {
                         .size(px(cover_d))
                         .rounded(px(cover_d * 0.5))
                         .overflow_hidden()
-                        .child(
-                            img(station_scene)
-                                .size(px(cover_d))
-                                .rounded(px(cover_d * 0.5))
-                                .object_fit(ObjectFit::Cover)
-                                .opacity(0.94 * dim_factor),
-                        ),
+                        .child(prism::radio_vinyl_cover_canvas(
+                            station_scene,
+                            self.radio_vinyl_angle,
+                            dim_factor,
+                            cover_d,
+                            self.theme().reduced_motion,
+                            Arc::clone(&self.radio_cover_cache),
+                        )),
                 )
                 .child(prism::radio_vinyl_overlay_canvas(
                     snap.clone(),

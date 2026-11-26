@@ -943,7 +943,7 @@ impl<S: Source<Item = f32>> Source for MeteredRadioSource<S> {
 enum RadioCommand {
     Tune {
         cmd_gen: u64,
-        station: RadioStation,
+        station: Box<RadioStation>,
         volume: f32,
         host_voice: String,
         book_echoes: Vec<NightSegment>,
@@ -1048,7 +1048,7 @@ impl RadioPlayer {
         });
         let _ = self.cmd_tx.send(RadioCommand::Tune {
             cmd_gen,
-            station,
+            station: Box::new(station),
             volume: volume.clamp(0.05, 1.0),
             host_voice,
             book_echoes,
@@ -1398,6 +1398,7 @@ fn radio_worker_loop(
                     paused = false;
                     host_speaking = false;
                     next_host_speak_at = None;
+                    let station = *station;
                     current_station = Some(station.clone());
 
                     let (init_title, init_line, init_hint) =
