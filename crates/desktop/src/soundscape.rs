@@ -412,8 +412,10 @@ impl TrackEngine {
             self.crackle_freq = 1400.0 + self.rng.unit() * 1400.0;
         }
         let crackle = if self.crackle_env > 0.001 {
-            let pop =
-                self.bp_hi_l.process(self.rng.signed(), self.crackle_freq, 1.8) * self.crackle_env;
+            let pop = self
+                .bp_hi_l
+                .process(self.rng.signed(), self.crackle_freq, 1.8)
+                * self.crackle_env;
             self.crackle_env *= 0.990;
             pop
         } else {
@@ -551,10 +553,8 @@ impl TrackEngine {
 
         // Subtle warm felt-piano air pad underneath so loudness stays cozy and continuous
         let pad_env = 0.76 + 0.24 * (t * 0.22).sin() as f32;
-        let bed_l =
-            (Self::sine_hz(t, 174.61) * 0.12 + Self::sine_hz(t, 261.63) * 0.09) * pad_env;
-        let bed_r =
-            (Self::sine_hz(t, 220.00) * 0.11 + Self::sine_hz(t, 329.63) * 0.08) * pad_env;
+        let bed_l = (Self::sine_hz(t, 174.61) * 0.12 + Self::sine_hz(t, 261.63) * 0.09) * pad_env;
+        let bed_r = (Self::sine_hz(t, 220.00) * 0.11 + Self::sine_hz(t, 329.63) * 0.08) * pad_env;
 
         let (nl, nr) = self.advance_pings(true);
         let raw_l = bed_l + nl * 1.45;
@@ -675,7 +675,8 @@ impl SoundscapeSource {
         let mut energy_weight = 0.0_f32;
 
         for i in 0..6 {
-            let target = f32::from_bits(self.track_gains[i].load(Ordering::Relaxed)).clamp(0.0, 1.0);
+            let target =
+                f32::from_bits(self.track_gains[i].load(Ordering::Relaxed)).clamp(0.0, 1.0);
             self.smoothed_gains[i] += (target - self.smoothed_gains[i]) * 0.0025;
             let g = self.smoothed_gains[i];
             if g < 0.001 {

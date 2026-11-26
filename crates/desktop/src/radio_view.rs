@@ -18,7 +18,8 @@ const SLEEP_PRESETS_MINS: &[u32] = &[0, 15, 30, 45, 60];
 
 impl ReadingApp {
     pub(super) fn ensure_radio(&mut self) -> &radio::RadioPlayer {
-        self.radio_player.get_or_insert_with(radio::RadioPlayer::new)
+        self.radio_player
+            .get_or_insert_with(radio::RadioPlayer::new)
     }
 
     pub(super) fn all_radio_stations(&self) -> Vec<RadioStation> {
@@ -65,7 +66,14 @@ impl ReadingApp {
                 });
             }
         }
-        for entry in self.store.state.journal.iter().filter(|e| e.favorite).take(6) {
+        for entry in self
+            .store
+            .state
+            .journal
+            .iter()
+            .filter(|e| e.favorite)
+            .take(6)
+        {
             let reply = entry.echo.reply.trim();
             if !reply.is_empty() {
                 segments.push(NightSegment {
@@ -137,8 +145,8 @@ impl ReadingApp {
             if self.radio_vinyl_vel.abs() < 0.001 && target_vel == 0.0 {
                 self.radio_vinyl_vel = 0.0;
             }
-            self.radio_vinyl_angle =
-                (self.radio_vinyl_angle + self.radio_vinyl_vel * dt).rem_euclid(std::f32::consts::TAU);
+            self.radio_vinyl_angle = (self.radio_vinyl_angle + self.radio_vinyl_vel * dt)
+                .rem_euclid(std::f32::consts::TAU);
         }
 
         // 2. Tonearm smooth pivot (0.0 parked off disc -> 1.0 engaged on grooves)
@@ -166,7 +174,11 @@ impl ReadingApp {
                 self.current_radio_station().frequency_mhz
             }
         });
-        if self.radio_dial_dragging || reduced_motion || cfg!(test) || self.radio_dial_display_mhz <= 0.0 {
+        if self.radio_dial_dragging
+            || reduced_motion
+            || cfg!(test)
+            || self.radio_dial_display_mhz <= 0.0
+        {
             self.radio_dial_display_mhz = target_mhz;
         } else {
             self.radio_dial_display_mhz +=
@@ -192,7 +204,8 @@ impl ReadingApp {
         let bounds = self.radio_dial_bounds.lock().ok().and_then(|g| *g)?;
         let pad_x = 20.0_f32;
         let track_w = (f32::from(bounds.size.width) - pad_x * 2.0).max(20.0);
-        let frac = ((f32::from(x) - (f32::from(bounds.origin.x) + pad_x)) / track_w).clamp(0.0, 1.0);
+        let frac =
+            ((f32::from(x) - (f32::from(bounds.origin.x) + pad_x)) / track_w).clamp(0.0, 1.0);
         let mhz = 88.0 + frac * 20.0;
         Some(((mhz * 10.0).round() / 10.0).clamp(88.0, 108.0))
     }
@@ -589,8 +602,7 @@ impl ReadingApp {
                 ));
             }
             Action::RadioVolume(delta) => {
-                let steps =
-                    (self.store.state.radio.volume * 20.0).round() as i32 + delta as i32;
+                let steps = (self.store.state.radio.volume * 20.0).round() as i32 + delta as i32;
                 let clamped = (steps as f32 / 20.0).clamp(0.05, 1.0);
                 self.store.state.radio.volume = clamped;
                 if let Some(p) = &self.radio_player {
@@ -719,7 +731,10 @@ impl ReadingApp {
                         } else {
                             format!("{} · {} kbps MP3", hit.country, hit.bitrate)
                         },
-                        mood_line: format!("正在试听「{}」，如果喜欢可点击收藏固定到刻度尺。", hit.name),
+                        mood_line: format!(
+                            "正在试听「{}」，如果喜欢可点击收藏固定到刻度尺。",
+                            hit.name
+                        ),
                         kind: RadioStationKind::OnlineStream,
                         stream_urls: vec![hit.stream_url],
                         suggested_lamp: "amber",
@@ -757,7 +772,14 @@ impl ReadingApp {
                                 tags: hit.tags.clone(),
                             });
                     }
-                    if !self.store.state.radio.favorites.iter().any(|f| f == &hit.id) {
+                    if !self
+                        .store
+                        .state
+                        .radio
+                        .favorites
+                        .iter()
+                        .any(|f| f == &hit.id)
+                    {
                         self.store.state.radio.favorites.push(hit.id.clone());
                     }
                     self.save();
@@ -951,17 +973,13 @@ impl ReadingApp {
                                     this.act(Action::Page(Page::Radio), window, cx);
                                 }),
                             )
-                            .child(
-                                div()
-                                    .size(px(6.))
-                                    .flex_shrink_0()
-                                    .rounded_full()
-                                    .bg(rgb(if playing_now {
-                                        primary_hex
-                                    } else {
-                                        hex(&t.muted)
-                                    })),
-                            )
+                            .child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(rgb(
+                                if playing_now {
+                                    primary_hex
+                                } else {
+                                    hex(&t.muted)
+                                },
+                            )))
                             .child(
                                 div()
                                     .flex_1()
@@ -1070,11 +1088,12 @@ impl ReadingApp {
         } else {
             station_mhz
         };
-        let display_name = if self.radio_status.playing && !self.radio_status.station_name.is_empty() {
-            self.radio_status.station_name.clone()
-        } else {
-            current.name.clone()
-        };
+        let display_name =
+            if self.radio_status.playing && !self.radio_status.station_name.is_empty() {
+                self.radio_status.station_name.clone()
+            } else {
+                current.name.clone()
+            };
         let (fallback_title, fallback_line, fallback_hint) =
             radio::initial_copy_for_station(&current, &[]);
         let display_title = if !self.radio_status.now_playing_title.is_empty()
@@ -1108,7 +1127,10 @@ impl ReadingApp {
         if self.radio_pure_glow {
             let bp_cue = if lamp_mode == RadioLampMode::Breathe478 {
                 let bp = prism::breathing_phase(breathe_elapsed);
-                Some(format!("{} · {}s  ·  {}", bp.label, bp.seconds_left, bp.cue))
+                Some(format!(
+                    "{} · {}s  ·  {}",
+                    bp.label, bp.seconds_left, bp.cue
+                ))
             } else {
                 None
             };
@@ -1387,11 +1409,13 @@ impl ReadingApp {
                             this.act(Action::RadioCycleSleepTimer, window, cx);
                         }),
                     )
-                    .child(
-                        Icon::new(IconName::Timer)
-                            .size(px(12.5))
-                            .text_color(if sleep_rem.is_some() { core } else { text_muted }),
-                    )
+                    .child(Icon::new(IconName::Timer).size(px(12.5)).text_color(
+                        if sleep_rem.is_some() {
+                            core
+                        } else {
+                            text_muted
+                        },
+                    ))
                     .child(
                         div()
                             .text_size(px(11.))
@@ -1413,7 +1437,10 @@ impl ReadingApp {
                     .bg(rgb(0xffffff).opacity(0.06))
                     .border_1()
                     .border_color(rgb(0xffffff).opacity(0.11))
-                    .hover(|s| s.bg(primary.opacity(0.18)).border_color(primary.opacity(0.5)))
+                    .hover(|s| {
+                        s.bg(primary.opacity(0.18))
+                            .border_color(primary.opacity(0.5))
+                    })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, window, cx| {
@@ -1449,7 +1476,11 @@ impl ReadingApp {
                             this.act(Action::Page(Page::Reader), window, cx);
                         }),
                     )
-                    .child(Icon::new(IconName::BookOpen).size(px(12.5)).text_color(core))
+                    .child(
+                        Icon::new(IconName::BookOpen)
+                            .size(px(12.5))
+                            .text_color(core),
+                    )
                     .child(
                         div()
                             .text_size(px(11.))
@@ -1699,7 +1730,10 @@ impl ReadingApp {
         );
         let subtitle_line = if lamp_mode == RadioLampMode::Breathe478 {
             let bp = prism::breathing_phase(breathe_elapsed);
-            format!("4-7-8 助眠呼吸 · {} {}s · {}", bp.label, bp.seconds_left, bp.cue)
+            format!(
+                "4-7-8 助眠呼吸 · {} {}s · {}",
+                bp.label, bp.seconds_left, bp.cue
+            )
         } else {
             display_hint
         };
@@ -1846,13 +1880,7 @@ impl ReadingApp {
             for st in slice {
                 let active = st.id == current.id;
                 let previewed = drag_nearest.as_ref().is_some_and(|d| d.id == st.id);
-                let fav = self
-                    .store
-                    .state
-                    .radio
-                    .favorites
-                    .iter()
-                    .any(|f| f == &st.id);
+                let fav = self.store.state.radio.favorites.iter().any(|f| f == &st.id);
                 let sid = st.id.clone();
                 row = row.child(
                     h_flex()
@@ -1885,25 +1913,25 @@ impl ReadingApp {
                                 this.act(Action::RadioTuneStation(sid.clone()), window, cx);
                             }),
                         )
-                        .child(
-                            div()
-                                .size(px(5.5))
-                                .flex_shrink_0()
-                                .rounded_full()
-                                .bg(if active || previewed {
-                                    core
-                                } else if fav {
-                                    primary
-                                } else {
-                                    text_muted.opacity(0.45)
-                                }),
-                        )
+                        .child(div().size(px(5.5)).flex_shrink_0().rounded_full().bg(
+                            if active || previewed {
+                                core
+                            } else if fav {
+                                primary
+                            } else {
+                                text_muted.opacity(0.45)
+                            },
+                        ))
                         .child(
                             div()
                                 .flex_shrink_0()
                                 .text_size(px(9.5))
                                 .font_family(self.ui_font())
-                                .text_color(if active || previewed { core } else { text_muted })
+                                .text_color(if active || previewed {
+                                    core
+                                } else {
+                                    text_muted
+                                })
                                 .child(format!("{:.1}", st.frequency_mhz)),
                         )
                         .child(
@@ -1952,7 +1980,11 @@ impl ReadingApp {
                             .w(px(116.))
                             .text_size(px(28.))
                             .font_family(self.display_font())
-                            .text_color(if self.radio_dial_dragging { primary } else { core })
+                            .text_color(if self.radio_dial_dragging {
+                                primary
+                            } else {
+                                core
+                            })
                             .child(format!("FM {display_mhz:.1}")),
                     )
                     .child(
@@ -2137,7 +2169,11 @@ impl ReadingApp {
                                 div()
                                     .text_size(px(10.5))
                                     .font_family(self.ui_font())
-                                    .text_color(if self.radio_dial_dragging { core } else { primary })
+                                    .text_color(if self.radio_dial_dragging {
+                                        core
+                                    } else {
+                                        primary
+                                    })
                                     .child(tuner_status_text),
                             ),
                     )
@@ -2149,8 +2185,8 @@ impl ReadingApp {
                             .px_3()
                             .children(
                                 [
-                                    "88", "90", "92", "94", "96", "98", "100", "102", "104",
-                                    "106", "108 MHz",
+                                    "88", "90", "92", "94", "96", "98", "100", "102", "104", "106",
+                                    "108 MHz",
                                 ]
                                 .into_iter()
                                 .map(|lbl| {
@@ -2181,11 +2217,9 @@ impl ReadingApp {
                                     cx.stop_propagation();
                                 }),
                             )
-                            .on_scroll(cx.listener(
-                                |this, event: &ScrollEvent, window, cx| {
-                                    this.on_radio_dial_scroll(event, window, cx);
-                                },
-                            ))
+                            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
+                                this.on_radio_dial_scroll(event, window, cx);
+                            }))
                             .child(prism::fm_tuner_dial_canvas(
                                 snap.clone(),
                                 dial_mhz,
@@ -2560,7 +2594,11 @@ impl ReadingApp {
                                 IconName::Sparkles
                             })
                             .size(px(12.5))
-                            .text_color(if is_err { rgb(0xf48c7a) } else { core }),
+                            .text_color(if is_err {
+                                rgb(0xf48c7a)
+                            } else {
+                                core
+                            }),
                         )
                         .child(
                             div()
@@ -2675,13 +2713,7 @@ impl ReadingApp {
                     .collect();
                 for st in filtered {
                     let active = st.id == self.store.state.radio.current_station_id;
-                    let fav = self
-                        .store
-                        .state
-                        .radio
-                        .favorites
-                        .iter()
-                        .any(|f| f == &st.id);
+                    let fav = self.store.state.radio.favorites.iter().any(|f| f == &st.id);
                     let sid = st.id.clone();
                     let fav_id = st.id.clone();
                     let rm_id = st.id.clone();
@@ -2727,14 +2759,11 @@ impl ReadingApp {
                                             .gap_1p5()
                                             .items_center()
                                             .child(
-                                                div()
-                                                    .size(px(6.))
-                                                    .rounded_full()
-                                                    .bg(rgb(
-                                                        RadioLampColor::from_id(st.suggested_lamp)
-                                                            .palette()
-                                                            .0,
-                                                    )),
+                                                div().size(px(6.)).rounded_full().bg(rgb(
+                                                    RadioLampColor::from_id(st.suggested_lamp)
+                                                        .palette()
+                                                        .0,
+                                                )),
                                             )
                                             .child(
                                                 div()
@@ -2776,7 +2805,9 @@ impl ReadingApp {
                                                             div()
                                                                 .text_size(px(9.5))
                                                                 .font_family(self.ui_font())
-                                                                .text_color(text_muted.opacity(0.76))
+                                                                .text_color(
+                                                                    text_muted.opacity(0.76),
+                                                                )
                                                                 .child(
                                                                     st.tags
                                                                         .iter()
@@ -2826,7 +2857,11 @@ impl ReadingApp {
                                             .child(
                                                 Icon::new(IconName::Heart)
                                                     .size(px(12.5))
-                                                    .text_color(if fav { primary } else { text_muted }),
+                                                    .text_color(if fav {
+                                                        primary
+                                                    } else {
+                                                        text_muted
+                                                    }),
                                             ),
                                     )
                                     .when(st.is_custom, |el| {
@@ -3098,7 +3133,9 @@ impl ReadingApp {
                                 h_flex()
                                     .gap_2()
                                     .items_center()
-                                    .child(div().flex_1().child(Input::new(&self.radio_search_input)))
+                                    .child(
+                                        div().flex_1().child(Input::new(&self.radio_search_input)),
+                                    )
                                     .child(
                                         div()
                                             .id("radio-search-go")
@@ -3116,12 +3153,18 @@ impl ReadingApp {
                                                     this.act(Action::RadioSearchSubmit, window, cx);
                                                 }),
                                             )
-                                            .child(if searching { "搜索中…" } else { "搜索" }),
+                                            .child(if searching {
+                                                "搜索中…"
+                                            } else {
+                                                "搜索"
+                                            }),
                                     ),
                             )
                             .child(tag_row),
                     )
-                    .when(!self.radio_search_results.is_empty(), |el| el.child(hits_list))
+                    .when(!self.radio_search_results.is_empty(), |el| {
+                        el.child(hits_list)
+                    })
                     .child(
                         v_flex()
                             .gap_2()
@@ -3294,9 +3337,7 @@ impl ReadingApp {
                                         }),
                                     )
                                     .child(
-                                        Icon::new(IconName::X)
-                                            .size(px(14.))
-                                            .text_color(text_muted),
+                                        Icon::new(IconName::X).size(px(14.)).text_color(text_muted),
                                     ),
                             ),
                     )

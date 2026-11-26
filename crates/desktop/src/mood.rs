@@ -172,7 +172,9 @@ pub fn test_connection(settings: &AiSettings, secrets: &LocalSecrets) -> Result<
 
     if let Some(tags_url) = &endpoints.ollama_tags_url {
         let resp = client.get(tags_url).send().map_err(|_| {
-            anyhow!("未检测到 Ollama 离线服务（{tags_url}）。请确认已启动 Ollama，或检查局域网地址。")
+            anyhow!(
+                "未检测到 Ollama 离线服务（{tags_url}）。请确认已启动 Ollama，或检查局域网地址。"
+            )
         })?;
         ensure!(
             resp.status().is_success(),
@@ -391,7 +393,8 @@ impl Config {
         } else {
             let user_payload =
                 json!({"selected_mood": mood, "written_text": text.trim()}).to_string();
-            let reply = self.complete_chat_at(&ep.completion_url, INSTRUCTIONS, &user_payload, 900)?;
+            let reply =
+                self.complete_chat_at(&ep.completion_url, INSTRUCTIONS, &user_payload, 900)?;
             Ok(EchoResult {
                 quotes: vec![],
                 reply,
@@ -413,8 +416,12 @@ impl Config {
         } else {
             let user_payload =
                 json!({"book_title": book_title.trim(), "selected_passage": trimmed}).to_string();
-            let reply =
-                self.complete_chat_at(&ep.completion_url, PASSAGE_INSTRUCTIONS, &user_payload, 900)?;
+            let reply = self.complete_chat_at(
+                &ep.completion_url,
+                PASSAGE_INSTRUCTIONS,
+                &user_payload,
+                900,
+            )?;
             Ok(EchoResult {
                 quotes: vec![],
                 reply,
@@ -447,7 +454,9 @@ impl Config {
                 "instructions": system,
                 "input": [{"role": "user", "content": user}]
             });
-            Ok(self.post_responses_json(&payload, &ep.completion_url)?.reply)
+            Ok(self
+                .post_responses_json(&payload, &ep.completion_url)?
+                .reply)
         } else {
             self.complete_chat_at(&ep.completion_url, system, user, max_tokens)
         }
@@ -504,7 +513,10 @@ impl Config {
             .take(2 * 1024 * 1024 + 1)
             .read_to_end(&mut bytes)
             .map_err(|_| anyhow!("回复接收中断，请重试。"))?;
-        ensure!(bytes.len() <= 2 * 1024 * 1024, "服务返回内容过长，请稍后重试。");
+        ensure!(
+            bytes.len() <= 2 * 1024 * 1024,
+            "服务返回内容过长，请稍后重试。"
+        );
         let value: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
         if !(200..300).contains(&status) {
             return Err(anyhow!(service_error(
@@ -544,12 +556,12 @@ impl Config {
             req = req.bearer_auth(&self.key);
         }
         let mut response = req.send().map_err(|error| {
-                anyhow!(if error.is_timeout() {
-                    "回复等待超时，文字已保留，可以稍后重试。"
-                } else {
-                    "暂时无法连接 OpenAI，请检查网络后重试。文字已保留。"
-                })
-            })?;
+            anyhow!(if error.is_timeout() {
+                "回复等待超时，文字已保留，可以稍后重试。"
+            } else {
+                "暂时无法连接 OpenAI，请检查网络后重试。文字已保留。"
+            })
+        })?;
         let status = response.status().as_u16();
         let mut bytes = Vec::new();
         response
@@ -557,7 +569,10 @@ impl Config {
             .take(2 * 1024 * 1024 + 1)
             .read_to_end(&mut bytes)
             .map_err(|_| anyhow!("回复接收中断，文字已保留，请重试。"))?;
-        ensure!(bytes.len() <= 2 * 1024 * 1024, "服务返回内容过长，请稍后重试。");
+        ensure!(
+            bytes.len() <= 2 * 1024 * 1024,
+            "服务返回内容过长，请稍后重试。"
+        );
         let value: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
         if !(200..300).contains(&status) {
             return Err(anyhow!(service_error(
@@ -732,7 +747,11 @@ pub fn parse_companion_json(raw: &str, ctx: &SpoilerSafeContext) -> Result<BookC
                     .take(4)
                     .map(str::to_owned)
                     .collect(),
-                role: item["role"].as_str().unwrap_or("书中人物").trim().to_owned(),
+                role: item["role"]
+                    .as_str()
+                    .unwrap_or("书中人物")
+                    .trim()
+                    .to_owned(),
                 traits: item["traits"]
                     .as_array()
                     .into_iter()
@@ -994,20 +1013,28 @@ mod tests {
 
     #[test]
     fn resolves_custom_llm_urls_and_local_endpoints_accurately() {
-        let full_chat =
-            resolve_endpoints("custom", "https://my-gateway.example/api/v1/chat/completions")
-                .unwrap();
+        let full_chat = resolve_endpoints(
+            "custom",
+            "https://my-gateway.example/api/v1/chat/completions",
+        )
+        .unwrap();
         assert!(!full_chat.use_responses);
         assert_eq!(
             full_chat.completion_url,
             "https://my-gateway.example/api/v1/chat/completions"
         );
-        assert_eq!(full_chat.models_url, "https://my-gateway.example/api/v1/models");
+        assert_eq!(
+            full_chat.models_url,
+            "https://my-gateway.example/api/v1/models"
+        );
 
         let full_resp =
             resolve_endpoints("custom", "https://my-proxy.example/v1/responses").unwrap();
         assert!(full_resp.use_responses);
-        assert_eq!(full_resp.completion_url, "https://my-proxy.example/v1/responses");
+        assert_eq!(
+            full_resp.completion_url,
+            "https://my-proxy.example/v1/responses"
+        );
 
         let ollama_root = resolve_endpoints("ollama", "http://192.168.1.50:11434").unwrap();
         assert_eq!(

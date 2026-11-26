@@ -366,6 +366,9 @@ async function open(cmd:Command){
  send('toc',{entries});
  const mount=()=>{
   appliedHighlights.clear();
+  clearTimeout(resizeTimer);
+  lastObservedW=reader.clientWidth;
+  lastObservedH=reader.clientHeight;
   rendition=book.renderTo(reader,{width:'100%',height:'100%',flow:mode==='paginated'?'paginated':'scrolled-doc',manager:mode==='paginated'?'default':'continuous',spread:'none',allowScriptedContent:false});
   rendition.hooks.content.register(prepareContent);
   rendition.on('relocated',(location:any)=>{if(relocating)return;currentCfi=location.start.cfi;currentHref=location.start.href||'';sendLocation();});

@@ -1305,7 +1305,10 @@ mod tests {
     fn renders_valid_png_for_all_styles_and_maps_miyazaki_themes() {
         assert_eq!(QuoteCardStyle::ALL.len(), 8);
         assert_eq!(QuoteCardStyle::from_theme_id("forest"), QuoteCardStyle::Sky);
-        assert_eq!(QuoteCardStyle::from_theme_id("totoro"), QuoteCardStyle::Totoro);
+        assert_eq!(
+            QuoteCardStyle::from_theme_id("totoro"),
+            QuoteCardStyle::Totoro
+        );
         assert_eq!(
             QuoteCardStyle::from_theme_id("spirited"),
             QuoteCardStyle::Spirited

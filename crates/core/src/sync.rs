@@ -171,7 +171,11 @@ fn merge_highlights(
         }
     }
     let mut result: Vec<Highlight> = by_cfi.into_values().collect();
-    result.sort_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)));
+    result.sort_by(|a, b| {
+        a.created_at
+            .cmp(&b.created_at)
+            .then_with(|| a.id.cmp(&b.id))
+    });
     if result.len() != local.len() {
         changed_local = true;
     }
@@ -361,11 +365,18 @@ pub fn merge_state_with_snapshot(local: &State, remote: &SyncSnapshot) -> (State
             report.changed_local = true;
         }
     }
-    if local_journal_ids.iter().any(|id| !remote_journal_ids.contains(id)) {
+    if local_journal_ids
+        .iter()
+        .any(|id| !remote_journal_ids.contains(id))
+    {
         report.changed_remote = true;
     }
     let mut next_journal: Vec<JournalEntry> = journal_map.into_values().collect();
-    next_journal.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.id.cmp(&b.id)));
+    next_journal.sort_by(|a, b| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| a.id.cmp(&b.id))
+    });
     merged.journal = next_journal;
 
     // 3. Merge custom themes (union by ID)
@@ -380,14 +391,19 @@ pub fn merge_state_with_snapshot(local: &State, remote: &SyncSnapshot) -> (State
             report.changed_local = true;
         }
     }
-    if local_theme_ids.iter().any(|id| !remote_theme_ids.contains(id)) {
+    if local_theme_ids
+        .iter()
+        .any(|id| !remote_theme_ids.contains(id))
+    {
         report.changed_remote = true;
     }
 
     // 4. Merge reading minutes (never lose today's reading time)
     match (&local.reading_minutes_date, &remote.reading_minutes_date) {
         (Some(ld), Some(rd)) if ld == rd => {
-            let best = local.reading_minutes_today.max(remote.reading_minutes_today);
+            let best = local
+                .reading_minutes_today
+                .max(remote.reading_minutes_today);
             if best != local.reading_minutes_today {
                 merged.reading_minutes_today = best;
                 report.changed_local = true;
@@ -568,7 +584,9 @@ mod tests {
     fn tombstones_prevent_deleted_highlights_from_resurrecting() {
         let book_id = "b".repeat(64);
         let mut local = State::default();
-        local.books.push(sample_book(&book_id, 0.3, "2026-11-26T09:00:00Z"));
+        local
+            .books
+            .push(sample_book(&book_id, 0.3, "2026-11-26T09:00:00Z"));
         local.deleted_highlight_ids.push("hl-dead".into());
 
         let mut remote_state = State::default();
@@ -595,7 +613,10 @@ mod tests {
 
         let mut remote_state = State::default();
         remote_state.radio.local_audio_folder = Some("/Users/remote/Secret".into());
-        remote_state.radio.favorites.push("classical-nocturne".into());
+        remote_state
+            .radio
+            .favorites
+            .push("classical-nocturne".into());
         remote_state.radio.custom_stations.push(CustomRadioStation {
             id: "custom-jazz".into(),
             name: "东京深夜爵士".into(),
@@ -613,7 +634,13 @@ mod tests {
 
         let (merged, report) = merge_state_with_snapshot(&local, &snapshot);
         assert!(report.changed_local);
-        assert!(merged.radio.favorites.iter().any(|f| f == "classical-nocturne"));
+        assert!(
+            merged
+                .radio
+                .favorites
+                .iter()
+                .any(|f| f == "classical-nocturne")
+        );
         assert_eq!(merged.radio.custom_stations.len(), 1);
         assert_eq!(
             merged.radio.local_audio_folder.as_deref(),

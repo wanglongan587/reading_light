@@ -224,7 +224,10 @@ pub fn all_stations(custom: &[CustomRadioStation]) -> Vec<RadioStation> {
                 } else {
                     st.subtitle.clone()
                 },
-                mood_line: format!("正在收听你收藏的深夜频段「{}」，愿此刻被温柔接住。", st.name),
+                mood_line: format!(
+                    "正在收听你收藏的深夜频段「{}」，愿此刻被温柔接住。",
+                    st.name
+                ),
                 kind: RadioStationKind::OnlineStream,
                 stream_urls: vec![st.stream_url.clone()],
                 suggested_lamp: "amber",
@@ -451,9 +454,7 @@ pub fn search_online_stations(query: &str, tag: Option<&str>) -> Result<Vec<Onli
         let url = format!("{base}/json/stations/search");
         match client.get(&url).query(&params).send() {
             Ok(resp) if resp.status().is_success() => {
-                let raw: Value = resp
-                    .json()
-                    .map_err(|e| anyhow!("电台目录解析失败：{e}"))?;
+                let raw: Value = resp.json().map_err(|e| anyhow!("电台目录解析失败：{e}"))?;
                 let items = raw.as_array().cloned().unwrap_or_default();
                 let mut seen_urls = std::collections::HashSet::new();
                 let mut hits = Vec::new();
@@ -571,11 +572,7 @@ pub struct SeekableStreamReader {
 }
 
 impl SeekableStreamReader {
-    pub fn new(
-        inner: Box<dyn Read + Send>,
-        stop_flag: Arc<AtomicBool>,
-        max_window: usize,
-    ) -> Self {
+    pub fn new(inner: Box<dyn Read + Send>, stop_flag: Arc<AtomicBool>, max_window: usize) -> Self {
         Self {
             inner: Mutex::new(inner),
             buf: VecDeque::with_capacity(max_window.min(262_144)),
@@ -880,8 +877,8 @@ impl<S: Source<Item = f32>> Iterator for MeteredRadioSource<S> {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let stop_samples = (self.inner.sample_rate().max(8_000) * self.inner.channels().max(1) as u32)
-            / 6; // ~166ms smooth stop fade
+        let stop_samples =
+            (self.inner.sample_rate().max(8_000) * self.inner.channels().max(1) as u32) / 6; // ~166ms smooth stop fade
         if self.stop_fade.is_none() && self.stop_flag.load(Ordering::Relaxed) {
             self.stop_fade = Some(0);
         }
@@ -902,7 +899,8 @@ impl<S: Source<Item = f32>> Iterator for MeteredRadioSource<S> {
             return None;
         };
 
-        let target_fade = f32::from_bits(self.fade_multiplier.load(Ordering::Relaxed)).clamp(0.0, 1.0);
+        let target_fade =
+            f32::from_bits(self.fade_multiplier.load(Ordering::Relaxed)).clamp(0.0, 1.0);
         self.smoothed_fade += (target_fade - self.smoothed_fade) * 0.002;
         let out = (raw * self.smoothed_fade * stop_gain).clamp(-0.98, 0.98);
 
@@ -999,10 +997,7 @@ impl RadioPlayer {
     }
 
     pub fn status(&self) -> RadioStatus {
-        self.status
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default()
+        self.status.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
     pub fn audio_level(&self) -> f32 {
@@ -1199,11 +1194,8 @@ fn open_online_stream(
                     .and_then(|v| v.to_str().ok())
                     .map(|s| s.trim().to_owned())
                     .filter(|s| !s.is_empty());
-                let mut reader = SeekableStreamReader::new(
-                    Box::new(resp),
-                    Arc::clone(&stop_flag),
-                    256 * 1024,
-                );
+                let mut reader =
+                    SeekableStreamReader::new(Box::new(resp), Arc::clone(&stop_flag), 256 * 1024);
                 let buffered = reader.prebuffer(20 * 1024)?;
                 if buffered >= 1024 {
                     return Ok((reader, content_type, icy_name));
@@ -1228,8 +1220,8 @@ fn start_bed_playback(
     fade_multiplier: &Arc<AtomicU32>,
     with_static: bool,
 ) -> Result<ActivePlayback> {
-    let (stream, handle) = rodio::OutputStream::try_default()
-        .map_err(|_| anyhow!("未检测到可用的音频输出设备"))?;
+    let (stream, handle) =
+        rodio::OutputStream::try_default().map_err(|_| anyhow!("未检测到可用的音频输出设备"))?;
     let primary_sink = rodio::Sink::try_new(&handle)?;
     let voice_sink = rodio::Sink::try_new(&handle)?;
     primary_sink.set_volume(volume);
@@ -1437,10 +1429,8 @@ fn radio_worker_loop(
                             };
 
                             let per_stream_stop = Arc::new(AtomicBool::new(false));
-                            let open_res = open_online_stream(
-                                &station.stream_urls,
-                                Arc::clone(&stream_stop),
-                            );
+                            let open_res =
+                                open_online_stream(&station.stream_urls, Arc::clone(&stream_stop));
                             drop(static_stream);
 
                             if generation.load(Ordering::SeqCst) != my_gen {
@@ -1451,9 +1441,9 @@ fn radio_worker_loop(
                                 Ok((reader, content_type, icy_name)) => {
                                     let magic = reader.peek_magic();
                                     let is_ogg = magic == *b"OggS"
-                                        || content_type
-                                            .as_deref()
-                                            .is_some_and(|ct| ct.to_ascii_lowercase().contains("ogg"));
+                                        || content_type.as_deref().is_some_and(|ct| {
+                                            ct.to_ascii_lowercase().contains("ogg")
+                                        });
                                     let is_wav = magic == *b"RIFF";
 
                                     let decoded: Result<Box<dyn Source<Item = f32> + Send>> =
@@ -1473,7 +1463,9 @@ fn radio_worker_loop(
 
                                     match decoded.and_then(|src| {
                                         let (stream, handle) = rodio::OutputStream::try_default()
-                                            .map_err(|_| anyhow!("未检测到可用的音频输出设备"))?;
+                                            .map_err(|_| {
+                                            anyhow!("未检测到可用的音频输出设备")
+                                        })?;
                                         let sink = rodio::Sink::try_new(&handle)?;
                                         sink.set_volume(volume);
                                         let metered = MeteredRadioSource::new(
@@ -1497,22 +1489,28 @@ fn radio_worker_loop(
                                                 continue;
                                             }
                                             active_playback = Some(pb);
-                                            update_status_if_current(&status, &generation, my_gen, |s| {
-                                                s.tuning = false;
-                                                s.connecting = false;
-                                                s.fallback_offline = false;
-                                                s.stream_meta = icy_name.clone();
-                                                if let Some(meta) = icy_name {
-                                                    s.source_hint = meta;
-                                                }
-                                            });
+                                            update_status_if_current(
+                                                &status,
+                                                &generation,
+                                                my_gen,
+                                                |s| {
+                                                    s.tuning = false;
+                                                    s.connecting = false;
+                                                    s.fallback_offline = false;
+                                                    s.stream_meta = icy_name.clone();
+                                                    if let Some(meta) = icy_name {
+                                                        s.source_hint = meta;
+                                                    }
+                                                },
+                                            );
                                         }
                                         Err(_) => {
                                             if generation.load(Ordering::SeqCst) != my_gen {
                                                 continue;
                                             }
                                             // Gentle offline fallback bed instead of harsh silence
-                                            let fallback_mix = fallback_mix_for_station(&station.id);
+                                            let fallback_mix =
+                                                fallback_mix_for_station(&station.id);
                                             if let Ok(pb) = start_bed_playback(
                                                 &fallback_mix,
                                                 volume,
@@ -1522,14 +1520,19 @@ fn radio_worker_loop(
                                             ) {
                                                 active_playback = Some(pb);
                                             }
-                                            update_status_if_current(&status, &generation, my_gen, |s| {
-                                                s.tuning = false;
-                                                s.connecting = false;
-                                                s.fallback_offline = true;
-                                                s.source_hint =
+                                            update_status_if_current(
+                                                &status,
+                                                &generation,
+                                                my_gen,
+                                                |s| {
+                                                    s.tuning = false;
+                                                    s.connecting = false;
+                                                    s.fallback_offline = true;
+                                                    s.source_hint =
                                                     "夜色信号穿过云层 · 暂以本地微光旋律温柔代播"
                                                         .into();
-                                            });
+                                                },
+                                            );
                                         }
                                     }
                                 }
@@ -1605,13 +1608,18 @@ fn radio_worker_loop(
                                     next_host_speak_at =
                                         Some(Instant::now() + Duration::from_millis(850));
                                     if let Some(first) = night_playlist.first() {
-                                        update_status_if_current(&status, &generation, my_gen, |s| {
-                                            s.tuning = false;
-                                            s.connecting = false;
-                                            s.now_playing_title = first.title.clone();
-                                            s.current_line = first.script.clone();
-                                            s.source_hint = first.source_hint.clone();
-                                        });
+                                        update_status_if_current(
+                                            &status,
+                                            &generation,
+                                            my_gen,
+                                            |s| {
+                                                s.tuning = false;
+                                                s.connecting = false;
+                                                s.now_playing_title = first.title.clone();
+                                                s.current_line = first.script.clone();
+                                                s.source_hint = first.source_hint.clone();
+                                            },
+                                        );
                                     }
                                 }
                                 Err(err) => {
@@ -1718,10 +1726,7 @@ fn radio_worker_loop(
                 RadioStationKind::NightHost | RadioStationKind::BookEchoHost => {
                     if let Some(pb) = &active_playback {
                         if host_speaking {
-                            let finished = pb
-                                .voice_sink
-                                .as_ref()
-                                .is_none_or(|vs| vs.empty());
+                            let finished = pb.voice_sink.as_ref().is_none_or(|vs| vs.empty());
                             if finished {
                                 host_speaking = false;
                                 if let Some(h) = &pb.bed_handle {
@@ -1791,8 +1796,7 @@ fn radio_worker_loop(
                                 if !night_playlist.is_empty() {
                                     night_idx = (night_idx + 1) % night_playlist.len();
                                 }
-                                next_host_speak_at =
-                                    Some(Instant::now() + Duration::from_secs(16));
+                                next_host_speak_at = Some(Instant::now() + Duration::from_secs(16));
                             }
                         }
                     }
@@ -1958,7 +1962,8 @@ mod tests {
         let stop = Arc::new(AtomicBool::new(false));
         let level = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
         let fade = Arc::new(AtomicU32::new(1.0_f32.to_bits()));
-        let (bed, _handle) = SoundscapeSource::with_mix_handle(&SoundscapeMix::from_recipe("music_box"));
+        let (bed, _handle) =
+            SoundscapeSource::with_mix_handle(&SoundscapeMix::from_recipe("music_box"));
         let mut metered = MeteredRadioSource::new(
             bed,
             Arc::clone(&level),
@@ -1973,7 +1978,10 @@ mod tests {
 
         stop.store(true, Ordering::Relaxed);
         let remaining: Vec<f32> = metered.take(40_000).collect();
-        assert!(remaining.len() < 40_000, "metered source must end after fade-out");
+        assert!(
+            remaining.len() < 40_000,
+            "metered source must end after fade-out"
+        );
         assert_eq!(f32::from_bits(level.load(Ordering::Relaxed)), 0.0);
     }
 
@@ -2006,12 +2014,26 @@ mod tests {
         let synth = station_by_id(&stations, "offline-piano-rain");
         let night = station_by_id(&stations, "glow-night-talk");
 
-        player.tune(synth.clone(), 0.5, tts::VOICES[0].id.into(), vec![], None, false);
+        player.tune(
+            synth.clone(),
+            0.5,
+            tts::VOICES[0].id.into(),
+            vec![],
+            None,
+            false,
+        );
         assert_eq!(player.status().station_id, "offline-piano-rain");
         assert!(player.status().playing);
 
         // Rapidly switch to another station: status must immediately reflect the new station
-        player.tune(night.clone(), 0.5, tts::VOICES[0].id.into(), vec![], None, false);
+        player.tune(
+            night.clone(),
+            0.5,
+            tts::VOICES[0].id.into(),
+            vec![],
+            None,
+            false,
+        );
         let st = player.status();
         assert_eq!(st.station_id, "glow-night-talk");
         assert!((st.frequency_mhz - 94.2).abs() < 0.05);

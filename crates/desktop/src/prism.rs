@@ -584,9 +584,27 @@ pub fn ambient_stage_canvas(snap: MotionSnapshot, is_reader: bool) -> impl IntoE
                             px(ox + w * (0.64 + 0.04 * (p * 0.12 + 3.0).sin()) + px_norm * 20.0),
                             px(oy + h * 0.84 + py_norm * 12.0),
                         );
-                        paint_glow_orb(window, cloud1, 96.0, 180.0, Hsla::from(rgb(0xffffff).opacity(0.42)));
-                        paint_glow_orb(window, cloud2, 108.0, 195.0, Hsla::from(rgb(0xffffff).opacity(0.38)));
-                        paint_glow_orb(window, cloud3, 92.0, 170.0, Hsla::from(rgb(0x93c5fd).opacity(0.24)));
+                        paint_glow_orb(
+                            window,
+                            cloud1,
+                            96.0,
+                            180.0,
+                            Hsla::from(rgb(0xffffff).opacity(0.42)),
+                        );
+                        paint_glow_orb(
+                            window,
+                            cloud2,
+                            108.0,
+                            195.0,
+                            Hsla::from(rgb(0xffffff).opacity(0.38)),
+                        );
+                        paint_glow_orb(
+                            window,
+                            cloud3,
+                            92.0,
+                            170.0,
+                            Hsla::from(rgb(0x93c5fd).opacity(0.24)),
+                        );
                     }
                     ThemeAtmosphere::Totoro => {
                         // Dappled camphor forest sunbeams & gentle drifting woodland spores
@@ -602,9 +620,27 @@ pub fn ambient_stage_canvas(snap: MotionSnapshot, is_reader: bool) -> impl IntoE
                             px(ox + w * (0.62 + 0.03 * (p * 0.10 + 2.6).sin()) + px_norm * 18.0),
                             px(oy + h * 0.82 + py_norm * 10.0),
                         );
-                        paint_glow_orb(window, sun1, 92.0, 185.0, Hsla::from(rgb(0xfff5cc).opacity(0.36)));
-                        paint_glow_orb(window, canopy2, 102.0, 190.0, Hsla::from(rgb(0xa7ddb0).opacity(0.26)));
-                        paint_glow_orb(window, moss3, 88.0, 165.0, Hsla::from(rgb(0xdff5d8).opacity(0.32)));
+                        paint_glow_orb(
+                            window,
+                            sun1,
+                            92.0,
+                            185.0,
+                            Hsla::from(rgb(0xfff5cc).opacity(0.36)),
+                        );
+                        paint_glow_orb(
+                            window,
+                            canopy2,
+                            102.0,
+                            190.0,
+                            Hsla::from(rgb(0xa7ddb0).opacity(0.26)),
+                        );
+                        paint_glow_orb(
+                            window,
+                            moss3,
+                            88.0,
+                            165.0,
+                            Hsla::from(rgb(0xdff5d8).opacity(0.32)),
+                        );
                         if !snap.reduced_motion {
                             for i in 0..10_usize {
                                 let seed = i as f32 * 1.618_034;
@@ -614,7 +650,8 @@ pub fn ambient_stage_canvas(snap: MotionSnapshot, is_reader: bool) -> impl IntoE
                                     - px_norm * 14.0;
                                 let travel = ((p * 0.022 + seed * 0.31).rem_euclid(1.0)) * h;
                                 let my = oy + h - travel;
-                                let pulse = 0.40 + 0.60 * ((p * 1.3 + seed * 2.1).sin() * 0.5 + 0.5);
+                                let pulse =
+                                    0.40 + 0.60 * ((p * 1.3 + seed * 2.1).sin() * 0.5 + 0.5);
                                 let r = 1.6 + (i % 3) as f32 * 0.55;
                                 let mote = if i % 2 == 0 {
                                     Hsla::from(rgb(0xfff1a8).opacity(0.45 * pulse))
@@ -649,9 +686,27 @@ pub fn ambient_stage_canvas(snap: MotionSnapshot, is_reader: bool) -> impl IntoE
                             px(ox + w * (0.58 + 0.05 * (p * 0.10 + 3.1).sin()) + px_norm * 18.0),
                             px(oy + h * 0.80 + py_norm * 12.0),
                         );
-                        paint_glow_orb(window, glow1, 98.0, 190.0, Hsla::from(rgb(0xffd7c4).opacity(0.38)));
-                        paint_glow_orb(window, glow2, 102.0, 190.0, Hsla::from(rgb(0xf6bcc5).opacity(0.30)));
-                        paint_glow_orb(window, glow3, 94.0, 175.0, Hsla::from(rgb(0xb2c9eb).opacity(0.24)));
+                        paint_glow_orb(
+                            window,
+                            glow1,
+                            98.0,
+                            190.0,
+                            Hsla::from(rgb(0xffd7c4).opacity(0.38)),
+                        );
+                        paint_glow_orb(
+                            window,
+                            glow2,
+                            102.0,
+                            190.0,
+                            Hsla::from(rgb(0xf6bcc5).opacity(0.30)),
+                        );
+                        paint_glow_orb(
+                            window,
+                            glow3,
+                            94.0,
+                            175.0,
+                            Hsla::from(rgb(0xb2c9eb).opacity(0.24)),
+                        );
                         if !snap.reduced_motion {
                             for i in 0..8_usize {
                                 let seed = i as f32 * 2.13;
@@ -662,9 +717,13 @@ pub fn ambient_stage_canvas(snap: MotionSnapshot, is_reader: bool) -> impl IntoE
                                 let shimmer = 0.25 + 0.75 * ((p * 1.2 + seed).sin() * 0.5 + 0.5);
                                 let rw = 16.0 + (i % 3) as f32 * 10.0;
                                 window.paint_quad(PaintQuad {
-                                    bounds: Bounds::new(point(px(rx), px(ry)), size(px(rw), px(2.0))),
+                                    bounds: Bounds::new(
+                                        point(px(rx), px(ry)),
+                                        size(px(rw), px(2.0)),
+                                    ),
                                     corner_radii: Corners::all(px(1.0)),
-                                    background: Hsla::from(rgb(0xfff0d9).opacity(0.32 * shimmer)).into(),
+                                    background: Hsla::from(rgb(0xfff0d9).opacity(0.32 * shimmer))
+                                        .into(),
                                     border_widths: Edges::default(),
                                     border_color: transparent_black(),
                                     border_style: BorderStyle::default(),
@@ -686,9 +745,27 @@ pub fn ambient_stage_canvas(snap: MotionSnapshot, is_reader: bool) -> impl IntoE
                             px(ox + w * (0.64 + 0.04 * (p * 0.11 + 2.8).sin()) + px_norm * 18.0),
                             px(oy + h * 0.84 + py_norm * 12.0),
                         );
-                        paint_glow_orb(window, cloud1, 96.0, 185.0, Hsla::from(rgb(0xd4cbf7).opacity(0.32)));
-                        paint_glow_orb(window, cloud2, 102.0, 190.0, Hsla::from(rgb(0xffffff).opacity(0.40)));
-                        paint_glow_orb(window, bloom3, 90.0, 170.0, Hsla::from(rgb(0xfff1ba).opacity(0.28)));
+                        paint_glow_orb(
+                            window,
+                            cloud1,
+                            96.0,
+                            185.0,
+                            Hsla::from(rgb(0xd4cbf7).opacity(0.32)),
+                        );
+                        paint_glow_orb(
+                            window,
+                            cloud2,
+                            102.0,
+                            190.0,
+                            Hsla::from(rgb(0xffffff).opacity(0.40)),
+                        );
+                        paint_glow_orb(
+                            window,
+                            bloom3,
+                            90.0,
+                            170.0,
+                            Hsla::from(rgb(0xfff1ba).opacity(0.28)),
+                        );
                         if !snap.reduced_motion {
                             for i in 0..10_usize {
                                 let seed = i as f32 * 1.732;
@@ -703,7 +780,10 @@ pub fn ambient_stage_canvas(snap: MotionSnapshot, is_reader: bool) -> impl IntoE
                                     _ => Hsla::from(rgb(0xd8cdfa).opacity(0.44)),
                                 };
                                 window.paint_quad(PaintQuad {
-                                    bounds: Bounds::new(point(px(mx), px(my)), size(px(5.0), px(3.0))),
+                                    bounds: Bounds::new(
+                                        point(px(mx), px(my)),
+                                        size(px(5.0), px(3.0)),
+                                    ),
                                     corner_radii: Corners::all(px(1.5)),
                                     background: petal.into(),
                                     border_widths: Edges::default(),
@@ -727,9 +807,27 @@ pub fn ambient_stage_canvas(snap: MotionSnapshot, is_reader: bool) -> impl IntoE
                             px(ox + w * (0.60 + 0.04 * (p * 0.10 + 3.0).sin()) + px_norm * 18.0),
                             px(oy + h * 0.82 + py_norm * 12.0),
                         );
-                        paint_glow_orb(window, sun1, 96.0, 185.0, Hsla::from(rgb(0xffe7ba).opacity(0.40)));
-                        paint_glow_orb(window, coast2, 98.0, 185.0, Hsla::from(rgb(0xf5c4a2).opacity(0.28)));
-                        paint_glow_orb(window, sea3, 92.0, 175.0, Hsla::from(rgb(0xbae6fd).opacity(0.24)));
+                        paint_glow_orb(
+                            window,
+                            sun1,
+                            96.0,
+                            185.0,
+                            Hsla::from(rgb(0xffe7ba).opacity(0.40)),
+                        );
+                        paint_glow_orb(
+                            window,
+                            coast2,
+                            98.0,
+                            185.0,
+                            Hsla::from(rgb(0xf5c4a2).opacity(0.28)),
+                        );
+                        paint_glow_orb(
+                            window,
+                            sea3,
+                            92.0,
+                            175.0,
+                            Hsla::from(rgb(0xbae6fd).opacity(0.24)),
+                        );
                     }
                     ThemeAtmosphere::Lantern => {
                         // Cozy Spirited Away night lantern glow & gently rising spirit fireflies
@@ -745,9 +843,27 @@ pub fn ambient_stage_canvas(snap: MotionSnapshot, is_reader: bool) -> impl IntoE
                             px(ox + w * (0.64 + 0.04 * (p * 0.11 + 3.2).sin()) + px_norm * 20.0),
                             px(oy + h * 0.80 + py_norm * 14.0),
                         );
-                        paint_glow_orb(window, lamp1, 84.0, 180.0, Hsla::from(rgb(0x6d4c8c).opacity(0.16)));
-                        paint_glow_orb(window, lamp2, 86.0, 185.0, Hsla::from(rgb(0xf5b962).opacity(0.16)));
-                        paint_glow_orb(window, river3, 74.0, 165.0, Hsla::from(rgb(0xd96b4e).opacity(0.12)));
+                        paint_glow_orb(
+                            window,
+                            lamp1,
+                            84.0,
+                            180.0,
+                            Hsla::from(rgb(0x6d4c8c).opacity(0.16)),
+                        );
+                        paint_glow_orb(
+                            window,
+                            lamp2,
+                            86.0,
+                            185.0,
+                            Hsla::from(rgb(0xf5b962).opacity(0.16)),
+                        );
+                        paint_glow_orb(
+                            window,
+                            river3,
+                            74.0,
+                            165.0,
+                            Hsla::from(rgb(0xd96b4e).opacity(0.12)),
+                        );
                         if !snap.reduced_motion {
                             for i in 0..12_usize {
                                 let seed = i as f32 * 1.618_034;
@@ -757,7 +873,8 @@ pub fn ambient_stage_canvas(snap: MotionSnapshot, is_reader: bool) -> impl IntoE
                                     - px_norm * 16.0;
                                 let travel = ((p * 0.025 + seed * 0.37).rem_euclid(1.0)) * h;
                                 let my = oy + h - travel;
-                                let twinkle = 0.35 + 0.65 * ((p * 1.4 + seed * 2.3).sin() * 0.5 + 0.5);
+                                let twinkle =
+                                    0.35 + 0.65 * ((p * 1.4 + seed * 2.3).sin() * 0.5 + 0.5);
                                 let r = 1.4 + (i % 3) as f32 * 0.5;
                                 let col = if i % 3 == 0 {
                                     Hsla::from(rgb(0xf7b267).opacity(0.42 * twinkle))
@@ -1897,7 +2014,8 @@ pub fn radio_ambient_room_canvas(
             let w = f32::from(bounds.size.width).max(1.0);
             let h = f32::from(bounds.size.height).max(1.0);
             let p = if snap.reduced_motion { 0.0 } else { snap.phase };
-            let breath = radio_breath_factor(snap.reduced_motion, p, lamp_mode, level, breathe_elapsed);
+            let breath =
+                radio_breath_factor(snap.reduced_motion, p, lamp_mode, level, breathe_elapsed);
 
             let primary = Hsla::from(rgb(primary_hex));
             let core = Hsla::from(rgb(core_hex));
@@ -1905,10 +2023,26 @@ pub fn radio_ambient_room_canvas(
             let stage_bg = Hsla::from(rgb(stage_bg_hex));
 
             // 1. Primary volumetric breathing lamp wash behind hero turntable / orb
-            let main_x = if pure_glow { ox + w * 0.50 } else { ox + w * 0.30 };
-            let main_y = if pure_glow { oy + h * 0.48 } else { oy + h * 0.45 };
-            let drift_x = if snap.reduced_motion { 0.0 } else { (p * 0.24).sin() * 14.0 };
-            let drift_y = if snap.reduced_motion { 0.0 } else { (p * 0.19).cos() * 10.0 };
+            let main_x = if pure_glow {
+                ox + w * 0.50
+            } else {
+                ox + w * 0.30
+            };
+            let main_y = if pure_glow {
+                oy + h * 0.48
+            } else {
+                oy + h * 0.45
+            };
+            let drift_x = if snap.reduced_motion {
+                0.0
+            } else {
+                (p * 0.24).sin() * 14.0
+            };
+            let drift_y = if snap.reduced_motion {
+                0.0
+            } else {
+                (p * 0.19).cos() * 10.0
+            };
             let base_r = (w.min(h) * if pure_glow { 0.30 } else { 0.28 }).max(110.0) * breath;
 
             paint_glow_orb(
@@ -1930,7 +2064,10 @@ pub fn radio_ambient_room_canvas(
             if !pure_glow {
                 paint_glow_orb(
                     window,
-                    point(px(ox + w * 0.80 - drift_x * 0.8), px(oy + h * 0.25 + drift_y)),
+                    point(
+                        px(ox + w * 0.80 - drift_x * 0.8),
+                        px(oy + h * 0.25 + drift_y),
+                    ),
                     (w.min(h) * 0.18).max(70.0) * (0.85 + 0.15 * breath),
                     175.0,
                     outer.opacity((0.15 + level * 0.08) * dim),
@@ -1954,7 +2091,8 @@ pub fn radio_ambient_room_canvas(
                         * w
                         + ox;
                     let fy_base = ((seed * 1.37).rem_euclid(1.0)) * h + oy;
-                    let fy = fy_base + (p * (0.28 + (i % 4) as f32 * 0.07) + seed * 4.0).sin() * 14.0;
+                    let fy =
+                        fy_base + (p * (0.28 + (i % 4) as f32 * 0.07) + seed * 4.0).sin() * 14.0;
                     let twinkle = 0.20 + 0.80 * ((p * 0.95 + seed * 3.1).sin() * 0.5 + 0.5);
                     let r = 1.2 + (i % 4) as f32 * 0.55;
                     let col = if i % 3 == 0 {
@@ -1963,7 +2101,13 @@ pub fn radio_ambient_room_canvas(
                         primary.opacity(0.28 * twinkle * dim)
                     };
                     if i % 5 == 0 {
-                        paint_glow_orb(window, point(px(fx), px(fy)), r * 1.6, 12.0, col.opacity(0.45));
+                        paint_glow_orb(
+                            window,
+                            point(px(fx), px(fy)),
+                            r * 1.6,
+                            12.0,
+                            col.opacity(0.45),
+                        );
                     }
                     window.paint_quad(PaintQuad {
                         bounds: Bounds::new(
@@ -2044,7 +2188,10 @@ fn paint_radial_wedge(
     for i in (0..=steps).rev() {
         let t = i as f32 / steps as f32;
         let a = start_angle + (end_angle - start_angle) * t;
-        pb.line_to(point(px(cx + a.cos() * r_inner), px(cy + a.sin() * r_inner)));
+        pb.line_to(point(
+            px(cx + a.cos() * r_inner),
+            px(cy + a.sin() * r_inner),
+        ));
     }
     pb.close();
     if let Ok(path) = pb.build() {
@@ -2121,8 +2268,13 @@ pub fn radio_vinyl_underlay_canvas(
             let disc_r = (w.min(h) * 0.375).max(88.0);
             let label_r = disc_r * 0.47;
             let p = if snap.reduced_motion { 0.0 } else { snap.phase };
-            let spin = if snap.reduced_motion { 0.0 } else { vinyl_angle };
-            let breath = radio_breath_factor(snap.reduced_motion, p, lamp_mode, level, breathe_elapsed);
+            let spin = if snap.reduced_motion {
+                0.0
+            } else {
+                vinyl_angle
+            };
+            let breath =
+                radio_breath_factor(snap.reduced_motion, p, lamp_mode, level, breathe_elapsed);
 
             let primary = Hsla::from(rgb(primary_hex));
             let core = Hsla::from(rgb(core_hex));
@@ -2193,7 +2345,10 @@ pub fn radio_vinyl_underlay_canvas(
                 };
                 let r_out = bar_r_in + bar_len;
                 let mut pb = PathBuilder::stroke(px(2.1));
-                pb.move_to(point(px(cx + a.cos() * bar_r_in), px(cy + a.sin() * bar_r_in)));
+                pb.move_to(point(
+                    px(cx + a.cos() * bar_r_in),
+                    px(cy + a.sin() * bar_r_in),
+                ));
                 pb.line_to(point(px(cx + a.cos() * r_out), px(cy + a.sin() * r_out)));
                 if let Ok(path) = pb.build() {
                     let bar_col = if i % 4 == 0 {
@@ -2380,7 +2535,11 @@ pub fn radio_vinyl_overlay_canvas(
             let cy = oy + h * 0.5;
             let disc_r = (w.min(h) * 0.375).max(88.0);
             let label_r = disc_r * 0.47;
-            let spin = if snap.reduced_motion { 0.0 } else { vinyl_angle };
+            let spin = if snap.reduced_motion {
+                0.0
+            } else {
+                vinyl_angle
+            };
 
             let primary = Hsla::from(rgb(primary_hex));
             let core = Hsla::from(rgb(core_hex));
@@ -2613,8 +2772,16 @@ pub fn radio_vinyl_overlay_canvas(
 
             // Brushed gimbal pivot assembly on top
             for (r, bg, border) in [
-                (17.5_f32, Hsla::from(rgb(0x1d202a).opacity(0.96)), core.opacity(0.35 * dim)),
-                (11.0_f32, Hsla::from(rgb(0x2f3342).opacity(0.96)), core.opacity(0.50 * dim)),
+                (
+                    17.5_f32,
+                    Hsla::from(rgb(0x1d202a).opacity(0.96)),
+                    core.opacity(0.35 * dim),
+                ),
+                (
+                    11.0_f32,
+                    Hsla::from(rgb(0x2f3342).opacity(0.96)),
+                    core.opacity(0.50 * dim),
+                ),
                 (4.6_f32, core.opacity(0.92 * dim), transparent_black()),
             ] {
                 window.paint_quad(PaintQuad {
@@ -2702,10 +2869,9 @@ pub fn radio_breathing_lamp_canvas(
             );
 
             // 3. Delicate concentric sound/breath ripples
-            for (idx, (scale, base_alpha)) in
-                [(1.32_f32, 0.10_f32), (1.10, 0.18), (0.88, 0.26)]
-                    .into_iter()
-                    .enumerate()
+            for (idx, (scale, base_alpha)) in [(1.32_f32, 0.10_f32), (1.10, 0.18), (0.88, 0.26)]
+                .into_iter()
+                .enumerate()
             {
                 let ripple_wave = if snap.reduced_motion {
                     0.0
@@ -2774,8 +2940,8 @@ pub fn radio_breathing_lamp_canvas(
                 for i in 0..mote_count {
                     let seed = i as f32 * 1.618_034;
                     let angle = p * (0.14 + (i % 3) as f32 * 0.04) + seed * 3.1;
-                    let orbit = max_r * (0.98 + 0.34 * ((seed * 2.1).sin() * 0.5 + 0.5))
-                        + level * 12.0;
+                    let orbit =
+                        max_r * (0.98 + 0.34 * ((seed * 2.1).sin() * 0.5 + 0.5)) + level * 12.0;
                     let mx = cx + angle.cos() * orbit;
                     let my = cy + angle.sin() * orbit * 0.86 - ((p * 0.3 + seed).sin() * 6.0);
                     let twinkle = 0.28 + 0.72 * ((p * 1.2 + seed * 2.5).sin() * 0.5 + 0.5);
@@ -2867,7 +3033,10 @@ pub fn fm_tuner_dial_canvas(
             // 2. Horizontal brass-tinted tuner rail
             let rail_y = oy + h * 0.62;
             window.paint_quad(PaintQuad {
-                bounds: Bounds::new(point(px(ox + pad_x), px(rail_y)), size(px(track_w), px(1.5))),
+                bounds: Bounds::new(
+                    point(px(ox + pad_x), px(rail_y)),
+                    size(px(track_w), px(1.5)),
+                ),
                 corner_radii: Corners::all(px(0.75)),
                 background: primary.opacity(0.24).into(),
                 border_widths: Edges::default(),
@@ -2951,7 +3120,13 @@ pub fn fm_tuner_dial_canvas(
                     2.2
                 };
                 if is_locked {
-                    paint_glow_orb(window, point(px(sx), px(sy)), 5.0, 14.0, primary.opacity(0.75));
+                    paint_glow_orb(
+                        window,
+                        point(px(sx), px(sy)),
+                        5.0,
+                        14.0,
+                        primary.opacity(0.75),
+                    );
                     let ring_r = 6.5;
                     window.paint_quad(PaintQuad {
                         bounds: Bounds::new(
@@ -2965,7 +3140,13 @@ pub fn fm_tuner_dial_canvas(
                         border_style: BorderStyle::Solid,
                     });
                 } else if is_fav {
-                    paint_glow_orb(window, point(px(sx), px(sy)), 3.0, 9.0, primary.opacity(0.48));
+                    paint_glow_orb(
+                        window,
+                        point(px(sx), px(sy)),
+                        3.0,
+                        9.0,
+                        primary.opacity(0.48),
+                    );
                 }
                 window.paint_quad(PaintQuad {
                     bounds: Bounds::new(
@@ -3065,7 +3246,10 @@ pub fn radio_volume_bar_canvas(
 
             // Base rail
             window.paint_quad(PaintQuad {
-                bounds: Bounds::new(point(px(ox + pad), px(cy - 2.0)), size(px(track_w), px(4.0))),
+                bounds: Bounds::new(
+                    point(px(ox + pad), px(cy - 2.0)),
+                    size(px(track_w), px(4.0)),
+                ),
                 corner_radii: Corners::all(px(2.0)),
                 background: Hsla::from(rgb(0xffffff).opacity(0.14)).into(),
                 border_widths: Edges::default(),
@@ -3092,7 +3276,13 @@ pub fn radio_volume_bar_canvas(
             let kx = ox + pad + track_w * frac;
             let kr = if dragging { 6.2 } else { 4.8 };
             if dragging {
-                paint_glow_orb(window, point(px(kx), px(cy)), 5.5, 14.0, primary.opacity(0.65));
+                paint_glow_orb(
+                    window,
+                    point(px(kx), px(cy)),
+                    5.5,
+                    14.0,
+                    primary.opacity(0.65),
+                );
             }
             window.paint_quad(PaintQuad {
                 bounds: Bounds::new(
@@ -3186,7 +3376,7 @@ impl VinylCoverCache {
                 };
 
                 let dst = (y * VINYL_COVER_PX + x) * 4;
-                bgra[dst] = sample(2);     // B
+                bgra[dst] = sample(2); // B
                 bgra[dst + 1] = sample(1); // G
                 bgra[dst + 2] = sample(0); // R
                 bgra[dst + 3] = sample(3); // A

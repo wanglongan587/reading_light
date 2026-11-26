@@ -432,8 +432,9 @@ impl ReadingApp {
         let ai_model_val = store.state.ai.model.clone();
         let ai_key_val = secrets.ai_api_key.clone();
         let ai_base_url_input = cx.new(|cx| {
-            let mut s = InputState::new(window, cx)
-                .placeholder("Base URL 或完整接口（如 https://your-api/v1 或 http://127.0.0.1:11434/v1）");
+            let mut s = InputState::new(window, cx).placeholder(
+                "Base URL 或完整接口（如 https://your-api/v1 或 http://127.0.0.1:11434/v1）",
+            );
             s.set_value(ai_base_url_val, window, cx);
             s
         });
@@ -443,7 +444,8 @@ impl ReadingApp {
             s
         });
         let ai_key_input = cx.new(|cx| {
-            let mut s = InputState::new(window, cx).placeholder("API Key（本地 Ollama/LM Studio 无需填写）");
+            let mut s = InputState::new(window, cx)
+                .placeholder("API Key（本地 Ollama/LM Studio 无需填写）");
             s.set_value(ai_key_val, window, cx);
             s
         });
@@ -458,7 +460,8 @@ impl ReadingApp {
             s
         });
         let sync_repo_input = cx.new(|cx| {
-            let mut s = InputState::new(window, cx).placeholder("私有同步仓库名（如 glow-reading-sync）");
+            let mut s =
+                InputState::new(window, cx).placeholder("私有同步仓库名（如 glow-reading-sync）");
             s.set_value(sync_repo_val, window, cx);
             s
         });
@@ -473,12 +476,14 @@ impl ReadingApp {
             s
         });
         let sync_token_input = cx.new(|cx| {
-            let mut s = InputState::new(window, cx).placeholder("GitHub Personal Access Token（仅存本机）");
+            let mut s =
+                InputState::new(window, cx).placeholder("GitHub Personal Access Token（仅存本机）");
             s.set_value(sync_token_val, window, cx);
             s
         });
         let radio_search_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("输入电台名或关键词，如 lofi、jazz、piano、sleep…")
+            InputState::new(window, cx)
+                .placeholder("输入电台名或关键词，如 lofi、jazz、piano、sleep…")
         });
         cx.subscribe_in(
             &radio_search_input,
@@ -490,11 +495,11 @@ impl ReadingApp {
             },
         )
         .detach();
-        let radio_custom_name_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("自定义电台名称（如：雨夜东京爵士）"));
+        let radio_custom_name_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("自定义电台名称（如：雨夜东京爵士）")
+        });
         let radio_custom_url_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("音频流地址（https://...mp3 或 .ogg）")
+            InputState::new(window, cx).placeholder("音频流地址（https://...mp3 或 .ogg）")
         });
         cx.subscribe_in(
             &radio_custom_url_input,
@@ -661,7 +666,15 @@ impl ReadingApp {
         }
         if !matches!(
             self.theme().id.as_str(),
-            "forest" | "paper" | "night" | "prism" | "totoro" | "spirited" | "howl" | "kiki" | "lantern"
+            "forest"
+                | "paper"
+                | "night"
+                | "prism"
+                | "totoro"
+                | "spirited"
+                | "howl"
+                | "kiki"
+                | "lantern"
         ) {
             return self
                 .theme()
@@ -829,9 +842,7 @@ impl ReadingApp {
         let sink = rodio::Sink::try_new(&handle)?;
         sink.set_volume(vol);
         let (src, stop_handle) = SoundscapeSource::with_mix_handle(&mix);
-        if self.tts_status.active
-            && !self.tts_status.paused
-            && self.store.state.tts.duck_soundscape
+        if self.tts_status.active && !self.tts_status.paused && self.store.state.tts.duck_soundscape
         {
             stop_handle.set_ducking(true);
         }
@@ -1383,13 +1394,12 @@ impl ReadingApp {
                     if entering_radio {
                         self.radio_hide_sidebar = true;
                     }
-                    self.radio_dial_display_mhz = if self.radio_status.playing
-                        && self.radio_status.frequency_mhz > 0.0
-                    {
-                        self.radio_status.frequency_mhz
-                    } else {
-                        self.current_radio_station().frequency_mhz
-                    };
+                    self.radio_dial_display_mhz =
+                        if self.radio_status.playing && self.radio_status.frequency_mhz > 0.0 {
+                            self.radio_status.frequency_mhz
+                        } else {
+                            self.current_radio_station().frequency_mhz
+                        };
                     self.radio_last_motion_at = Instant::now();
                     self.schedule_motion_frame(window, cx);
                 }
@@ -1848,9 +1858,8 @@ impl ReadingApp {
                     let cur = self.focus_timer_input.read(cx).value().trim().to_owned();
                     if cur.parse::<u32>().is_err() {
                         let fallback = (self.focus_timer_total_secs / 60).clamp(1, 180);
-                        self.focus_timer_input.update(cx, |s, cx| {
-                            s.set_value(fallback.to_string(), window, cx)
-                        });
+                        self.focus_timer_input
+                            .update(cx, |s, cx| s.set_value(fallback.to_string(), window, cx));
                     }
                     let focus = self.focus_timer_input.read(cx).focus_handle(cx).clone();
                     window.focus(&focus, cx);
@@ -3173,7 +3182,9 @@ impl ReadingApp {
                                 .overflow_hidden()
                                 .border_1()
                                 .border_color(rgb(0xffffff).opacity(0.22))
-                                .hover(|style| style.border_color(rgb(hex(&t.accent)).opacity(0.65)))
+                                .hover(|style| {
+                                    style.border_color(rgb(hex(&t.accent)).opacity(0.65))
+                                })
                                 .shadow_sm()
                                 .child(cover)
                                 // 3D Hardcover Spine Crease Overlay
@@ -3255,7 +3266,11 @@ impl ReadingApp {
                                 .px_2p5()
                                 .py_2()
                                 .rounded_xl()
-                                .bg(rgb(hex(&t.background)).opacity(if is_dark { 0.58 } else { 0.68 }))
+                                .bg(rgb(hex(&t.background)).opacity(if is_dark {
+                                    0.58
+                                } else {
+                                    0.68
+                                }))
                                 .child(
                                     h_flex()
                                         .justify_between()
@@ -3291,8 +3306,9 @@ impl ReadingApp {
                                         .bg(rgb(hex(&t.text)).opacity(0.10))
                                         .child(
                                             div()
-                                                .w(px((188.0 * progress_val)
-                                                    .max(if b.location.is_some() { 6.0 } else { 0.0 })))
+                                                .w(px((188.0 * progress_val).max(
+                                                    if b.location.is_some() { 6.0 } else { 0.0 },
+                                                )))
                                                 .h_full()
                                                 .rounded_full()
                                                 .bg(rgb(hex(&t.accent))),
@@ -4023,8 +4039,13 @@ impl ReadingApp {
             .border_1()
             .border_color(self.border_subtle())
             .child(
-                self.button_with_icon("AI 共读", IconName::WandSparkles, Action::ToggleCompanion, cx)
-                    .toggled(self.drawer == "companion"),
+                self.button_with_icon(
+                    "AI 共读",
+                    IconName::WandSparkles,
+                    Action::ToggleCompanion,
+                    cx,
+                )
+                .toggled(self.drawer == "companion"),
             )
             .child(
                 self.button_with_icon(
@@ -4320,13 +4341,8 @@ impl ReadingApp {
             .child(hint)
             .child(self.pet_dock("reader-pet", cx))
             .child(
-                self.button_with_icon(
-                    &timer_label,
-                    IconName::Timer,
-                    Action::ToggleTimerPicker,
-                    cx,
-                )
-                .toggled(self.focus_timer_started.is_some() || self.focus_timer_picker_open),
+                self.button_with_icon(&timer_label, IconName::Timer, Action::ToggleTimerPicker, cx)
+                    .toggled(self.focus_timer_started.is_some() || self.focus_timer_picker_open),
             )
             .child(
                 self.button_with_icon("排版", IconName::AArrowDown, Action::Typography, cx)
@@ -6418,12 +6434,7 @@ impl ReadingApp {
             })
             .when(is_prism_card || active, |this| {
                 this.child(div().absolute().top_0().left_0().right_0().child(
-                    prism::prism_beam_horizontal(
-                        snap.clone(),
-                        2.0,
-                        i as f32 * 0.9,
-                        is_prism_card,
-                    ),
+                    prism::prism_beam_horizontal(snap.clone(), 2.0, i as f32 * 0.9, is_prism_card),
                 ))
             })
             .child(
@@ -6676,82 +6687,83 @@ impl ReadingApp {
                     .child(custom_row),
             );
         }
-        view = view.child(
-            h_flex()
-                .justify_between()
-                .items_center()
-                .flex_wrap()
-                .gap_3()
-                .p_4()
-                .rounded_2xl()
-                .bg(rgb(hex(&active_theme.paper)).opacity(if is_dark { 0.88 } else { 0.92 }))
-                .border_1()
-                .border_color(self.border_subtle())
-                .child(
-                    h_flex()
-                        .gap_3()
-                        .items_center()
-                        .flex_wrap()
-                        .child(
-                            self.button_with_icon(
-                                "自定义 / 另存主题",
-                                IconName::Feather,
-                                Action::EditTheme,
-                                cx,
+        view = view
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_3()
+                    .p_4()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&active_theme.paper)).opacity(if is_dark { 0.88 } else { 0.92 }))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .child(
+                        h_flex()
+                            .gap_3()
+                            .items_center()
+                            .flex_wrap()
+                            .child(
+                                self.button_with_icon(
+                                    "自定义 / 另存主题",
+                                    IconName::Feather,
+                                    Action::EditTheme,
+                                    cx,
+                                )
+                                .primary(),
                             )
-                            .primary(),
-                        )
-                        .child(
-                            self.button_with_icon(
-                                if active_theme.reduced_motion {
-                                    "流光交互：已静谧"
-                                } else {
-                                    "流光交互：已开启"
-                                },
-                                IconName::Sparkles,
-                                Action::ToggleFlow,
-                                cx,
+                            .child(
+                                self.button_with_icon(
+                                    if active_theme.reduced_motion {
+                                        "流光交互：已静谧"
+                                    } else {
+                                        "流光交互：已开启"
+                                    },
+                                    IconName::Sparkles,
+                                    Action::ToggleFlow,
+                                    cx,
+                                )
+                                .outline(),
                             )
-                            .outline(),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(12.))
-                                .font_family(self.ui_font())
-                                .text_color(rgb(hex(&active_theme.muted)))
-                                .child("支持鼠标流光、棱镜边缘折射与自定义素材"),
-                        ),
-                )
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .items_center()
-                        .px_3()
-                        .py_1p5()
-                        .rounded_full()
-                        .bg(rgb(hex(&active_theme.accent)).opacity(0.12))
-                        .child(
-                            Icon::new(IconName::ShieldCheck)
-                                .size(px(14.))
-                                .text_color(rgb(hex(&active_theme.accent))),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(11.))
-                                .font_family(self.ui_font())
-                                .text_color(rgb(hex(&active_theme.accent)))
-                                .child(format!(
-                                    "当前正文对比度 {:.1}:1 · 最低要求 4.5:1",
-                                    glow_core::theme::contrast(
-                                        &active_theme.text,
-                                        &active_theme.paper
-                                    )
-                                )),
-                        ),
-                ),
-        )
-        .child(self.settings_ai_card(cx))
-        .child(self.settings_sync_card(cx));
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&active_theme.muted)))
+                                    .child("支持鼠标流光、棱镜边缘折射与自定义素材"),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .px_3()
+                            .py_1p5()
+                            .rounded_full()
+                            .bg(rgb(hex(&active_theme.accent)).opacity(0.12))
+                            .child(
+                                Icon::new(IconName::ShieldCheck)
+                                    .size(px(14.))
+                                    .text_color(rgb(hex(&active_theme.accent))),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&active_theme.accent)))
+                                    .child(format!(
+                                        "当前正文对比度 {:.1}:1 · 最低要求 4.5:1",
+                                        glow_core::theme::contrast(
+                                            &active_theme.text,
+                                            &active_theme.paper
+                                        )
+                                    )),
+                            ),
+                    ),
+            )
+            .child(self.settings_ai_card(cx))
+            .child(self.settings_sync_card(cx));
         if let Some(draft) = &self.draft {
             let labels = [
                 "主题名称",
@@ -7158,7 +7170,11 @@ impl ReadingApp {
                 }
                 self.act(Action::CloseTimerPicker, window, cx);
                 self.act(Action::Page(Page::Radio), window, cx);
-                self.act(Action::RadioTuneStation("glow-night-talk".into()), window, cx);
+                self.act(
+                    Action::RadioTuneStation("glow-night-talk".into()),
+                    window,
+                    cx,
+                );
                 self.smoke_step = 49;
                 self.smoke_started = Instant::now();
             }
@@ -7556,13 +7572,12 @@ impl ReadingApp {
             );
         }
         let vol_pct = (t.volume.clamp(0.05, 1.0) * 100.0).round() as u32;
-        let today_mins = if self.store.state.reading_minutes_date.as_deref()
-            == Some(today_ymd().as_str())
-        {
-            self.store.state.reading_minutes_today
-        } else {
-            0
-        };
+        let today_mins =
+            if self.store.state.reading_minutes_date.as_deref() == Some(today_ymd().as_str()) {
+                self.store.state.reading_minutes_today
+            } else {
+                0
+            };
         let deck = v_flex()
             .relative()
             .overflow_hidden()
@@ -7572,9 +7587,10 @@ impl ReadingApp {
             .bg(rgb(hex(&t.background)).opacity(if dark { 0.76 } else { 0.78 }))
             .border_1()
             .border_color(self.border_subtle())
-            .when(self.radio_status.playing && self.page != Page::Radio, |el| {
-                el.child(self.render_sidebar_radio_mini(t, cx))
-            })
+            .when(
+                self.radio_status.playing && self.page != Page::Radio,
+                |el| el.child(self.render_sidebar_radio_mini(t, cx)),
+            )
             .child(
                 div()
                     .absolute()
@@ -7770,7 +7786,11 @@ impl ReadingApp {
                             .px_1p5()
                             .py_0p5()
                             .rounded_full()
-                            .bg(rgb(hex(&t.accent)).opacity(if self.mixer_open { 0.28 } else { 0.14 }))
+                            .bg(rgb(hex(&t.accent)).opacity(if self.mixer_open {
+                                0.28
+                            } else {
+                                0.14
+                            }))
                             .border_1()
                             .border_color(rgb(hex(&t.accent)).opacity(0.36))
                             .text_size(px(8.))
@@ -7784,10 +7804,9 @@ impl ReadingApp {
                             )
                             .child("混音台"),
                     )
-                    .child(self.waveform_bars(
-                        self.audio.is_some(),
-                        &[4., 9., 13., 7., 11., 6., 9.],
-                    )),
+                    .child(
+                        self.waveform_bars(self.audio.is_some(), &[4., 9., 13., 7., 11., 6., 9.]),
+                    ),
             );
         deck.child(preset_row)
             .child(
@@ -8622,13 +8641,12 @@ impl ReadingApp {
             .parse::<u32>()
             .ok()
             .filter(|m| (1..=180).contains(m));
-        let today_mins = if self.store.state.reading_minutes_date.as_deref()
-            == Some(today_ymd().as_str())
-        {
-            self.store.state.reading_minutes_today
-        } else {
-            0
-        };
+        let today_mins =
+            if self.store.state.reading_minutes_date.as_deref() == Some(today_ymd().as_str()) {
+                self.store.state.reading_minutes_today
+            } else {
+                0
+            };
         let active_preset = self.active_soundscape_preset();
         let mut preset_pills = h_flex().gap_2().flex_wrap();
         for &(mins, label, hint) in &[
@@ -9317,9 +9335,7 @@ impl Render for ReadingApp {
         };
         let mut main = v_flex().flex_1().h_full().min_w_0();
         let show_top_banner = self.page != Page::Reader && self.page != Page::Radio;
-        if show_top_banner
-            && let Some(message) = self.error.as_ref().or(self.notice.as_ref())
-        {
+        if show_top_banner && let Some(message) = self.error.as_ref().or(self.notice.as_ref()) {
             main = main.child(
                 h_flex()
                     .gap_3()
@@ -9474,12 +9490,7 @@ impl Render for ReadingApp {
             "scene-night.png",
             "scene-prism.png",
         ] {
-            root = root.child(
-                img(preload)
-                    .absolute()
-                    .size(px(1.))
-                    .opacity(0.001),
-            );
+            root = root.child(img(preload).absolute().size(px(1.)).opacity(0.001));
         }
         if let Some(scene) = Self::scene_asset_for(&t.id) {
             root = root.child(
@@ -10670,8 +10681,9 @@ mod tests {
             app.ai_base_url_input.update(cx, |s, cx| {
                 s.set_value("https://my-gateway.example/v1/chat/completions", window, cx)
             });
-            app.ai_key_input
-                .update(cx, |s, cx| s.set_value("sk-secret-ai-never-sync", window, cx));
+            app.ai_key_input.update(cx, |s, cx| {
+                s.set_value("sk-secret-ai-never-sync", window, cx)
+            });
             app.act(Action::SaveAiSettings, window, cx);
 
             app.act(Action::SelectSyncMode("github".into()), window, cx);
@@ -10719,10 +10731,21 @@ mod tests {
             assert_eq!(app.store.state.radio.lamp_color, "starry");
             app.act(Action::RadioLampMode("breathe_478".into()), window, cx);
             assert_eq!(app.store.state.radio.lamp_mode, "breathe_478");
-            app.act(Action::RadioTuneStation("offline-piano-rain".into()), window, cx);
+            app.act(
+                Action::RadioTuneStation("offline-piano-rain".into()),
+                window,
+                cx,
+            );
             assert!(app.radio_status.playing);
-            assert_eq!(app.store.state.radio.current_station_id, "offline-piano-rain");
-            app.act(Action::RadioToggleFavorite("offline-piano-rain".into()), window, cx);
+            assert_eq!(
+                app.store.state.radio.current_station_id,
+                "offline-piano-rain"
+            );
+            app.act(
+                Action::RadioToggleFavorite("offline-piano-rain".into()),
+                window,
+                cx,
+            );
             assert!(
                 app.store
                     .state
@@ -10759,7 +10782,10 @@ mod tests {
             });
             app.act(Action::RadioAddCustomStream, window, cx);
             assert_eq!(app.store.state.radio.custom_stations.len(), 1);
-            assert_eq!(app.store.state.radio.custom_stations[0].name, "海边深夜钢琴");
+            assert_eq!(
+                app.store.state.radio.custom_stations[0].name,
+                "海边深夜钢琴"
+            );
         });
         cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.simulate_keystrokes("escape");
@@ -10802,14 +10828,26 @@ mod tests {
         // 1. Entering Page::Radio opens full-viewport immersive stage by default (no bright sidebar)
         app.update_in(cx, |app, window, cx| {
             app.act(Action::Page(Page::Radio), window, cx);
-            assert!(app.radio_hide_sidebar, "FM page should open immersive by default");
+            assert!(
+                app.radio_hide_sidebar,
+                "FM page should open immersive by default"
+            );
         });
         cx.update(|window, cx| window.draw(cx).clear(cx));
 
-        let base_lamp = cx.debug_bounds("radio-lamp-stage").expect("vinyl stage laid out");
-        let base_dial = cx.debug_bounds("radio-dial-track").expect("dial track laid out");
-        let base_play = cx.debug_bounds("radio-play-btn").expect("play btn laid out");
-        assert!(base_lamp.size.width >= px(300.), "hero turntable stage must be large");
+        let base_lamp = cx
+            .debug_bounds("radio-lamp-stage")
+            .expect("vinyl stage laid out");
+        let base_dial = cx
+            .debug_bounds("radio-dial-track")
+            .expect("dial track laid out");
+        let base_play = cx
+            .debug_bounds("radio-play-btn")
+            .expect("play btn laid out");
+        assert!(
+            base_lamp.size.width >= px(300.),
+            "hero turntable stage must be large"
+        );
 
         // 2. Switch across EVERY station kind (short 1-line online, 4-line NightHost, BookEchoHost,
         //    AmbientSynth, LocalFolder), lamp colors, 4-7-8 breathing mode, play/pause, visual toggle.
@@ -10863,7 +10901,11 @@ mod tests {
         };
 
         // Start drag near 88.6 MHz (lofi-rain)
-        cx.simulate_mouse_down(point(x_for_mhz(88.6), y_mid), MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_down(
+            point(x_for_mhz(88.6), y_mid),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
         app.read_with(cx, |app, _| {
             assert!(app.radio_dial_dragging);
             let mhz = app.radio_drag_mhz.expect("drag mhz set");
@@ -10871,7 +10913,11 @@ mod tests {
         });
 
         // Drag continuously to mid-band 96.8 MHz (classical-nocturne)
-        cx.simulate_mouse_move(point(x_for_mhz(96.8), y_mid), MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(
+            point(x_for_mhz(96.8), y_mid),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
         app.read_with(cx, |app, _| {
             assert!(app.radio_dial_dragging);
             let mhz = app.radio_drag_mhz.expect("drag mhz updated");
@@ -10887,14 +10933,25 @@ mod tests {
         app.read_with(cx, |app, _| {
             assert_eq!(app.radio_drag_mhz, Some(108.0));
         });
-        cx.simulate_mouse_move(point(x_for_mhz(104.6), y_mid), MouseButton::Left, Modifiers::default());
-        cx.simulate_mouse_up(point(x_for_mhz(104.6), y_mid), MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(
+            point(x_for_mhz(104.6), y_mid),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            point(x_for_mhz(104.6), y_mid),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
         cx.update(|window, cx| window.draw(cx).clear(cx));
 
         app.read_with(cx, |app, _| {
             assert!(!app.radio_dial_dragging);
             assert!(app.radio_drag_mhz.is_none());
-            assert_eq!(app.store.state.radio.current_station_id, "offline-piano-rain");
+            assert_eq!(
+                app.store.state.radio.current_station_id,
+                "offline-piano-rain"
+            );
             assert!(app.radio_status.playing);
         });
         assert_eq!(
@@ -10904,19 +10961,30 @@ mod tests {
         );
 
         // 4. Drag the smooth volume slider bar
-        let vol_bounds = cx.debug_bounds("radio-vol-track").expect("volume track laid out");
+        let vol_bounds = cx
+            .debug_bounds("radio-vol-track")
+            .expect("volume track laid out");
         cx.simulate_mouse_down(
-            point(px(f32::from(vol_bounds.origin.x) + 12.0), vol_bounds.center().y),
+            point(
+                px(f32::from(vol_bounds.origin.x) + 12.0),
+                vol_bounds.center().y,
+            ),
             MouseButton::Left,
             Modifiers::default(),
         );
         cx.simulate_mouse_move(
-            point(px(f32::from(vol_bounds.right()) - 10.0), vol_bounds.center().y),
+            point(
+                px(f32::from(vol_bounds.right()) - 10.0),
+                vol_bounds.center().y,
+            ),
             MouseButton::Left,
             Modifiers::default(),
         );
         cx.simulate_mouse_up(
-            point(px(f32::from(vol_bounds.right()) - 10.0), vol_bounds.center().y),
+            point(
+                px(f32::from(vol_bounds.right()) - 10.0),
+                vol_bounds.center().y,
+            ),
             MouseButton::Left,
             Modifiers::default(),
         );
@@ -10926,7 +10994,9 @@ mod tests {
         });
 
         // 5. Clicking back-to-shelf exits cleanly to Shelf while keeping background FM active
-        let back_bounds = cx.debug_bounds("radio-back-shelf").expect("back-to-shelf button");
+        let back_bounds = cx
+            .debug_bounds("radio-back-shelf")
+            .expect("back-to-shelf button");
         cx.simulate_click(back_bounds.center(), Modifiers::default());
         cx.update(|window, cx| window.draw(cx).clear(cx));
         app.read_with(cx, |app, _| {

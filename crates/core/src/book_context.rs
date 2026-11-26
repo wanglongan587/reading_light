@@ -160,7 +160,11 @@ fn normalize_ws(input: &str) -> String {
     out.trim().to_owned()
 }
 
-fn parse_nav_labels(files: &BTreeMap<String, Vec<u8>>, opf_path: &str, opf_doc: &roxmltree::Document) -> HashMap<String, String> {
+fn parse_nav_labels(
+    files: &BTreeMap<String, Vec<u8>>,
+    opf_path: &str,
+    opf_doc: &roxmltree::Document,
+) -> HashMap<String, String> {
     let mut labels = HashMap::new();
     let nav_href = opf_doc
         .descendants()
@@ -301,9 +305,9 @@ fn resolve_read_boundary(
         .map(str::trim)
         .filter(|c| !c.is_empty())
         .and_then(|target| {
-            chapters
-                .iter()
-                .position(|c| c.title == target || c.title.contains(target) || target.contains(&c.title))
+            chapters.iter().position(|c| {
+                c.title == target || c.title.contains(target) || target.contains(&c.title)
+            })
         });
 
     // 2) Try CFI spine index
@@ -327,23 +331,24 @@ fn resolve_read_boundary(
         (0, chapters[0].text.chars().count().min(3000))
     });
 
-    let (cutoff_idx, cutoff_chars_in_chapter) = if let Some(idx) = matched_by_title.or(matched_by_cfi) {
-        let ch_len = chapters[idx].text.chars().count();
-        // If progress also exists and maps inside this exact chapter, honor sub-chapter cutoff!
-        let within = if let Some((p_idx, p_chars)) = matched_by_progress
-            && p_idx == idx
-        {
-            p_chars.max(1200).min(ch_len)
+    let (cutoff_idx, cutoff_chars_in_chapter) =
+        if let Some(idx) = matched_by_title.or(matched_by_cfi) {
+            let ch_len = chapters[idx].text.chars().count();
+            // If progress also exists and maps inside this exact chapter, honor sub-chapter cutoff!
+            let within = if let Some((p_idx, p_chars)) = matched_by_progress
+                && p_idx == idx
+            {
+                p_chars.max(1200).min(ch_len)
+            } else {
+                ch_len
+            };
+            (idx, within)
+        } else if let Some((p_idx, p_chars)) = matched_by_progress {
+            (p_idx, p_chars)
         } else {
-            ch_len
+            // Brand-new book at 0%: only read up to the first 3500 chars of chapter 0
+            (0, chapters[0].text.chars().count().min(3500))
         };
-        (idx, within)
-    } else if let Some((p_idx, p_chars)) = matched_by_progress {
-        (p_idx, p_chars)
-    } else {
-        // Brand-new book at 0%: only read up to the first 3500 chars of chapter 0
-        (0, chapters[0].text.chars().count().min(3500))
-    };
 
     let read_chars: usize = chapters[..cutoff_idx]
         .iter()
@@ -425,7 +430,10 @@ pub fn build_spoiler_safe_context(
             .collect();
         format!("{head}\n…\n{tail}")
     };
-    sections.push(format!("【当前读至：{}】\n{}", cutoff_chapter_title, cur_snippet));
+    sections.push(format!(
+        "【当前读至：{}】\n{}",
+        cutoff_chapter_title, cur_snippet
+    ));
 
     Ok(SpoilerSafeContext {
         book_title: book_title.to_owned(),
@@ -536,10 +544,7 @@ pub fn offline_companion_preview(ctx: &SpoilerSafeContext) -> BookCompanionCache
 
     let summary = format!(
         "当前阅读至《{}》的「{}」（约 {}%），系统已严格屏蔽后续 {} 个未读章节以防剧透。已为您提取本段之前的正文脉络；在「主题与设置」配置 DeepSeek、通义千问、OpenAI 或本地 Ollama 大模型后，即可一键生成完整文学级前情提要与精准人物关系图谱。",
-        ctx.book_title,
-        ctx.cutoff_chapter_title,
-        ctx.progress_percent,
-        ctx.skipped_future_chapters
+        ctx.book_title, ctx.cutoff_chapter_title, ctx.progress_percent, ctx.skipped_future_chapters
     );
 
     // Light local proper-noun / frequent CJK/Latin name heuristic
@@ -581,7 +586,10 @@ pub fn offline_companion_preview(ctx: &SpoilerSafeContext) -> BookCompanionCache
         headline: format!("读至 {}% · 防剧透本地脉络预览", ctx.progress_percent),
         story_summary: summary,
         open_threads: vec![
-            format!("当前章节「{}」正在展开的伏笔与情绪转折", ctx.cutoff_chapter_title),
+            format!(
+                "当前章节「{}」正在展开的伏笔与情绪转折",
+                ctx.cutoff_chapter_title
+            ),
             "配置任意云端或本地离线大模型后，将自动提炼至今未解悬念".into(),
         ],
         resume_moment,
@@ -627,7 +635,10 @@ fn extract_candidate_names(text: &str) -> Vec<(String, usize)> {
         if word.len() >= 3
             && word.chars().next().is_some_and(|c| c.is_ascii_uppercase())
             && word.chars().skip(1).any(|c| c.is_ascii_lowercase())
-            && !matches!(word, "The" | "And" | "But" | "Chapter" | "Part" | "This" | "That")
+            && !matches!(
+                word,
+                "The" | "And" | "But" | "Chapter" | "Part" | "This" | "That"
+            )
         {
             *counts.entry(word.to_owned()).or_insert(0) += 2;
         }
@@ -648,10 +659,7 @@ fn extract_candidate_names(text: &str) -> Vec<(String, usize)> {
         }
     }
 
-    let mut ranked: Vec<(String, usize)> = counts
-        .into_iter()
-        .filter(|(_, c)| *c >= 2)
-        .collect();
+    let mut ranked: Vec<(String, usize)> = counts.into_iter().filter(|(_, c)| *c >= 2).collect();
     ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     ranked
 }
@@ -712,6 +720,10 @@ mod tests {
             extract_tts_segments(&epub, None, Some("第二章"), Some(0.6)).unwrap();
         assert!(!segments.is_empty());
         assert_eq!(segments[start_idx].chapter_title, "第二章");
-        assert!(segments[start_idx..].iter().any(|s| s.text.contains("新的旅程")));
+        assert!(
+            segments[start_idx..]
+                .iter()
+                .any(|s| s.text.contains("新的旅程"))
+        );
     }
 }
