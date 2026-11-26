@@ -497,7 +497,7 @@ fn tts_worker_loop(
 
         match synth_outcome {
             Ok((audio, engine_label)) => {
-                match rodio::OutputStream::try_default()
+                match crate::soundscape::try_default_output_stream()
                     .map_err(anyhow::Error::from)
                     .and_then(|(stream, handle)| {
                         rodio::Sink::try_new(&handle)

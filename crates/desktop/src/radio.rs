@@ -1220,8 +1220,8 @@ fn start_bed_playback(
     fade_multiplier: &Arc<AtomicU32>,
     with_static: bool,
 ) -> Result<ActivePlayback> {
-    let (stream, handle) =
-        rodio::OutputStream::try_default().map_err(|_| anyhow!("未检测到可用的音频输出设备"))?;
+    let (stream, handle) = crate::soundscape::try_default_output_stream()
+        .map_err(|_| anyhow!("未检测到可用的音频输出设备"))?;
     let primary_sink = rodio::Sink::try_new(&handle)?;
     let voice_sink = rodio::Sink::try_new(&handle)?;
     primary_sink.set_volume(volume);
@@ -1417,13 +1417,15 @@ fn radio_worker_loop(
                         RadioStationKind::OnlineStream => {
                             // Play gentle tuning static immediately while connecting so tuning feels alive
                             let static_stream = if with_static {
-                                rodio::OutputStream::try_default().ok().and_then(|(s, h)| {
-                                    rodio::Sink::try_new(&h).ok().map(|sink| {
-                                        sink.set_volume((volume * 0.82).clamp(0.08, 0.75));
-                                        sink.append(TuningStaticSource::new(420));
-                                        (s, sink)
+                                crate::soundscape::try_default_output_stream()
+                                    .ok()
+                                    .and_then(|(s, h)| {
+                                        rodio::Sink::try_new(&h).ok().map(|sink| {
+                                            sink.set_volume((volume * 0.82).clamp(0.08, 0.75));
+                                            sink.append(TuningStaticSource::new(420));
+                                            (s, sink)
+                                        })
                                     })
-                                })
                             } else {
                                 None
                             };
@@ -1462,10 +1464,11 @@ fn radio_worker_loop(
                                         };
 
                                     match decoded.and_then(|src| {
-                                        let (stream, handle) = rodio::OutputStream::try_default()
-                                            .map_err(|_| {
-                                            anyhow!("未检测到可用的音频输出设备")
-                                        })?;
+                                        let (stream, handle) =
+                                            crate::soundscape::try_default_output_stream()
+                                                .map_err(|_| {
+                                                    anyhow!("未检测到可用的音频输出设备")
+                                                })?;
                                         let sink = rodio::Sink::try_new(&handle)?;
                                         sink.set_volume(volume);
                                         let metered = MeteredRadioSource::new(
@@ -1845,7 +1848,7 @@ fn start_local_track_playback(
         .to_owned();
     let file = fs::File::open(path).ok()?;
     let decoder = rodio::Decoder::new(BufReader::new(file)).ok()?;
-    let (stream, handle) = rodio::OutputStream::try_default().ok()?;
+    let (stream, handle) = crate::soundscape::try_default_output_stream().ok()?;
     let sink = rodio::Sink::try_new(&handle).ok()?;
     sink.set_volume(volume);
     if with_static {

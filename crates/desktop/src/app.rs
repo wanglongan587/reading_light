@@ -816,7 +816,7 @@ impl ReadingApp {
                     .join(&self.theme().id)
                     .join(path),
             )?))?;
-            let (stream, handle) = rodio::OutputStream::try_default()
+            let (stream, handle) = crate::soundscape::try_default_output_stream()
                 .map_err(|_| anyhow::anyhow!("未检测到可用的音频输出设备"))?;
             let sink = rodio::Sink::try_new(&handle)?;
             sink.set_volume(vol);
@@ -837,7 +837,7 @@ impl ReadingApp {
             sink.set_volume(vol);
             return Ok(label);
         }
-        let (stream, handle) = rodio::OutputStream::try_default()
+        let (stream, handle) = crate::soundscape::try_default_output_stream()
             .map_err(|_| anyhow::anyhow!("未检测到可用的音频输出设备"))?;
         let sink = rodio::Sink::try_new(&handle)?;
         sink.set_volume(vol);
@@ -852,7 +852,7 @@ impl ReadingApp {
         Ok(label)
     }
     fn play_chime(&mut self) {
-        if let Ok((stream, handle)) = rodio::OutputStream::try_default()
+        if let Ok((stream, handle)) = crate::soundscape::try_default_output_stream()
             && let Ok(sink) = rodio::Sink::try_new(&handle)
         {
             sink.set_volume((self.theme().volume * 1.1).clamp(0.32, 0.85));
