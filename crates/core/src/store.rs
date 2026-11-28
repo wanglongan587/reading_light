@@ -1,27 +1,66 @@
-use crate::model::*;
+use crate::{
+    db::{Database, MemoryHit, MonthlyReadingSummary},
+    model::*,
+};
 use anyhow::{Context, Result, ensure};
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
+
+const META_SNAPSHOT_SHA256: &str = "last_snapshot_sha256";
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(64);
+    for b in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{b:02x}");
+    }
+    out
+}
 
 pub struct Store {
     pub root: PathBuf,
     pub state: State,
+    db: Mutex<Database>,
 }
 
 impl Store {
     pub fn open(root: PathBuf) -> Result<Self> {
         fs::create_dir_all(root.join("books"))?;
         fs::create_dir_all(root.join("themes"))?;
-        let path = root.join("state.json");
-        let mut state: State = if path.exists() {
-            serde_json::from_slice(&fs::read(&path)?)
-                .context("本地数据无法读取；原文件已保留，请先备份后修复。")?
+
+        let db_path = root.join("glow.db");
+        let json_path = root.join("state.json");
+        let mut db = Database::open(&db_path)?;
+
+        let db_has_state = db.has_state()?;
+        let last_hash = db.get_meta(META_SNAPSHOT_SHA256)?;
+        let json_bytes = if json_path.exists() {
+            Some(fs::read(&json_path).context("本地数据无法读取；原文件已保留，请先备份后修复。")?)
         } else {
-            State::default()
+            None
         };
+
+        let mut migrated_from_json = false;
+        let mut state: State = match (db_has_state, json_bytes.as_deref()) {
+            (true, Some(bytes)) if last_hash.as_deref() == Some(sha256_hex(bytes).as_str()) => {
+                db.load_state()?.unwrap_or_default()
+            }
+            (true, None) => db.load_state()?.unwrap_or_default(),
+            (_, Some(bytes)) => {
+                // Either migrating legacy state.json -> glow.db, or state.json was edited externally.
+                migrated_from_json = !db_has_state;
+                serde_json::from_slice(bytes)
+                    .context("本地数据无法读取；原文件已保留，请先备份后修复。")?
+            }
+            (false, None) => State::default(),
+        };
+
         let is_legacy_forest = state.theme.id == "forest"
             && ((state.theme.background.eq_ignore_ascii_case("#E8EDE6")
                 && state.theme.paper.eq_ignore_ascii_case("#FAF7EE")
@@ -37,6 +76,36 @@ impl Store {
             state.theme.muted = refreshed.muted;
             state.theme.accent = refreshed.accent;
         }
+        migrate_legacy_theme_name(&mut state.theme);
+        for custom in &mut state.custom_themes {
+            migrate_legacy_theme_name(custom);
+        }
+
+        Self::validate_state(&state)?;
+
+        if migrated_from_json {
+            let backup = root.join("state.json.v1.bak");
+            if !backup.exists()
+                && let Some(bytes) = json_bytes.as_deref()
+            {
+                let _ = atomic_write(&backup, bytes);
+            }
+        }
+        if !db_has_state || json_bytes.is_some() {
+            db.save_state(&state)?;
+            if let Some(bytes) = json_bytes.as_deref() {
+                db.set_meta(META_SNAPSHOT_SHA256, &sha256_hex(bytes))?;
+            }
+        }
+
+        Ok(Self {
+            root,
+            state,
+            db: Mutex::new(db),
+        })
+    }
+
+    fn validate_state(state: &State) -> Result<()> {
         ensure!(state.version == 1, "不支持的本地数据版本");
         ensure!(
             state
@@ -117,7 +186,7 @@ impl Store {
                 );
             }
         }
-        Ok(Self { root, state })
+        Ok(())
     }
 
     pub fn default_root() -> Result<PathBuf> {
@@ -133,10 +202,43 @@ impl Store {
     }
 
     pub fn save(&self) -> Result<()> {
-        atomic_write(
-            &self.root.join("state.json"),
-            &serde_json::to_vec_pretty(&self.state)?,
-        )
+        let json_bytes = serde_json::to_vec_pretty(&self.state)?;
+        let snapshot_hash = sha256_hex(&json_bytes);
+        atomic_write(&self.root.join("state.json"), &json_bytes)?;
+        let mut db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("本地数据库锁已损坏"))?;
+        db.save_state(&self.state)?;
+        db.set_meta(META_SNAPSHOT_SHA256, &snapshot_hash)?;
+        Ok(())
+    }
+
+    /// Searches personal highlights and journal entries using local SQLite FTS5.
+    pub fn search_memories(&self, query: &str, limit: usize) -> Result<Vec<MemoryHit>> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("本地数据库锁已损坏"))?;
+        db.search_memories(query, limit)
+    }
+
+    /// Recalls related past highlights and journal entries for a full selected passage via CJK bigrams + BM25.
+    pub fn recall_related_memories(&self, passage: &str, limit: usize) -> Result<Vec<MemoryHit>> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("本地数据库锁已损坏"))?;
+        db.recall_related_memories(passage, limit)
+    }
+
+    /// Returns monthly reading totals and daily breakdown from `reading_sessions`.
+    pub fn monthly_reading_summary(&self, year_month: &str) -> Result<MonthlyReadingSummary> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("本地数据库锁已损坏"))?;
+        db.monthly_reading_summary(year_month)
     }
 
     pub fn load_secrets(&self) -> LocalSecrets {
@@ -386,19 +488,345 @@ impl Store {
     }
 
     pub fn add_reading_minutes(&mut self, minutes: u32, today: &str) -> Result<u32> {
+        let book_id = self.state.last_book.clone();
+        let theme_id = Some(self.state.theme.id.clone());
+        self.record_reading_session(book_id, minutes, today, theme_id)
+    }
+
+    pub fn record_reading_session(
+        &mut self,
+        book_id: Option<String>,
+        minutes: u32,
+        today: &str,
+        theme_id: Option<String>,
+    ) -> Result<u32> {
         let prev_mins = self.state.reading_minutes_today;
         let prev_date = self.state.reading_minutes_date.clone();
+        let prev_sessions_len = self.state.reading_sessions.len();
+        let prev_book_minutes = book_id.as_deref().and_then(|id| {
+            self.state
+                .books
+                .iter()
+                .find(|b| b.id == id)
+                .map(|b| (id.to_owned(), b.total_reading_minutes))
+        });
         if self.state.reading_minutes_date.as_deref() != Some(today) {
             self.state.reading_minutes_today = 0;
             self.state.reading_minutes_date = Some(today.to_owned());
         }
         self.state.reading_minutes_today = self.state.reading_minutes_today.saturating_add(minutes);
+        if minutes > 0 {
+            if let Some(ref bid) = book_id
+                && let Some(book) = self.state.books.iter_mut().find(|b| &b.id == bid)
+            {
+                book.total_reading_minutes = book.total_reading_minutes.saturating_add(minutes);
+                if book.shelf_status.is_none() || book.shelf_status.as_deref() == Some("want") {
+                    book.shelf_status = Some("reading".into());
+                }
+            }
+            self.state.reading_sessions.push(ReadingSession {
+                id: uuid::Uuid::new_v4().to_string(),
+                book_id,
+                date: today.to_owned(),
+                minutes,
+                recorded_at: now(),
+                theme_id,
+            });
+        }
         if let Err(error) = self.save() {
             self.state.reading_minutes_today = prev_mins;
             self.state.reading_minutes_date = prev_date;
+            self.state.reading_sessions.truncate(prev_sessions_len);
+            if let Some((bid, old_mins)) = prev_book_minutes
+                && let Some(book) = self.state.books.iter_mut().find(|b| b.id == bid)
+            {
+                book.total_reading_minutes = old_mins;
+            }
             return Err(error);
         }
         Ok(self.state.reading_minutes_today)
+    }
+
+    pub fn set_book_status(&mut self, book_id: &str, status: &str) -> Result<()> {
+        ensure!(crate::model::valid_shelf_status(status), "不支持的书架状态");
+        let previous = self
+            .state
+            .books
+            .iter()
+            .find(|b| b.id == book_id)
+            .cloned()
+            .context("书籍已不在书架中")?;
+        if let Some(book) = self.state.books.iter_mut().find(|b| b.id == book_id) {
+            book.shelf_status = Some(status.to_owned());
+            if status == "finished" && book.finished_at.is_none() {
+                book.finished_at = Some(now());
+            }
+            book.updated_at = Some(now());
+        }
+        if let Err(error) = self.save() {
+            if let Some(book) = self.state.books.iter_mut().find(|b| b.id == book_id) {
+                *book = previous;
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn set_book_tags(&mut self, book_id: &str, tags: Vec<String>) -> Result<()> {
+        let mut clean = Vec::new();
+        for tag in tags {
+            let trimmed = tag.trim().to_owned();
+            if !trimmed.is_empty()
+                && trimmed.chars().count() <= 24
+                && !clean.iter().any(|existing| existing == &trimmed)
+            {
+                clean.push(trimmed);
+                if clean.len() >= 12 {
+                    break;
+                }
+            }
+        }
+        let previous = self
+            .state
+            .books
+            .iter()
+            .find(|b| b.id == book_id)
+            .cloned()
+            .context("书籍已不在书架中")?;
+        if let Some(book) = self.state.books.iter_mut().find(|b| b.id == book_id) {
+            book.tags = clean;
+            book.updated_at = Some(now());
+        }
+        if let Err(error) = self.save() {
+            if let Some(book) = self.state.books.iter_mut().find(|b| b.id == book_id) {
+                *book = previous;
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn update_book_meta(&mut self, book_id: &str, title: String, author: String) -> Result<()> {
+        let title = title.trim().to_owned();
+        let author = author.trim().to_owned();
+        ensure!(
+            !title.is_empty() && title.chars().count() <= 160,
+            "书名不能为空且不超过 160 字"
+        );
+        ensure!(author.chars().count() <= 120, "作者名请控制在 120 字以内");
+        let previous = self
+            .state
+            .books
+            .iter()
+            .find(|b| b.id == book_id)
+            .cloned()
+            .context("书籍已不在书架中")?;
+        if let Some(book) = self.state.books.iter_mut().find(|b| b.id == book_id) {
+            book.title = title;
+            book.author = if author.is_empty() {
+                "佚名".into()
+            } else {
+                author
+            };
+            book.updated_at = Some(now());
+        }
+        if let Err(error) = self.save() {
+            if let Some(book) = self.state.books.iter_mut().find(|b| b.id == book_id) {
+                *book = previous;
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Completes a book with a numbered ticket stub and completion letter, archiving it into Journal.
+    pub fn complete_book(
+        &mut self,
+        book_id: &str,
+        letter: String,
+        favorite_quote: Option<String>,
+    ) -> Result<u32> {
+        let letter = letter.trim().to_owned();
+        ensure!(!letter.is_empty(), "完读纪念信内容不能为空");
+        let previous_book = self
+            .state
+            .books
+            .iter()
+            .find(|b| b.id == book_id)
+            .cloned()
+            .context("书籍已不在书架中")?;
+        let previous_next_ticket = self.state.next_ticket_no;
+        let previous_journal_len = self.state.journal.len();
+
+        let ticket_no = previous_book
+            .completion_ticket_no
+            .unwrap_or_else(|| self.state.next_ticket_no.max(1));
+        if previous_book.completion_ticket_no.is_none() {
+            self.state.next_ticket_no = ticket_no.saturating_add(1);
+        }
+
+        let finished_at = now();
+        let (title, author, minutes, location) = {
+            let book = self
+                .state
+                .books
+                .iter_mut()
+                .find(|b| b.id == book_id)
+                .context("书籍已不在书架中")?;
+            book.shelf_status = Some("finished".into());
+            book.progress = Some(1.0);
+            book.finished_at = Some(finished_at.clone());
+            book.finish_letter = Some(letter.clone());
+            book.completion_ticket_no = Some(ticket_no);
+            book.updated_at = Some(finished_at.clone());
+            (
+                book.title.clone(),
+                book.author.clone(),
+                book.total_reading_minutes,
+                book.location.clone(),
+            )
+        };
+
+        let quote_snippet = favorite_quote
+            .map(|q| q.trim().to_owned())
+            .filter(|q| !q.is_empty());
+        let quotes = quote_snippet
+            .map(|text| {
+                vec![Quote {
+                    id: format!("ticket-{ticket_no:04}"),
+                    text,
+                    author: author.clone(),
+                    work: title.clone(),
+                    edition: format!("完读纪念票根 NO.{ticket_no:04}"),
+                    chapter: if minutes > 0 {
+                        format!("共静读 {minutes} 分钟")
+                    } else {
+                        "静夜完读".into()
+                    },
+                    source: "完读仪式".into(),
+                    tags: vec!["完读".into()],
+                    spoiler: false,
+                }]
+            })
+            .unwrap_or_default();
+
+        self.state.journal.insert(
+            0,
+            JournalEntry {
+                id: uuid::Uuid::new_v4().to_string(),
+                created_at: finished_at,
+                kind: "ticket".into(),
+                input: format!("《{title}》· {author} · 完读纪念票根 NO.{ticket_no:04}"),
+                mood: Some("完读".into()),
+                echo: EchoResult {
+                    quotes,
+                    reply: letter,
+                    demo: false,
+                },
+                location,
+                favorite: true,
+            },
+        );
+
+        if let Err(error) = self.save() {
+            if let Some(book) = self.state.books.iter_mut().find(|b| b.id == book_id) {
+                *book = previous_book;
+            }
+            self.state.next_ticket_no = previous_next_ticket;
+            if self.state.journal.len() > previous_journal_len {
+                self.state.journal.remove(0);
+            }
+            return Err(error);
+        }
+        Ok(ticket_no)
+    }
+
+    pub fn add_opds_feed(&mut self, name: String, url: String) -> Result<OpdsFeedConfig> {
+        let name = name.trim().to_owned();
+        let url = url.trim().to_owned();
+        ensure!(
+            !name.is_empty() && name.chars().count() <= 80,
+            "书源名称请控制在 1–80 字"
+        );
+        ensure!(
+            crate::model::valid_radio_stream_url(&url),
+            "OPDS 书源地址必须以 http:// 或 https:// 开头"
+        );
+        if let Some(existing) = self.state.opds_feeds.iter().find(|f| f.url == url) {
+            return Ok(existing.clone());
+        }
+        let feed = OpdsFeedConfig {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            url,
+        };
+        let previous = self.state.opds_feeds.clone();
+        self.state.opds_feeds.push(feed.clone());
+        if let Err(error) = self.save() {
+            self.state.opds_feeds = previous;
+            return Err(error);
+        }
+        Ok(feed)
+    }
+
+    pub fn remove_opds_feed(&mut self, id: &str) -> Result<()> {
+        let previous = self.state.opds_feeds.clone();
+        self.state.opds_feeds.retain(|f| f.id != id);
+        if let Err(error) = self.save() {
+            self.state.opds_feeds = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn add_rss_feed(&mut self, name: String, url: String) -> Result<RssFeedConfig> {
+        let name = name.trim().to_owned();
+        let url = url.trim().to_owned();
+        ensure!(
+            !name.is_empty() && name.chars().count() <= 80,
+            "慢读订阅名称请控制在 1–80 字"
+        );
+        ensure!(
+            crate::model::valid_radio_stream_url(&url),
+            "RSS 订阅地址必须以 http:// 或 https:// 开头"
+        );
+        if let Some(existing) = self.state.rss_feeds.iter().find(|f| f.url == url) {
+            return Ok(existing.clone());
+        }
+        let feed = RssFeedConfig {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            url,
+            added_at: now(),
+        };
+        let previous = self.state.rss_feeds.clone();
+        self.state.rss_feeds.push(feed.clone());
+        if let Err(error) = self.save() {
+            self.state.rss_feeds = previous;
+            return Err(error);
+        }
+        Ok(feed)
+    }
+
+    pub fn remove_rss_feed(&mut self, id: &str) -> Result<()> {
+        let previous = self.state.rss_feeds.clone();
+        self.state.rss_feeds.retain(|f| f.id != id);
+        if let Err(error) = self.save() {
+            self.state.rss_feeds = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn set_locale(&mut self, code: &str) -> Result<crate::i18n::Locale> {
+        let locale = crate::i18n::Locale::from_code(code);
+        let prev = self.state.locale.clone();
+        self.state.locale = locale.code().into();
+        if let Err(error) = self.save() {
+            self.state.locale = prev;
+            return Err(error);
+        }
+        Ok(locale)
     }
 
     pub fn remove_highlight(
@@ -749,5 +1177,179 @@ mod tests {
         )
         .unwrap();
         assert!(Store::open(root).is_err());
+    }
+
+    #[test]
+    fn sqlite_migrates_legacy_json_backs_up_and_supports_fts5_cjk_memory_search_and_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("data");
+        fs::create_dir_all(&root).unwrap();
+        let book_id = "a".repeat(64);
+        let legacy = serde_json::json!({
+            "version": 1,
+            "books": [{
+                "id": book_id,
+                "title": "瓦尔登湖",
+                "author": "梭罗",
+                "format": "epub",
+                "imported_at": "2026-10-01T00:00:00Z",
+                "cover": null,
+                "location": null,
+                "bookmarks": [],
+                "highlights": [{
+                    "id": "hl-walden",
+                    "text": "我步入丛林，因为我希望生活得有意义 Walden",
+                    "cfi": "epubcfi(/6/4!/4/2,/1:0,/1:20)",
+                    "created_at": "2026-10-15T12:00:00Z",
+                    "color": "amber",
+                    "note": "那天加班后读到这句突然慢下来"
+                }]
+            }],
+            "journal": [{
+                "id": "j-rain",
+                "created_at": "2026-11-02T22:10:00Z",
+                "kind": "mood",
+                "input": "雨夜读完一小节，肩膀终于放松了",
+                "mood": "疲惫",
+                "echo": {
+                    "quotes": [],
+                    "reply": "允许自己慢慢来，今晚的丛林微光一直都在。",
+                    "demo": false
+                },
+                "location": null,
+                "favorite": true
+            }],
+            "theme": {
+                "version": 1,
+                "id": "totoro",
+                "name": "龙猫林荫",
+                "background": "#E1ECDF",
+                "paper": "#F9FCF6",
+                "text": "#1F3626",
+                "muted": "#4E6B56",
+                "accent": "#3D7A52",
+                "font": "serif",
+                "font_size": 20.0,
+                "line_height": 1.9,
+                "width": 720,
+                "overlay": 0.86,
+                "volume": 0.55,
+                "reduced_motion": false
+            },
+            "custom_themes": [],
+            "mode": "scrolled",
+            "last_book": null,
+            "privacy_seen": true
+        });
+        fs::write(
+            root.join("state.json"),
+            serde_json::to_vec_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        let mut store = Store::open(root.clone()).unwrap();
+        assert!(root.join("glow.db").exists());
+        assert!(root.join("state.json.v1.bak").exists());
+        assert_eq!(store.state.theme.name, "夏风樟树下");
+
+        // FTS5 search matches CJK phrases across highlights & journal AND English words
+        let cjk_hits = store.search_memories("丛林", 10).unwrap();
+        assert_eq!(cjk_hits.len(), 2);
+        assert!(cjk_hits.iter().any(|h| h.kind == "highlight"));
+        assert!(cjk_hits.iter().any(|h| h.kind == "journal"));
+
+        let eng_hits = store.search_memories("walden", 5).unwrap();
+        assert_eq!(eng_hits.len(), 1);
+        assert_eq!(eng_hits[0].book_title, "瓦尔登湖");
+
+        // Record reading sessions across multiple days and aggregate monthly calendar
+        store
+            .record_reading_session(
+                Some(book_id.clone()),
+                25,
+                "2026-11-10",
+                Some("forest".into()),
+            )
+            .unwrap();
+        store
+            .record_reading_session(
+                Some(book_id.clone()),
+                15,
+                "2026-11-10",
+                Some("forest".into()),
+            )
+            .unwrap();
+        store
+            .record_reading_session(Some(book_id), 30, "2026-11-27", Some("lantern".into()))
+            .unwrap();
+
+        // Removing state.json still reloads intact from glow.db!
+        fs::remove_file(root.join("state.json")).unwrap();
+        let reopened = Store::open(root).unwrap();
+        assert_eq!(reopened.state.books.len(), 1);
+        assert_eq!(reopened.state.books[0].highlights.len(), 1);
+        assert_eq!(reopened.state.journal.len(), 1);
+        assert_eq!(reopened.state.reading_sessions.len(), 3);
+
+        let summary = reopened.monthly_reading_summary("2026-11").unwrap();
+        assert_eq!(summary.total_minutes, 70);
+        assert_eq!(summary.active_days, 2);
+        assert_eq!(
+            summary.daily_minutes,
+            vec![("2026-11-10".to_owned(), 40), ("2026-11-27".to_owned(), 30)]
+        );
+    }
+
+    #[test]
+    fn book_lifecycle_completion_ceremony_and_opds_feeds_persist() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("data");
+        let mut store = Store::open(root.clone()).unwrap();
+        let book_id = store.install_catalog_book("wangwei-autumn").unwrap();
+        assert_eq!(store.state.books[0].effective_status(), "want");
+
+        store
+            .record_reading_session(Some(book_id.clone()), 18, "2026-11-27", None)
+            .unwrap();
+        assert_eq!(store.state.books[0].total_reading_minutes, 18);
+        assert_eq!(store.state.books[0].effective_status(), "reading");
+
+        store.set_book_status(&book_id, "paused").unwrap();
+        assert_eq!(store.state.books[0].effective_status(), "paused");
+        store
+            .set_book_tags(&book_id, vec!["睡前必读".into(), "唐诗".into()])
+            .unwrap();
+        store
+            .update_book_meta(&book_id, "辋川山居诗笺 · 精校".into(), "王维".into())
+            .unwrap();
+
+        let ticket_no = store
+            .complete_book(
+                &book_id,
+                "这七首山水诗陪你度过了一个安静的夜晚。".into(),
+                Some("明月松间照，清泉石上流。".into()),
+            )
+            .unwrap();
+        assert_eq!(ticket_no, 1);
+        assert_eq!(store.state.next_ticket_no, 2);
+        assert_eq!(store.state.books[0].effective_status(), "finished");
+        assert_eq!(store.state.journal[0].kind, "ticket");
+        assert!(store.state.journal[0].favorite);
+
+        let feed = store
+            .add_opds_feed("Calibre".into(), "https://books.example.com/opds".into())
+            .unwrap();
+        assert!(
+            store
+                .add_opds_feed("坏源".into(), "file:///etc/passwd".into())
+                .is_err()
+        );
+
+        let reopened = Store::open(root).unwrap();
+        assert_eq!(reopened.state.books[0].title, "辋川山居诗笺 · 精校");
+        assert_eq!(reopened.state.books[0].completion_ticket_no, Some(1));
+        assert_eq!(reopened.state.books[0].tags, vec!["睡前必读", "唐诗"]);
+        assert_eq!(reopened.state.opds_feeds.len(), 1);
+        assert_eq!(reopened.state.opds_feeds[0].id, feed.id);
     }
 }

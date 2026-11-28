@@ -565,9 +565,54 @@ pub fn prepare_book(path: &Path, encoding: Option<&str>) -> Result<PreparedBook>
                 cover: None,
             }
         }
-        _ => bail!("目前支持 EPUB 和 TXT；PDF、MOBI、AZW3 将在后续加入"),
+        "md" | "markdown" => {
+            ensure!(bytes.len() <= 20 * 1024 * 1024, "Markdown 文件超过 20 MB");
+            let text = String::from_utf8(bytes.clone()).unwrap_or_else(|_| {
+                let (decoded, _, _) = encoding_rs::GB18030.decode(&bytes);
+                decoded.into_owned()
+            });
+            let fallback = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Markdown 笔记");
+            crate::formats::markdown_to_epub(&text, fallback)?
+        }
+        "html" | "htm" => {
+            ensure!(bytes.len() <= 20 * 1024 * 1024, "HTML 文件超过 20 MB");
+            let html = String::from_utf8(bytes.clone()).unwrap_or_else(|_| {
+                let (decoded, _, _) = encoding_rs::GB18030.decode(&bytes);
+                decoded.into_owned()
+            });
+            let article = crate::clipper::extract_readable_article(&html, None)?;
+            let epub_bytes = crate::clipper::article_to_epub(&article)?;
+            NormalizedEpub {
+                bytes: epub_bytes,
+                title: article.title,
+                author: article.author,
+                cover: None,
+            }
+        }
+        "docx" => {
+            let fallback = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Word 文档");
+            crate::formats::docx_to_epub(&bytes, fallback)?
+        }
+        "pdf" => {
+            let fallback = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("PDF 文档");
+            crate::formats::pdf_to_epub(&bytes, fallback)?
+        }
+        _ => bail!("目前支持 EPUB、PDF、Markdown、DOCX、HTML 与 TXT 格式"),
     };
-    let original = if ext == "txt" { Some(bytes) } else { None };
+    let original = if ext == "txt" || ext == "pdf" {
+        Some(bytes)
+    } else {
+        None
+    };
     Ok(PreparedBook {
         id,
         epub,
@@ -580,9 +625,106 @@ pub fn prepare_book(path: &Path, encoding: Option<&str>) -> Result<PreparedBook>
     })
 }
 
+pub fn prepare_epub_bytes(bytes: Vec<u8>) -> Result<PreparedBook> {
+    ensure!(bytes.len() as u64 <= MAX_ARCHIVE, "文件超过 100 MB");
+    let id = format!("{:x}", Sha256::digest(&bytes));
+    let NormalizedEpub {
+        bytes: epub,
+        title,
+        author,
+        cover,
+    } = normalize_epub(&bytes)?;
+    Ok(PreparedBook {
+        id,
+        epub,
+        title,
+        author,
+        ext: "epub".into(),
+        cover,
+        selected_encoding: None,
+        original: None,
+    })
+}
+
+fn valid_cover_image(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+        || bytes.starts_with(&[0xff, 0xd8, 0xff])
+        || (bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP")
+}
+
 impl Store {
     pub fn import_book(&mut self, path: &Path, encoding: Option<&str>) -> Result<String> {
         self.commit_book(prepare_book(path, encoding)?, encoding.is_some())
+    }
+    pub fn import_epub_bytes(&mut self, bytes: Vec<u8>) -> Result<String> {
+        self.commit_book(prepare_epub_bytes(bytes)?, false)
+    }
+    pub fn import_epub_bytes_tagged(
+        &mut self,
+        bytes: Vec<u8>,
+        format_label: &str,
+        tags: &[&str],
+    ) -> Result<String> {
+        let mut prepared = prepare_epub_bytes(bytes)?;
+        if !format_label.trim().is_empty() {
+            prepared.ext = format_label.trim().to_ascii_lowercase();
+        }
+        let book_id = self.commit_book(prepared, false)?;
+        if let Some(book) = self.state.books.iter_mut().find(|b| b.id == book_id) {
+            for &tag in tags {
+                let clean = tag.trim();
+                if !clean.is_empty() && !book.tags.iter().any(|t| t == clean) {
+                    book.tags.push(clean.to_owned());
+                }
+            }
+            let _ = self.save();
+        }
+        Ok(book_id)
+    }
+    pub fn set_book_cover(&mut self, book_id: &str, image_path: &Path) -> Result<()> {
+        ensure!(
+            fs::metadata(image_path)?.len() <= 15 * 1024 * 1024,
+            "封面图片不能超过 15 MB"
+        );
+        let bytes = fs::read(image_path)?;
+        ensure!(
+            valid_cover_image(&bytes),
+            "封面图片仅支持有效的 PNG、JPG 或 WebP"
+        );
+        let ext = image_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("png")
+            .to_ascii_lowercase();
+        let safe_ext = if ["png", "jpg", "jpeg", "webp"].contains(&ext.as_str()) {
+            ext
+        } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+            "jpg".into()
+        } else {
+            "png".into()
+        };
+        let previous = self
+            .state
+            .books
+            .iter()
+            .find(|b| b.id == book_id)
+            .cloned()
+            .context("书籍已不在书架中")?;
+        let name = format!("cover.{safe_ext}");
+        let dir = self.root.join("books").join(book_id);
+        fs::create_dir_all(&dir)?;
+        atomic_write(&dir.join(&name), &bytes)?;
+        if let Some(book) = self.state.books.iter_mut().find(|b| b.id == book_id) {
+            book.cover = Some(name);
+            book.updated_at = Some(now());
+        }
+        if let Err(err) = self.save() {
+            if let Some(book) = self.state.books.iter_mut().find(|b| b.id == book_id) {
+                *book = previous;
+            }
+            return Err(err);
+        }
+        Ok(())
     }
     pub fn commit_book(&mut self, prepared: PreparedBook, replace: bool) -> Result<String> {
         self.commit_book_as(prepared, replace.then_some(String::new()).as_deref())
@@ -620,7 +762,12 @@ impl Store {
         fs::create_dir_all(&dir)?;
         atomic_write(&dir.join("book.epub"), &epub)?;
         if let Some(bytes) = original {
-            atomic_write(&dir.join("original.txt"), &bytes)?;
+            let orig_name = if ext == "pdf" {
+                "original.pdf"
+            } else {
+                "original.txt"
+            };
+            atomic_write(&dir.join(orig_name), &bytes)?;
         }
         let cover = if let Some((ext, data)) = cover {
             let name = format!("cover.{ext}");
@@ -663,6 +810,20 @@ impl Store {
             encoding: selected_encoding,
             updated_at: Some(now()),
             companion: previous.as_ref().and_then(|book| book.companion.clone()),
+            shelf_status: previous.as_ref().and_then(|book| book.shelf_status.clone()),
+            tags: previous
+                .as_ref()
+                .map(|book| book.tags.clone())
+                .unwrap_or_default(),
+            finished_at: previous.as_ref().and_then(|book| book.finished_at.clone()),
+            finish_letter: previous
+                .as_ref()
+                .and_then(|book| book.finish_letter.clone()),
+            completion_ticket_no: previous.as_ref().and_then(|book| book.completion_ticket_no),
+            total_reading_minutes: previous
+                .as_ref()
+                .map(|book| book.total_reading_minutes)
+                .unwrap_or(0),
         });
         self.state
             .deleted_book_ids
@@ -870,5 +1031,88 @@ mod tests {
         let mut files = BTreeMap::new();
         files.insert("../outside.txt".into(), b"escape".to_vec());
         assert!(unpack(&pack(&files).unwrap()).is_err());
+    }
+
+    #[test]
+    fn imports_markdown_html_pdf_replaces_cover_and_persists_rss_and_locale() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().join("data")).unwrap();
+
+        let md_path = dir.path().join("evening.md");
+        fs::write(&md_path, "# 晚间随笔\n今天决定放慢步调，把手机留在客厅。").unwrap();
+        let md_id = store.import_book(&md_path, None).unwrap();
+        let md_book = store.state.books.iter().find(|b| b.id == md_id).unwrap();
+        assert_eq!(md_book.format, "md");
+        assert_eq!(md_book.title, "晚间随笔");
+
+        let html_path = dir.path().join("clip.html");
+        fs::write(
+            &html_path,
+            "<html><head><title>剪藏随笔</title></head><body><article><p>在安静的台灯下读完一篇长文，心里会变得踏实。</p></article></body></html>",
+        )
+        .unwrap();
+        let html_id = store.import_book(&html_path, None).unwrap();
+        assert_eq!(
+            store
+                .state
+                .books
+                .iter()
+                .find(|b| b.id == html_id)
+                .unwrap()
+                .format,
+            "html"
+        );
+
+        let pdf_path = dir.path().join("notes.pdf");
+        let pdf_bytes = b"%PDF-1.4\n1 0 obj\n<< /Title (Warm Study PDF) >>\nendobj\n2 0 obj\n<< /Length 56 >>\nstream\nBT\n(Reading softly by lantern light tonight.) Tj\nET\nendstream\nendobj\n%%EOF\n";
+        fs::write(&pdf_path, pdf_bytes).unwrap();
+        let pdf_id = store.import_book(&pdf_path, None).unwrap();
+        assert_eq!(
+            store
+                .state
+                .books
+                .iter()
+                .find(|b| b.id == pdf_id)
+                .unwrap()
+                .format,
+            "pdf"
+        );
+        assert!(
+            store
+                .root
+                .join("books")
+                .join(&pdf_id)
+                .join("original.pdf")
+                .exists()
+        );
+
+        // Replace custom cover with valid PNG and reject broken image
+        let cover_png = dir.path().join("cover.png");
+        fs::write(&cover_png, include_bytes!("../../../assets/scene.png")).unwrap();
+        store.set_book_cover(&pdf_id, &cover_png).unwrap();
+        assert_eq!(
+            store
+                .state
+                .books
+                .iter()
+                .find(|b| b.id == pdf_id)
+                .unwrap()
+                .cover
+                .as_deref(),
+            Some("cover.png")
+        );
+        let bad_img = dir.path().join("bad.png");
+        fs::write(&bad_img, b"not png").unwrap();
+        assert!(store.set_book_cover(&pdf_id, &bad_img).is_err());
+
+        // RSS feed + locale persistence across reopen
+        let feed = store
+            .add_rss_feed("林间通讯".into(), "https://forest.example.com/rss".into())
+            .unwrap();
+        store.set_locale("en-US").unwrap();
+        let reopened = Store::open(dir.path().join("data")).unwrap();
+        assert_eq!(reopened.state.rss_feeds.len(), 1);
+        assert_eq!(reopened.state.rss_feeds[0].id, feed.id);
+        assert_eq!(reopened.state.locale, "en-US");
     }
 }

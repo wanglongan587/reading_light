@@ -1,8 +1,8 @@
 import ePub from 'epubjs';
 
-type Theme = { id?:string;paper:string;text:string;accent:string;font:string;font_size:number;line_height:number;width:number;font_url?:string;reduced_motion:boolean;warm_filter?:boolean };
+type Theme = { id?:string;paper:string;text:string;accent:string;font:string;font_size:number;line_height:number;width:number;font_url?:string;reduced_motion:boolean;warm_filter?:boolean;locale?:string };
 type Highlight = { id:string;cfi:string;text?:string;color?:string };
-type Command = { version:number;session:string;request_id:number;kind:string;url?:string;cfi?:string;href?:string;mode?:string;theme?:Theme;query?:string;highlight?:Highlight;highlights?:Highlight[] };
+type Command = { version:number;session:string;request_id:number;kind:string;url?:string;cfi?:string;href?:string;mode?:string;theme?:Theme;query?:string;text?:string;chapter?:string;highlight?:Highlight;highlights?:Highlight[] };
 declare global { interface Window { ipc?:{postMessage:(s:string)=>void}; glowReceive:(cmd:Command)=>void; __events?:unknown[] } }
 
 const HIGHLIGHT_COLORS: Record<string, string> = {
@@ -18,6 +18,7 @@ let counter=0, lastCommand=0, selectedCfi='', selectedText='', disposed=false;
 let queue=Promise.resolve(); let relocating=false; let generation=0;
 let tocEntries:{label:string;href:string}[]=[], currentHref='', locationsReady=false, searchGeneration=0;
 let bookHighlights:Highlight[]=[]; const appliedHighlights=new Map<string,string>();
+let ttsActiveCfi:string|null=null;
 let openWatchdog:ReturnType<typeof setTimeout>|undefined;
 let readerFailed=false;
 let pendingReflow=false;
@@ -28,6 +29,7 @@ const status=document.querySelector<HTMLElement>('#status')!;
 const pill=document.querySelector<HTMLElement>('#selection-pill')!;
 const echo=document.querySelector<HTMLButtonElement>('#echo')!;
 const noteBtn=document.querySelector<HTMLButtonElement>('#note-btn')!;
+const footnoteBtn=document.querySelector<HTMLButtonElement>('#footnote-btn')!;
 const copyBtn=document.querySelector<HTMLButtonElement>('#copy-btn')!;
 const hlDots=Array.from(document.querySelectorAll<HTMLButtonElement>('.hl-dot'));
 
@@ -222,8 +224,24 @@ document.addEventListener('mousemove',e=>updateCursorGlow(e.clientX,e.clientY),{
 document.addEventListener('mouseleave',()=>{
  document.documentElement.style.setProperty('--glow-op','0');
 });
+function isEnglish(){
+ return (theme?.locale||'').toLowerCase().startsWith('en');
+}
+function applyLocale(){
+ const en=isEnglish();
+ document.documentElement.lang=en?'en-US':'zh-CN';
+ const setLabel=(btn:HTMLButtonElement,zh:string,enText:string)=>{
+  const span=btn.querySelector('span');
+  if(span)span.textContent=en?enText:zh;
+ };
+ setLabel(noteBtn,'批注','Note');
+ setLabel(footnoteBtn,'注脚','Footnote');
+ setLabel(echo,'回响','Echo');
+ setLabel(copyBtn,'复制','Copy');
+}
 async function applyTheme(){
  if(!theme)return;
+ applyLocale();
  document.documentElement.dataset.theme=theme.id||'forest';
  document.documentElement.dataset.reducedMotion=theme.reduced_motion?'yes':'no';
  document.documentElement.dataset.warmFilter=theme.warm_filter?'yes':'no';
@@ -309,6 +327,7 @@ function clearIframeSelections(){
  }
 }
 function requestEcho(){if(selectedText&&selectedCfi){send('echo',{text:selectedText,cfi:selectedCfi});hideEcho();}}
+function requestFootnote(){if(selectedText){send('footnote',{text:selectedText,cfi:selectedCfi});clearIframeSelections();hideEcho();}}
 function requestHighlight(color:string|null,openNote:boolean){
  if(!selectedText||!selectedCfi)return;
  const existingIdx=bookHighlights.findIndex(h=>h.cfi===selectedCfi);
@@ -335,6 +354,7 @@ function requestCopy(){
 
 pill.addEventListener('mousedown',e=>e.preventDefault());
 echo.addEventListener('click',requestEcho);
+footnoteBtn.addEventListener('click',requestFootnote);
 noteBtn.addEventListener('click',()=>requestHighlight(null,true));
 copyBtn.addEventListener('click',requestCopy);
 for(const dot of hlDots){
@@ -506,13 +526,101 @@ async function reflow(cmd:Command){
  }finally{relocating=false;}
  await captureLocation();
 }
+function clearTtsHighlight(){
+ if(ttsActiveCfi&&rendition){
+  try{rendition.annotations.remove(ttsActiveCfi,'highlight');}catch{}
+ }
+ ttsActiveCfi=null;
+}
+function findSentenceInDocument(doc:Document, needleRaw:string){
+ const clean=needleRaw.replace(/\s+/g,' ').trim();
+ if(!clean)return null;
+ const {nodes,text}=textNodes(doc);
+ if(!nodes.length||!text)return null;
+ const hay=text.toLocaleLowerCase();
+ // Try exact sentence, then progressively shorter leading anchors to stay resilient against line wraps
+ const candidates=[clean, clean.slice(0,28), clean.slice(0,14)].filter(s=>s.length>=4);
+ for(const probe of candidates){
+  const idx=hay.indexOf(probe.toLocaleLowerCase());
+  if(idx!==-1){
+   const end=Math.min(text.length, idx+clean.length);
+   return rangeAtOffsets(doc,nodes,idx,end);
+  }
+ }
+ return null;
+}
+function applyTtsAnnotation(cfi:string, scrollRange?:Range){
+ clearTtsHighlight();
+ if(!rendition||!cfi)return;
+ const dark=isDarkTheme();
+ const fill=theme?.accent||'#F59E0B';
+ try{
+  rendition.annotations.highlight(
+   cfi,
+   {tts:true},
+   undefined,
+   'glow-tts-active',
+   {fill,'fill-opacity':dark?'0.38':'0.26','mix-blend-mode':dark?'screen':'multiply'}
+  );
+  ttsActiveCfi=cfi;
+ }catch{}
+ if(scrollRange){
+  const el=scrollRange.startContainer.nodeType===Node.ELEMENT_NODE
+   ?(scrollRange.startContainer as Element)
+   :scrollRange.startContainer.parentElement;
+  try{
+   el?.scrollIntoView({behavior:theme?.reduced_motion?'auto':'smooth',block:'center'});
+  }catch{}
+ }
+}
+async function highlightTtsSentence(sentence:string){
+ if(!rendition||!book||!sentence.trim()){clearTtsHighlight();return;}
+ // 1. Search currently mounted iframe content first
+ for(const content of rendition.getContents()){
+  try{
+   const range=findSentenceInDocument(content.document,sentence);
+   if(range){
+    const cfi=content.cfiFromRange(range);
+    if(cfi){
+     if(mode==='paginated'){
+      await displayChapter(cfi);
+      await captureLocation();
+     }
+     applyTtsAnnotation(cfi,range);
+     return;
+    }
+   }
+  }catch{}
+ }
+ // 2. Auto page-turn / chapter advance: scan current and next 2 spine items
+ const currentIndex=currentCfi?book.spine.get(currentCfi)?.index??0:0;
+ const items=book.spine?.spineItems||[];
+ for(let i=Math.max(0,currentIndex);i<Math.min(items.length,currentIndex+3);i++){
+  const section=items[i];
+  if(!section)continue;
+  try{
+   await withTimeout(Promise.resolve(section.load(book.load.bind(book))),8000,'朗读同步');
+   const range=findSentenceInDocument(section.document,sentence);
+   if(range){
+    const cfi=section.cfiFromRange(range);
+    if(cfi){
+     triggerPageTransition();
+     await displayChapter(cfi);
+     await captureLocation();
+     applyTtsAnnotation(cfi);
+     return;
+    }
+   }
+  }catch{}
+ }
+}
 window.glowReceive=(cmd)=>{
  if(cmd.version!==1||cmd.session!==session||!Number.isSafeInteger(cmd.request_id)||cmd.request_id<=lastCommand)return;
  lastCommand=cmd.request_id;
  queue=queue.then(async()=>{
   if(disposed)return;
   switch(cmd.kind){
-   case 'open':await open(cmd);break;
+   case 'open':clearTtsHighlight();await open(cmd);break;
    case 'configure':await reflow(cmd);break;
    case 'locate':
     if(rendition){triggerPageTransition();await displayChapter(cmd.cfi||cmd.href);await captureLocation();recoverNavigation();}
@@ -538,6 +646,12 @@ window.glowReceive=(cmd)=>{
    case 'unhighlight':
     bookHighlights=bookHighlights.filter(item=>item.cfi!==cmd.cfi);
     removeHighlight(cmd.cfi||'');
+    break;
+   case 'tts_highlight':
+    await highlightTtsSentence(cmd.text||'');
+    break;
+   case 'tts_clear':
+    clearTtsHighlight();
     break;
   }
  }).catch(failure);

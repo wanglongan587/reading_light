@@ -28,6 +28,80 @@ pub struct Book {
     pub updated_at: Option<String>,
     #[serde(default)]
     pub companion: Option<BookCompanionCache>,
+    /// Optional explicit shelf status: "want" | "reading" | "finished" | "paused"
+    #[serde(default)]
+    pub shelf_status: Option<String>,
+    /// User-defined booklist tags (e.g. "睡前必读", "心流散文")
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub finished_at: Option<String>,
+    #[serde(default)]
+    pub finish_letter: Option<String>,
+    #[serde(default)]
+    pub completion_ticket_no: Option<u32>,
+    #[serde(default)]
+    pub total_reading_minutes: u32,
+}
+
+pub fn valid_shelf_status(value: &str) -> bool {
+    matches!(value, "want" | "reading" | "finished" | "paused")
+}
+
+impl Book {
+    pub fn effective_status(&self) -> &'static str {
+        match self.shelf_status.as_deref() {
+            Some("want") => "want",
+            Some("reading") => "reading",
+            Some("finished") => "finished",
+            Some("paused") => "paused",
+            _ => {
+                if self.finished_at.is_some() || self.progress.unwrap_or(0.0) >= 0.99 {
+                    "finished"
+                } else if self.progress.unwrap_or(0.0) > 0.0 || self.location.is_some() {
+                    "reading"
+                } else {
+                    "want"
+                }
+            }
+        }
+    }
+
+    pub fn status_label(status: &str) -> &'static str {
+        match status {
+            "reading" => "在读",
+            "finished" => "已完读",
+            "paused" => "搁置",
+            _ => "想读",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct OpdsFeedConfig {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+}
+
+impl Default for OpdsFeedConfig {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            url: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct RssFeedConfig {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub added_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -361,6 +435,11 @@ impl SoundscapeMix {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct TtsSettings {
+    /// "auto" | "system" | "openai_compatible"
+    pub provider: String,
+    /// Optional explicit TTS API base URL (empty reuses `ai.base_url` when configured).
+    pub api_base_url: String,
+    pub model: String,
     pub voice: String,
     pub rate: f32,
     pub duck_soundscape: bool,
@@ -370,12 +449,28 @@ pub struct TtsSettings {
 impl Default for TtsSettings {
     fn default() -> Self {
         Self {
+            provider: "auto".into(),
+            api_base_url: String::new(),
+            model: "tts-1".into(),
             voice: "zh-CN-XiaoxiaoNeural".into(),
             rate: 1.0,
             duck_soundscape: true,
             sleep_with_timer: true,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReadingSession {
+    pub id: String,
+    #[serde(default)]
+    pub book_id: Option<String>,
+    /// Local calendar date in `YYYY-MM-DD` format for the anti-anxiety monthly glow calendar.
+    pub date: String,
+    pub minutes: u32,
+    pub recorded_at: String,
+    #[serde(default)]
+    pub theme_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -557,7 +652,7 @@ impl Default for Theme {
         Self {
             version: 1,
             id: "forest".into(),
-            name: "林间暖光".into(),
+            name: "晴空旧书房".into(),
             background: "#DCEBF8".into(),
             paper: "#F8FCFF".into(),
             text: "#1A324C".into(),
@@ -577,12 +672,31 @@ impl Default for Theme {
     }
 }
 
+/// Migrates built-in legacy v0.1.x theme names to original Glow Space names without touching user-renamed themes.
+pub fn migrate_legacy_theme_name(theme: &mut Theme) {
+    let replacement = match (theme.id.as_str(), theme.name.as_str()) {
+        ("forest", "林间暖光") => Some("晴空旧书房"),
+        ("paper", "素纸") => Some("素纸晨光"),
+        ("night", "静夜") => Some("静夜台灯"),
+        ("prism", "黑曜棱镜") => Some("星空棱镜"),
+        ("totoro", "龙猫林荫") => Some("夏风樟树下"),
+        ("spirited", "千寻海轨") => Some("浅海晚风号"),
+        ("howl", "哈尔花原") => Some("山谷秘密花园"),
+        ("kiki", "魔女海镇") => Some("海港烘焙屋"),
+        ("lantern", "汤屋灯夜") => Some("雨夜灯笼巷"),
+        _ => None,
+    };
+    if let Some(next_name) = replacement {
+        theme.name = next_name.into();
+    }
+}
+
 pub fn themes() -> Vec<Theme> {
     vec![
         Theme::default(),
         Theme {
             id: "paper".into(),
-            name: "素纸".into(),
+            name: "素纸晨光".into(),
             background: "#ECEAE4".into(),
             paper: "#FFFCF6".into(),
             text: "#2E2B27".into(),
@@ -592,7 +706,7 @@ pub fn themes() -> Vec<Theme> {
         },
         Theme {
             id: "night".into(),
-            name: "静夜".into(),
+            name: "静夜台灯".into(),
             background: "#111C1A".into(),
             paper: "#192825".into(),
             text: "#E8EFEA".into(),
@@ -602,7 +716,7 @@ pub fn themes() -> Vec<Theme> {
         },
         Theme {
             id: "prism".into(),
-            name: "黑曜棱镜".into(),
+            name: "星空棱镜".into(),
             background: "#090A0F".into(),
             paper: "#121520".into(),
             text: "#EEF1FA".into(),
@@ -612,7 +726,7 @@ pub fn themes() -> Vec<Theme> {
         },
         Theme {
             id: "totoro".into(),
-            name: "龙猫林荫".into(),
+            name: "夏风樟树下".into(),
             background: "#E1ECDF".into(),
             paper: "#F9FCF6".into(),
             text: "#1F3626".into(),
@@ -622,7 +736,7 @@ pub fn themes() -> Vec<Theme> {
         },
         Theme {
             id: "spirited".into(),
-            name: "千寻海轨".into(),
+            name: "浅海晚风号".into(),
             background: "#F3E4DE".into(),
             paper: "#FFF9F5".into(),
             text: "#3B2427".into(),
@@ -632,7 +746,7 @@ pub fn themes() -> Vec<Theme> {
         },
         Theme {
             id: "howl".into(),
-            name: "哈尔花原".into(),
+            name: "山谷秘密花园".into(),
             background: "#EAE6F5".into(),
             paper: "#FCFBF7".into(),
             text: "#2B2740".into(),
@@ -642,7 +756,7 @@ pub fn themes() -> Vec<Theme> {
         },
         Theme {
             id: "kiki".into(),
-            name: "魔女海镇".into(),
+            name: "海港烘焙屋".into(),
             background: "#F4E9D8".into(),
             paper: "#FFFDF7".into(),
             text: "#3B2A1E".into(),
@@ -652,7 +766,7 @@ pub fn themes() -> Vec<Theme> {
         },
         Theme {
             id: "lantern".into(),
-            name: "汤屋灯夜".into(),
+            name: "雨夜灯笼巷".into(),
             background: "#15121D".into(),
             paper: "#201B26".into(),
             text: "#F5E9D6".into(),
@@ -721,6 +835,8 @@ pub struct State {
     #[serde(default)]
     pub reading_minutes_date: Option<String>,
     #[serde(default)]
+    pub reading_sessions: Vec<ReadingSession>,
+    #[serde(default)]
     pub ai: AiSettings,
     #[serde(default)]
     pub soundscape_mix: SoundscapeMix,
@@ -736,6 +852,24 @@ pub struct State {
     pub deleted_journal_ids: Vec<String>,
     #[serde(default)]
     pub deleted_highlight_ids: Vec<String>,
+    #[serde(default)]
+    pub daylight_auto: bool,
+    #[serde(default)]
+    pub journal_locked: bool,
+    #[serde(default)]
+    pub show_ambient_presence: bool,
+    #[serde(default)]
+    pub opds_feeds: Vec<OpdsFeedConfig>,
+    #[serde(default)]
+    pub rss_feeds: Vec<RssFeedConfig>,
+    #[serde(default)]
+    pub next_ticket_no: u32,
+    #[serde(default = "default_locale")]
+    pub locale: String,
+}
+
+fn default_locale() -> String {
+    "zh-CN".into()
 }
 
 impl Default for State {
@@ -756,6 +890,7 @@ impl Default for State {
             warm_filter: false,
             reading_minutes_today: 0,
             reading_minutes_date: None,
+            reading_sessions: vec![],
             ai: AiSettings::default(),
             soundscape_mix: SoundscapeMix::default(),
             tts: TtsSettings::default(),
@@ -764,6 +899,13 @@ impl Default for State {
             deleted_book_ids: vec![],
             deleted_journal_ids: vec![],
             deleted_highlight_ids: vec![],
+            daylight_auto: false,
+            journal_locked: false,
+            show_ambient_presence: true,
+            opds_feeds: vec![],
+            rss_feeds: vec![],
+            next_ticket_no: 1,
+            locale: default_locale(),
         }
     }
 }

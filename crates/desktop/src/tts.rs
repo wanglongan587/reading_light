@@ -1,8 +1,11 @@
-use anyhow::{Result, anyhow};
-use glow_core::book_context::TtsSegment;
-use kothok_edge_tts::{EdgeTts, Engine as _, TtsEvent};
+use anyhow::{Result, anyhow, ensure};
+use glow_core::{AiSettings, LocalSecrets, TtsSettings, book_context::TtsSegment};
+use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::{
+    fs,
     io::Cursor,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -14,44 +17,52 @@ use std::{
 #[derive(Clone, Copy, Debug)]
 pub struct VoiceOption {
     pub id: &'static str,
+    pub openai_voice: &'static str,
     pub label: &'static str,
     pub style: &'static str,
+    #[allow(dead_code)]
     pub lang: &'static str,
 }
 
 pub const VOICES: &[VoiceOption] = &[
     VoiceOption {
         id: "zh-CN-XiaoxiaoNeural",
+        openai_voice: "nova",
         label: "晓晓",
         style: "温柔治愈女声",
         lang: "zh-CN",
     },
     VoiceOption {
         id: "zh-CN-YunxiNeural",
+        openai_voice: "onyx",
         label: "云希",
         style: "清朗少年男声",
         lang: "zh-CN",
     },
     VoiceOption {
         id: "zh-CN-XiaoyiNeural",
+        openai_voice: "shimmer",
         label: "晓伊",
         style: "细腻娓娓女声",
         lang: "zh-CN",
     },
     VoiceOption {
         id: "zh-CN-YunjianNeural",
+        openai_voice: "echo",
         label: "云健",
         style: "沉稳说书男声",
         lang: "zh-CN",
     },
     VoiceOption {
         id: "zh-CN-liaoning-XiaobeiNeural",
+        openai_voice: "alloy",
         label: "晓北",
         style: "亲切自然女声",
         lang: "zh-CN",
     },
     VoiceOption {
         id: "en-US-EmmaMultilingualNeural",
+        openai_voice: "fable",
         label: "Emma",
         style: "多语种自然女声",
         lang: "en-US",
@@ -62,11 +73,12 @@ pub fn voice_by_id(id: &str) -> VoiceOption {
     VOICES
         .iter()
         .copied()
-        .find(|v| v.id == id)
+        .find(|v| v.id == id || v.openai_voice == id)
         .unwrap_or(VOICES[0])
 }
 
-pub fn format_edge_rate(rate: f32) -> String {
+#[allow(dead_code)]
+pub fn format_rate_percent(rate: f32) -> String {
     let pct = ((rate.clamp(0.5, 2.0) - 1.0) * 100.0).round() as i32;
     if pct >= 0 {
         format!("+{pct}%")
@@ -88,18 +100,497 @@ pub struct TtsStatus {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct TtsRuntimeConfig {
+    pub provider: String,
+    pub api_base_url: String,
+    pub model: String,
+    pub api_key: String,
+    pub cache_dir: Option<PathBuf>,
+}
+
+impl Default for TtsRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            provider: "auto".into(),
+            api_base_url: String::new(),
+            model: "tts-1".into(),
+            api_key: String::new(),
+            cache_dir: None,
+        }
+    }
+}
+
+impl TtsRuntimeConfig {
+    pub fn from_store(
+        tts: &TtsSettings,
+        ai: &AiSettings,
+        secrets: &LocalSecrets,
+        data_root: &Path,
+    ) -> Self {
+        let base_url = if !tts.api_base_url.trim().is_empty() {
+            tts.api_base_url.trim().to_owned()
+        } else if !secrets.ai_api_key.trim().is_empty() || ai.is_local() {
+            ai.base_url.trim().to_owned()
+        } else {
+            String::new()
+        };
+        let model = if tts.model.trim().is_empty() {
+            "tts-1".to_owned()
+        } else {
+            tts.model.trim().to_owned()
+        };
+        Self {
+            provider: tts.provider.trim().to_ascii_lowercase(),
+            api_base_url: base_url,
+            model,
+            api_key: secrets.ai_api_key.trim().to_owned(),
+            cache_dir: Some(data_root.join("tts_cache")),
+        }
+    }
+
+    fn resolved_speech_endpoint(&self) -> Option<String> {
+        let trimmed = self.api_base_url.trim().trim_end_matches('/');
+        if trimmed.is_empty()
+            || !(trimmed.starts_with("http://") || trimmed.starts_with("https://"))
+            || trimmed.chars().any(char::is_whitespace)
+        {
+            return None;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        if lower.ends_with("/audio/speech") {
+            return Some(trimmed.to_owned());
+        }
+        if lower.ends_with("/chat/completions") {
+            let base = &trimmed[..trimmed.len() - "/chat/completions".len()];
+            return Some(format!("{base}/audio/speech"));
+        }
+        if lower.ends_with("/responses") {
+            let base = &trimmed[..trimmed.len() - "/responses".len()];
+            return Some(format!("{base}/audio/speech"));
+        }
+        if lower.ends_with("/v1") {
+            Some(format!("{trimmed}/audio/speech"))
+        } else {
+            Some(format!("{trimmed}/v1/audio/speech"))
+        }
+    }
+
+    fn is_local_endpoint(&self) -> bool {
+        let lower = self.api_base_url.trim().to_ascii_lowercase();
+        let host = lower
+            .strip_prefix("http://")
+            .or_else(|| lower.strip_prefix("https://"))
+            .unwrap_or(&lower)
+            .split(['/', '?'])
+            .next()
+            .unwrap_or("");
+        let host_no_port = if host.starts_with('[') {
+            host.split(']')
+                .next()
+                .unwrap_or(host)
+                .trim_start_matches('[')
+        } else {
+            host.split(':').next().unwrap_or(host)
+        };
+        matches!(host_no_port, "localhost" | "127.0.0.1" | "::1" | "0.0.0.0")
+            || host_no_port.starts_with("192.168.")
+            || host_no_port.starts_with("10.")
+    }
+
+    pub fn can_use_api(&self) -> bool {
+        self.resolved_speech_endpoint().is_some()
+            && (!self.api_key.is_empty() || self.is_local_endpoint())
+    }
+}
+
+pub fn provider_label(provider: &str) -> &'static str {
+    match provider.trim().to_ascii_lowercase().as_str() {
+        "system" => "纯离线系统语音",
+        "openai_compatible" => "神经语音 API",
+        _ => "自动双轨",
+    }
+}
+
+pub fn detect_local_engine_hint() -> (&'static str, &'static str) {
+    #[cfg(target_os = "windows")]
+    {
+        (
+            "离线就绪",
+            "Windows SAPI 本机离线语音可用，断网也能安静听书",
+        )
+    }
+    #[cfg(target_os = "macos")]
+    {
+        (
+            "离线就绪",
+            "macOS 系统 say 本机离线语音可用，断网也能安静听书",
+        )
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        let has_espeak = std::env::var_os("PATH")
+            .map(|paths| {
+                std::env::split_paths(&paths)
+                    .any(|dir| dir.join("espeak-ng").is_file() || dir.join("espeak").is_file())
+            })
+            .unwrap_or(false);
+        if has_espeak {
+            ("离线就绪", "检测到本机 espeak-ng 离线语音引擎，断网可听书")
+        } else {
+            (
+                "需安装或配 API",
+                "Linux 可安装 espeak-ng，或在下方接入本地 Kokoro / 云端语音 API",
+            )
+        }
+    }
+}
+
+pub fn cache_stats(data_root: &Path) -> (usize, u64) {
+    let dir = data_root.join("tts_cache");
+    let Ok(entries) = fs::read_dir(dir) else {
+        return (0, 0);
+    };
+    let mut count = 0usize;
+    let mut bytes = 0u64;
+    for entry in entries.flatten() {
+        if let Ok(meta) = entry.metadata()
+            && meta.is_file()
+        {
+            count += 1;
+            bytes = bytes.saturating_add(meta.len());
+        }
+    }
+    (count, bytes)
+}
+
+pub fn clear_cache(data_root: &Path) -> Result<usize> {
+    let dir = data_root.join("tts_cache");
+    if !dir.exists() {
+        return Ok(0);
+    }
+    let mut removed = 0usize;
+    for entry in fs::read_dir(&dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() {
+            fs::remove_file(path)?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+#[derive(Clone, Debug)]
+pub struct TtsRequest<'a> {
+    pub text: &'a str,
+    pub voice: &'a str,
+    pub rate: f32,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) enum SynthAudio {
     Mp3(Vec<u8>),
     Wav(Vec<u8>),
 }
 
-pub(crate) fn synthesize_for_radio(
-    rt: &tokio::runtime::Runtime,
+/// Pluggable compliant speech synthesis provider trait.
+/// Replaces unofficial reverse-engineered TTS libraries with explicit offline + licensed API backends.
+pub(crate) trait TtsProvider: Send + Sync {
+    fn label(&self) -> &'static str;
+    fn synthesize(&self, req: &TtsRequest<'_>) -> Result<SynthAudio>;
+}
+
+/// Compliant OpenAI-compatible `/audio/speech` provider with persistent SHA-256 disk caching.
+/// Works seamlessly with licensed cloud providers (OpenAI, SiliconFlow, Volcano/Aliyun gateways)
+/// as well as local offline neural servers (Kokoro-FastAPI, Sherpa-ONNX HTTP).
+pub(crate) struct OpenAiCompatibleTtsProvider {
+    endpoint: String,
+    model: String,
+    api_key: String,
+    is_local: bool,
+    cache_dir: Option<PathBuf>,
+}
+
+impl OpenAiCompatibleTtsProvider {
+    pub(crate) fn from_config(cfg: &TtsRuntimeConfig) -> Option<Self> {
+        if !cfg.can_use_api() {
+            return None;
+        }
+        Some(Self {
+            endpoint: cfg.resolved_speech_endpoint()?,
+            model: cfg.model.clone(),
+            api_key: cfg.api_key.clone(),
+            is_local: cfg.is_local_endpoint(),
+            cache_dir: cfg.cache_dir.clone(),
+        })
+    }
+
+    fn cache_key(&self, req: &TtsRequest<'_>, voice: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(self.model.as_bytes());
+        hasher.update(b"|");
+        hasher.update(voice.as_bytes());
+        hasher.update(b"|");
+        hasher.update(format!("{:.2}", req.rate.clamp(0.5, 2.0)).as_bytes());
+        hasher.update(b"|");
+        hasher.update(req.text.trim().as_bytes());
+        let digest = hasher.finalize();
+        let mut hex = String::with_capacity(64);
+        for b in digest {
+            use std::fmt::Write as _;
+            let _ = write!(&mut hex, "{b:02x}");
+        }
+        hex
+    }
+}
+
+impl TtsProvider for OpenAiCompatibleTtsProvider {
+    fn label(&self) -> &'static str {
+        if self.is_local {
+            "本地神经语音服务"
+        } else {
+            "合规云端神经语音"
+        }
+    }
+
+    fn synthesize(&self, req: &TtsRequest<'_>) -> Result<SynthAudio> {
+        let text = req.text.trim();
+        ensure!(!text.is_empty(), "待朗读文本为空");
+        let opt = voice_by_id(req.voice);
+        let speed = req.rate.clamp(0.5, 2.0);
+        let cache_path = self
+            .cache_dir
+            .as_ref()
+            .map(|dir| dir.join(format!("{}.mp3", self.cache_key(req, opt.openai_voice))));
+
+        if let Some(path) = &cache_path
+            && let Ok(cached) = fs::read(path)
+            && cached.len() > 128
+        {
+            return Ok(SynthAudio::Mp3(cached));
+        }
+
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(Duration::from_secs(8))
+            .timeout(Duration::from_secs(24))
+            .user_agent("GlowReading/2.0")
+            .build()
+            .map_err(|e| anyhow!("无法初始化语音客户端：{e}"))?;
+
+        let payload = json!({
+            "model": self.model,
+            "input": text,
+            "voice": opt.openai_voice,
+            "speed": speed,
+            "response_format": "mp3"
+        });
+        let mut builder = client.post(&self.endpoint).json(&payload);
+        if !self.api_key.is_empty() {
+            builder = builder.bearer_auth(&self.api_key);
+        }
+        let resp = builder
+            .send()
+            .map_err(|e| anyhow!("合规语音接口连接失败：{e}"))?;
+        if !resp.status().is_success() {
+            return Err(anyhow!("语音服务返回状态码 {}", resp.status().as_u16()));
+        }
+        let bytes = resp
+            .bytes()
+            .map_err(|e| anyhow!("读取语音音频流失败：{e}"))?
+            .to_vec();
+        ensure!(bytes.len() > 128, "语音接口未返回有效音频数据");
+
+        if let Some(path) = &cache_path {
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let _ = fs::write(path, &bytes);
+        }
+        Ok(SynthAudio::Mp3(bytes))
+    }
+}
+
+/// 100% offline zero-cost native OS speech synthesis fallback.
+pub(crate) struct SystemNativeTtsProvider;
+
+impl TtsProvider for SystemNativeTtsProvider {
+    fn label(&self) -> &'static str {
+        "本机离线系统语音"
+    }
+
+    fn synthesize(&self, req: &TtsRequest<'_>) -> Result<SynthAudio> {
+        synthesize_system_native(req.text, req.rate)
+    }
+}
+
+fn synthesize_with_providers(
+    req: &TtsRequest<'_>,
+    primary: Option<&dyn TtsProvider>,
+    fallback: &dyn TtsProvider,
+) -> Result<(SynthAudio, &'static str)> {
+    if let Some(p) = primary {
+        match p.synthesize(req) {
+            Ok(audio) => return Ok((audio, p.label())),
+            Err(primary_err) => {
+                if let Ok(audio) = fallback.synthesize(req) {
+                    return Ok((audio, fallback.label()));
+                }
+                return Err(primary_err);
+            }
+        }
+    }
+    let audio = fallback.synthesize(req)?;
+    Ok((audio, fallback.label()))
+}
+
+fn synthesize_with_config(
+    cfg: &TtsRuntimeConfig,
     text: &str,
     voice: &str,
     rate: f32,
 ) -> Result<(SynthAudio, &'static str)> {
-    synthesize_with_fallback(rt, text, voice, rate)
+    let req = TtsRequest { text, voice, rate };
+    let system = SystemNativeTtsProvider;
+    if cfg.provider == "system" {
+        return synthesize_with_providers(&req, None, &system);
+    }
+    let api_provider = OpenAiCompatibleTtsProvider::from_config(cfg);
+    if cfg.provider == "openai_compatible" {
+        let Some(api) = api_provider else {
+            return Err(anyhow!(
+                "尚未配置合规语音接口（请在「主题与设置」填写本地或云端语音服务地址）"
+            ));
+        };
+        return api.synthesize(&req).map(|a| (a, api.label()));
+    }
+    synthesize_with_providers(
+        &req,
+        api_provider.as_ref().map(|p| p as &dyn TtsProvider),
+        &system,
+    )
+}
+
+pub(crate) fn synthesize_for_radio(
+    cfg: &TtsRuntimeConfig,
+    text: &str,
+    voice: &str,
+    rate: f32,
+) -> Result<(SynthAudio, &'static str)> {
+    synthesize_with_config(cfg, text, voice, rate)
+}
+
+#[cfg(target_os = "windows")]
+fn synthesize_system_native(text: &str, rate: f32) -> Result<SynthAudio> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let wav_path =
+        std::env::temp_dir().join(format!("glow-tts-{}-{stamp}.wav", std::process::id()));
+    let sapi_rate = (((rate - 1.0) * 6.0).round() as i32).clamp(-6, 6);
+    let script = r#"
+Add-Type -AssemblyName System.Speech
+$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
+$synth.Rate = [int]$env:GLOW_TTS_RATE
+$synth.SetOutputToWaveFile($env:GLOW_TTS_WAV)
+$synth.Speak($env:GLOW_TTS_TEXT)
+$synth.Dispose()
+"#;
+    let status = std::process::Command::new("powershell")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .env("GLOW_TTS_RATE", sapi_rate.to_string())
+        .env("GLOW_TTS_WAV", &wav_path)
+        .env("GLOW_TTS_TEXT", text)
+        .status();
+    let bytes_res = status.map_err(anyhow::Error::from).and_then(|st| {
+        if !st.success() {
+            Err(anyhow!("Windows 本机离线语音合成不可用"))
+        } else {
+            fs::read(&wav_path).map_err(anyhow::Error::from)
+        }
+    });
+    let _ = fs::remove_file(&wav_path);
+    let bytes = bytes_res?;
+    ensure!(bytes.len() >= 64, "本机离线语音未生成有效音频");
+    Ok(SynthAudio::Wav(bytes))
+}
+
+#[cfg(target_os = "macos")]
+fn synthesize_system_native(text: &str, rate: f32) -> Result<SynthAudio> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let aiff_path =
+        std::env::temp_dir().join(format!("glow-tts-{}-{stamp}.aiff", std::process::id()));
+    let wav_path =
+        std::env::temp_dir().join(format!("glow-tts-{}-{stamp}.wav", std::process::id()));
+    let wpm = (180.0 * rate.clamp(0.5, 2.0)).round() as u32;
+    let say_ok = std::process::Command::new("say")
+        .args(["-r", &wpm.to_string(), "-o"])
+        .arg(&aiff_path)
+        .arg(text)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    let convert_ok = say_ok
+        && std::process::Command::new("afconvert")
+            .args(["-f", "WAVE", "-d", "LEI16"])
+            .arg(&aiff_path)
+            .arg(&wav_path)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+    let bytes = if convert_ok {
+        fs::read(&wav_path).ok()
+    } else {
+        None
+    };
+    let _ = fs::remove_file(&aiff_path);
+    let _ = fs::remove_file(&wav_path);
+    let bytes = bytes.ok_or_else(|| anyhow!("macOS 本机离线语音合成不可用"))?;
+    ensure!(bytes.len() >= 64, "本机离线语音未生成有效音频");
+    Ok(SynthAudio::Wav(bytes))
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn synthesize_system_native(text: &str, rate: f32) -> Result<SynthAudio> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let wav_path =
+        std::env::temp_dir().join(format!("glow-tts-{}-{stamp}.wav", std::process::id()));
+    let wpm = (165.0 * rate.clamp(0.5, 2.0)).round() as u32;
+    let mut synthesized = false;
+    for bin in ["espeak-ng", "espeak"] {
+        if let Ok(st) = std::process::Command::new(bin)
+            .args(["-s", &wpm.to_string(), "-w"])
+            .arg(&wav_path)
+            .arg(text)
+            .status()
+            && st.success()
+        {
+            synthesized = true;
+            break;
+        }
+    }
+    let bytes = if synthesized {
+        fs::read(&wav_path).ok()
+    } else {
+        None
+    };
+    let _ = fs::remove_file(&wav_path);
+    let bytes = bytes.ok_or_else(|| {
+        anyhow!("未检测到本机离线语音引擎（Linux 可安装 espeak-ng，或在设置中配置合规云端/本地语音服务）")
+    })?;
+    ensure!(bytes.len() >= 64, "本机离线语音未生成有效音频");
+    Ok(SynthAudio::Wav(bytes))
 }
 
 enum TtsCommand {
@@ -109,6 +600,7 @@ enum TtsCommand {
         voice: String,
         rate: f32,
         volume: f32,
+        config: TtsRuntimeConfig,
     },
     Pause,
     Resume,
@@ -127,7 +619,7 @@ pub struct TtsPlayer {
 
 impl TtsPlayer {
     pub fn new() -> Self {
-        kothok_edge_tts::init_tls();
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let (cmd_tx, cmd_rx) = mpsc::channel::<TtsCommand>();
         let status = Arc::new(Mutex::new(TtsStatus::default()));
         let generation = Arc::new(AtomicU64::new(0));
@@ -166,6 +658,7 @@ impl TtsPlayer {
         voice: String,
         rate: f32,
         volume: f32,
+        config: TtsRuntimeConfig,
     ) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.stop_signal.store(false, Ordering::SeqCst);
@@ -175,6 +668,7 @@ impl TtsPlayer {
             voice,
             rate,
             volume,
+            config,
         });
     }
 
@@ -218,128 +712,23 @@ fn update_status(status: &Arc<Mutex<TtsStatus>>, edit: impl FnOnce(&mut TtsStatu
     }
 }
 
-fn synthesize_edge_sync(
-    rt: &tokio::runtime::Runtime,
-    text: &str,
-    voice: &str,
-    rate: f32,
-) -> Result<SynthAudio> {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let opt = voice_by_id(voice);
-    let rate_str = format_edge_rate(rate);
-    let events = rt
-        .block_on(async {
-            tokio::time::timeout(
-                Duration::from_secs(18),
-                EdgeTts.synthesize(text, opt.id, &rate_str, opt.lang),
-            )
-            .await
-        })
-        .map_err(|_| anyhow!("Edge-TTS 合成超时"))?
-        .map_err(|e| anyhow!("Edge-TTS 连接失败：{e}"))?;
-
-    let mut mp3 = Vec::new();
-    for event in events {
-        if let TtsEvent::Audio(chunk) = event {
-            mp3.extend_from_slice(&chunk);
-        }
-    }
-    if mp3.is_empty() {
-        return Err(anyhow!("Edge-TTS 未返回音频数据"));
-    }
-    Ok(SynthAudio::Mp3(mp3))
-}
-
-#[cfg(target_os = "windows")]
-fn synthesize_windows_sapi_fallback(text: &str, rate: f32) -> Result<SynthAudio> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let wav_path =
-        std::env::temp_dir().join(format!("glow-tts-{}-{stamp}.wav", std::process::id()));
-    let sapi_rate = (((rate - 1.0) * 6.0).round() as i32).clamp(-6, 6);
-    let script = r#"
-Add-Type -AssemblyName System.Speech
-$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
-$synth.Rate = [int]$env:GLOW_TTS_RATE
-$synth.SetOutputToWaveFile($env:GLOW_TTS_WAV)
-$synth.Speak($env:GLOW_TTS_TEXT)
-$synth.Dispose()
-"#;
-    let status = std::process::Command::new("powershell")
-        .creation_flags(CREATE_NO_WINDOW)
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .env("GLOW_TTS_RATE", sapi_rate.to_string())
-        .env("GLOW_TTS_WAV", &wav_path)
-        .env("GLOW_TTS_TEXT", text)
-        .status();
-    let bytes_res = status.map_err(anyhow::Error::from).and_then(|st| {
-        if !st.success() {
-            Err(anyhow!("Windows 本地语音合成不可用"))
-        } else {
-            std::fs::read(&wav_path).map_err(anyhow::Error::from)
-        }
-    });
-    let _ = std::fs::remove_file(&wav_path);
-    let bytes = bytes_res?;
-    if bytes.len() < 64 {
-        return Err(anyhow!("本地语音未生成音频"));
-    }
-    Ok(SynthAudio::Wav(bytes))
-}
-
-#[cfg(not(target_os = "windows"))]
-fn synthesize_windows_sapi_fallback(_text: &str, _rate: f32) -> Result<SynthAudio> {
-    Err(anyhow!("当前平台暂未配置离线语音引擎"))
-}
-
-fn synthesize_with_fallback(
-    rt: &tokio::runtime::Runtime,
-    text: &str,
-    voice: &str,
-    rate: f32,
-) -> Result<(SynthAudio, &'static str)> {
-    match synthesize_edge_sync(rt, text, voice, rate) {
-        Ok(audio) => Ok((audio, "Edge 神经语音")),
-        Err(edge_err) => match synthesize_windows_sapi_fallback(text, rate) {
-            Ok(wav) => Ok((wav, "系统离线语音（Edge 暂不可达）")),
-            Err(_) => Err(edge_err),
-        },
-    }
-}
-
 fn tts_worker_loop(
     cmd_rx: mpsc::Receiver<TtsCommand>,
     status: Arc<Mutex<TtsStatus>>,
     generation: Arc<AtomicU64>,
     stop_signal: Arc<AtomicBool>,
 ) {
-    let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    else {
-        update_status(&status, |s| {
-            s.error = Some("无法初始化听书运行时".into());
-        });
-        return;
-    };
-
     let mut segments: Vec<TtsSegment> = Vec::new();
     let mut voice = VOICES[0].id.to_owned();
     let mut rate = 1.0_f32;
     let mut volume = 0.9_f32;
+    let mut config = TtsRuntimeConfig::default();
     let mut current_idx = 0usize;
     let mut active = false;
     let mut paused = false;
     let mut active_sink: Option<(rodio::OutputStream, rodio::Sink)> = None;
-    let mut prefetched: Option<(usize, Result<(SynthAudio, &'static str)>)> = None;
 
     loop {
-        // Drain pending commands first
         let recv_result = if active && !paused {
             cmd_rx.recv_timeout(Duration::from_millis(60))
         } else {
@@ -356,6 +745,7 @@ fn tts_worker_loop(
                     voice: next_voice,
                     rate: next_rate,
                     volume: next_vol,
+                    config: next_config,
                 } => {
                     if let Some((_, sink)) = active_sink.take() {
                         sink.stop();
@@ -364,10 +754,10 @@ fn tts_worker_loop(
                     voice = next_voice;
                     rate = next_rate.clamp(0.5, 2.0);
                     volume = next_vol.clamp(0.05, 1.0);
+                    config = next_config;
                     current_idx = start_index.min(segments.len().saturating_sub(1));
                     active = !segments.is_empty();
                     paused = false;
-                    prefetched = None;
                     update_status(&status, |s| {
                         s.active = active;
                         s.paused = false;
@@ -398,7 +788,6 @@ fn tts_worker_loop(
                 TtsCommand::Stop => {
                     active = false;
                     paused = false;
-                    prefetched = None;
                     if let Some((_, sink)) = active_sink.take() {
                         sink.stop();
                     }
@@ -416,9 +805,6 @@ fn tts_worker_loop(
                         current_idx = idx.min(segments.len() - 1);
                         active = true;
                         paused = false;
-                        if prefetched.as_ref().is_some_and(|(i, _)| *i != current_idx) {
-                            prefetched = None;
-                        }
                         update_status(&status, |s| {
                             s.active = true;
                             s.paused = false;
@@ -447,10 +833,8 @@ fn tts_worker_loop(
             continue;
         }
 
-        // If a segment is currently playing, check whether it finished
         if let Some((_, sink)) = &active_sink {
             if !sink.empty() {
-                // Opportunistically prefetch next segment on a helper thread? Keep simple & deterministic:
                 continue;
             }
             active_sink = None;
@@ -466,7 +850,6 @@ fn tts_worker_loop(
             }
         }
 
-        // Start playing `current_idx`
         let Some(seg) = segments.get(current_idx).cloned() else {
             active = false;
             continue;
@@ -482,15 +865,8 @@ fn tts_worker_loop(
             s.error = None;
         });
 
-        let synth_outcome = if let Some((idx, res)) = prefetched.take()
-            && idx == current_idx
-        {
-            res
-        } else {
-            synthesize_with_fallback(&rt, &seg.text, &voice, rate)
-        };
+        let synth_outcome = synthesize_with_config(&config, &seg.text, &voice, rate);
 
-        // Abort cleanly if user stopped or jumped while synthesizing
         if stop_signal.load(Ordering::SeqCst) || generation.load(Ordering::SeqCst) != my_gen {
             continue;
         }
@@ -557,12 +933,91 @@ fn tts_worker_loop(
 mod tests {
     use super::*;
 
+    struct FailingProvider;
+    impl TtsProvider for FailingProvider {
+        fn label(&self) -> &'static str {
+            "failing-cloud"
+        }
+        fn synthesize(&self, _req: &TtsRequest<'_>) -> Result<SynthAudio> {
+            Err(anyhow!("network offline"))
+        }
+    }
+
+    struct StubOfflineProvider;
+    impl TtsProvider for StubOfflineProvider {
+        fn label(&self) -> &'static str {
+            "offline-stub"
+        }
+        fn synthesize(&self, _req: &TtsRequest<'_>) -> Result<SynthAudio> {
+            Ok(SynthAudio::Wav(vec![0u8; 128]))
+        }
+    }
+
     #[test]
     fn rate_string_and_voice_lookup_are_well_formed() {
-        assert_eq!(format_edge_rate(1.0), "+0%");
-        assert_eq!(format_edge_rate(1.25), "+25%");
-        assert_eq!(format_edge_rate(0.75), "-25%");
+        assert_eq!(format_rate_percent(1.0), "+0%");
+        assert_eq!(format_rate_percent(1.25), "+25%");
+        assert_eq!(format_rate_percent(0.75), "-25%");
         assert_eq!(voice_by_id("zh-CN-YunxiNeural").label, "云希");
+        assert_eq!(voice_by_id("onyx").label, "云希");
         assert_eq!(voice_by_id("unknown-voice").id, "zh-CN-XiaoxiaoNeural");
+    }
+
+    #[test]
+    fn provider_fallback_and_endpoint_resolution_and_disk_cache_work() {
+        let req = TtsRequest {
+            text: "今晚慢慢来，不必着急。",
+            voice: "zh-CN-XiaoxiaoNeural",
+            rate: 1.0,
+        };
+        let (audio, label) =
+            synthesize_with_providers(&req, Some(&FailingProvider), &StubOfflineProvider).unwrap();
+        assert_eq!(label, "offline-stub");
+        assert!(matches!(audio, SynthAudio::Wav(_)));
+
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = TtsRuntimeConfig {
+            provider: "auto".into(),
+            api_base_url: "http://127.0.0.1:8880/v1".into(),
+            model: "kokoro".into(),
+            api_key: String::new(),
+            cache_dir: Some(dir.path().to_path_buf()),
+        };
+        assert_eq!(
+            cfg.resolved_speech_endpoint().as_deref(),
+            Some("http://127.0.0.1:8880/v1/audio/speech")
+        );
+        let provider = OpenAiCompatibleTtsProvider::from_config(&cfg).unwrap();
+        assert_eq!(provider.label(), "本地神经语音服务");
+
+        // Pre-populate disk cache and verify cache hit returns without hitting network
+        let key = provider.cache_key(&req, voice_by_id(req.voice).openai_voice);
+        let fake_mp3 = vec![0xFFu8; 256];
+        fs::write(dir.path().join(format!("{key}.mp3")), &fake_mp3).unwrap();
+        let cached = provider.synthesize(&req).unwrap();
+        match cached {
+            SynthAudio::Mp3(bytes) => assert_eq!(bytes, fake_mp3),
+            SynthAudio::Wav(_) => panic!("expected cached mp3"),
+        }
+    }
+
+    #[test]
+    fn cache_stats_and_clear_cache_round_trip() {
+        assert_eq!(provider_label("auto"), "自动双轨");
+        assert_eq!(provider_label("system"), "纯离线系统语音");
+        assert_eq!(provider_label("openai_compatible"), "神经语音 API");
+        let (badge, detail) = detect_local_engine_hint();
+        assert!(!badge.is_empty() && !detail.is_empty());
+
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(cache_stats(dir.path()), (0, 0));
+        let cache_dir = dir.path().join("tts_cache");
+        fs::create_dir_all(&cache_dir).unwrap();
+        fs::write(cache_dir.join("seg1.mp3"), vec![1u8; 512]).unwrap();
+        fs::write(cache_dir.join("seg2.mp3"), vec![2u8; 1024]).unwrap();
+
+        assert_eq!(cache_stats(dir.path()), (2, 1536));
+        assert_eq!(clear_cache(dir.path()).unwrap(), 2);
+        assert_eq!(cache_stats(dir.path()), (0, 0));
     }
 }

@@ -1,6 +1,6 @@
 use crate::model::{
-    Book, CustomRadioStation, Highlight, JournalEntry, SoundscapeMix, State, Theme, now,
-    valid_radio_stream_url,
+    Book, CustomRadioStation, Highlight, JournalEntry, ReadingSession, SoundscapeMix, State, Theme,
+    now, valid_radio_stream_url,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -19,6 +19,8 @@ pub struct SyncSnapshot {
     pub soundscape_mix: SoundscapeMix,
     pub reading_minutes_today: u32,
     pub reading_minutes_date: Option<String>,
+    #[serde(default)]
+    pub reading_sessions: Vec<ReadingSession>,
     pub radio_favorites: Vec<String>,
     pub radio_custom_stations: Vec<CustomRadioStation>,
     pub deleted_book_ids: Vec<String>,
@@ -38,6 +40,7 @@ impl Default for SyncSnapshot {
             soundscape_mix: SoundscapeMix::default(),
             reading_minutes_today: 0,
             reading_minutes_date: None,
+            reading_sessions: vec![],
             radio_favorites: vec![],
             radio_custom_stations: vec![],
             deleted_book_ids: vec![],
@@ -103,6 +106,7 @@ impl SyncSnapshot {
             soundscape_mix: state.soundscape_mix.clamped(),
             reading_minutes_today: state.reading_minutes_today,
             reading_minutes_date: state.reading_minutes_date.clone(),
+            reading_sessions: state.reading_sessions.clone(),
             radio_favorites: state.radio.favorites.clone(),
             radio_custom_stations: state
                 .radio
@@ -215,6 +219,40 @@ fn merge_single_book(
         if remote.updated_at.is_some() {
             merged.updated_at = remote.updated_at.clone();
         }
+        if remote.shelf_status.is_some() && remote.shelf_status != local.shelf_status {
+            merged.shelf_status = remote.shelf_status.clone();
+            changed_local = true;
+        }
+    }
+
+    // Merge booklist tags (union preserving order)
+    for tag in &remote.tags {
+        if !tag.trim().is_empty() && !merged.tags.iter().any(|t| t == tag) {
+            merged.tags.push(tag.clone());
+            changed_local = true;
+        }
+    }
+
+    // Merge completion ceremony fields (never drop completion data)
+    if merged.finished_at.is_none() && remote.finished_at.is_some() {
+        merged.finished_at = remote.finished_at.clone();
+        merged.shelf_status = Some("finished".into());
+        changed_local = true;
+    }
+    if merged.finish_letter.is_none() && remote.finish_letter.is_some() {
+        merged.finish_letter = remote.finish_letter.clone();
+        changed_local = true;
+    }
+    if merged.completion_ticket_no.is_none() && remote.completion_ticket_no.is_some() {
+        merged.completion_ticket_no = remote.completion_ticket_no;
+        changed_local = true;
+    }
+    let best_minutes = merged
+        .total_reading_minutes
+        .max(remote.total_reading_minutes);
+    if best_minutes != merged.total_reading_minutes {
+        merged.total_reading_minutes = best_minutes;
+        changed_local = true;
     }
 
     // Bookmarks union by CFI
@@ -428,6 +466,35 @@ pub fn merge_state_with_snapshot(local: &State, remote: &SyncSnapshot) -> (State
         _ => {}
     }
 
+    // 4b. Merge reading_sessions history (conflict-free union by ID)
+    let local_session_ids: HashSet<String> = local
+        .reading_sessions
+        .iter()
+        .map(|s| s.id.clone())
+        .collect();
+    let remote_session_ids: HashSet<String> = remote
+        .reading_sessions
+        .iter()
+        .map(|s| s.id.clone())
+        .collect();
+    for rs in &remote.reading_sessions {
+        if !rs.id.trim().is_empty() && !local_session_ids.contains(&rs.id) {
+            merged.reading_sessions.push(rs.clone());
+            report.changed_local = true;
+        }
+    }
+    if local_session_ids
+        .iter()
+        .any(|id| !remote_session_ids.contains(id))
+    {
+        report.changed_remote = true;
+    }
+    merged.reading_sessions.sort_by(|a, b| {
+        a.recorded_at
+            .cmp(&b.recorded_at)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
     // 5. Merge online custom radio stations & favorite station IDs (never local machine folders)
     let local_favs: HashSet<String> = local.radio.favorites.iter().cloned().collect();
     let remote_favs: HashSet<String> = remote.radio_favorites.iter().cloned().collect();
@@ -504,6 +571,12 @@ mod tests {
             encoding: None,
             updated_at: Some(updated_at.into()),
             companion: None,
+            shelf_status: None,
+            tags: vec![],
+            finished_at: None,
+            finish_letter: None,
+            completion_ticket_no: None,
+            total_reading_minutes: 0,
         }
     }
 

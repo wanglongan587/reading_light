@@ -5,7 +5,6 @@ use crate::{
 use anyhow::{Result, anyhow, ensure};
 use glow_core::{CustomRadioStation, SoundscapeMix, valid_radio_stream_url};
 use rodio::Source;
-use serde_json::Value;
 use std::{
     collections::VecDeque,
     fs,
@@ -96,21 +95,19 @@ pub struct RadioStatus {
     pub error: Option<String>,
 }
 
-/// Curated, ad-free healing FM stations spanning 88.6 – 107.6 MHz.
-/// Online stations use reliable MP3 streams natively decodable by rodio.
+/// Curated, 100% compliant & ad-free healing FM stations spanning 88.6 – 107.6 MHz.
+/// Built-in stations rely exclusively on original procedural synthesis, local voice narration,
+/// and user-owned local audio folders. Users may optionally add their own licensed stream URLs.
 pub fn builtin_stations() -> Vec<RadioStation> {
     vec![
         RadioStation {
             id: "lofi-rain".into(),
             frequency_mhz: 88.6,
-            name: "雨夜 Lofi 书房".into(),
-            subtitle: "Downtempo · 柔和慢拍与温暖合成器".into(),
+            name: "雨夜书房声景".into(),
+            subtitle: "100% 原创合成 · 檐下细雨与轻缓琴韵".into(),
             mood_line: "窗外落着细雨，慢一点也没关系，今晚的节拍只陪你放空。".into(),
-            kind: RadioStationKind::OnlineStream,
-            stream_urls: vec![
-                "https://ice2.somafm.com/groovesalad-128-mp3".into(),
-                "https://ice4.somafm.com/groovesalad-128-mp3".into(),
-            ],
+            kind: RadioStationKind::AmbientSynth,
+            stream_urls: vec![],
             suggested_lamp: "amber",
             tags: vec!["lofi".into(), "chill".into(), "rain".into()],
             is_custom: false,
@@ -118,23 +115,20 @@ pub fn builtin_stations() -> Vec<RadioStation> {
         RadioStation {
             id: "midnight-jazz".into(),
             frequency_mhz: 91.2,
-            name: "午夜微醺轻爵士".into(),
-            subtitle: "Mellow Vocals & Midnight Lounge".into(),
-            mood_line: "昏黄台灯下，像旧电影里的午夜爵士小馆，慢慢把紧绷放下。".into(),
-            kind: RadioStationKind::OnlineStream,
-            stream_urls: vec![
-                "https://ice2.somafm.com/lush-128-mp3".into(),
-                "https://ice4.somafm.com/secretagent-128-mp3".into(),
-            ],
+            name: "午夜壁炉微光".into(),
+            subtitle: "100% 原创合成 · 炉火轻响与暖色和弦".into(),
+            mood_line: "昏黄台灯下，听壁炉里柴火轻轻作响，慢慢把紧绷放下。".into(),
+            kind: RadioStationKind::AmbientSynth,
+            stream_urls: vec![],
             suggested_lamp: "ember",
-            tags: vec!["jazz".into(), "lounge".into(), "night".into()],
+            tags: vec!["jazz".into(), "hearth".into(), "night".into()],
             is_custom: false,
         },
         RadioStation {
             id: "glow-night-talk".into(),
             frequency_mhz: 94.2,
             name: "微光深夜夜话".into(),
-            subtitle: "温柔神经主播 · 雨夜电钢伴读夜话".into(),
+            subtitle: "合规语音主播 · 雨夜电钢伴读夜话".into(),
             mood_line: "看书累了就闭上眼吧，今晚我在这里，陪你听听风声和几句轻柔的话。".into(),
             kind: RadioStationKind::NightHost,
             stream_urls: vec![],
@@ -145,14 +139,11 @@ pub fn builtin_stations() -> Vec<RadioStation> {
         RadioStation {
             id: "classical-nocturne".into(),
             frequency_mhz: 96.8,
-            name: "古典夜曲与钢琴".into(),
-            subtitle: "Radio Swiss Classic · 无广告静谧室内乐".into(),
-            mood_line: "月光落在黑白琴键上，让肖邦与德彪西的余韵替你安抚疲惫的双眼。".into(),
-            kind: RadioStationKind::OnlineStream,
-            stream_urls: vec![
-                "https://stream.srg-ssr.ch/m/rsc_de/mp3_128".into(),
-                "https://ice2.somafm.com/thistle-128-mp3".into(),
-            ],
+            name: "月光静谧琴房".into(),
+            subtitle: "100% 原创合成 · 轻柔五声电钢与晚风".into(),
+            mood_line: "月光落在黑白琴键上，让轻柔的余韵替你安抚疲惫的双眼。".into(),
+            kind: RadioStationKind::AmbientSynth,
+            stream_urls: vec![],
             suggested_lamp: "rose",
             tags: vec!["classical".into(), "piano".into(), "nocturne".into()],
             is_custom: false,
@@ -173,13 +164,10 @@ pub fn builtin_stations() -> Vec<RadioStation> {
             id: "deep-space-sleep".into(),
             frequency_mhz: 101.4,
             name: "深空星眠声景".into(),
-            subtitle: "Drone Zone · 漂浮星尘与助眠和弦".into(),
+            subtitle: "100% 原创合成 · 漂浮星尘与助眠和弦".into(),
             mood_line: "没有急促的鼓点，只有缓慢浮动的星尘和弦，像漂在安静的夜海里。".into(),
-            kind: RadioStationKind::OnlineStream,
-            stream_urls: vec![
-                "https://ice2.somafm.com/dronezone-128-mp3".into(),
-                "https://ice4.somafm.com/deepspaceone-128-mp3".into(),
-            ],
+            kind: RadioStationKind::AmbientSynth,
+            stream_urls: vec![],
             suggested_lamp: "starry",
             tags: vec!["ambient".into(), "sleep".into(), "space".into()],
             is_custom: false,
@@ -187,7 +175,7 @@ pub fn builtin_stations() -> Vec<RadioStation> {
         RadioStation {
             id: "offline-piano-rain".into(),
             frequency_mhz: 104.6,
-            name: "汤屋雨夜琴房".into(),
+            name: "灯夜雨窗琴房".into(),
             subtitle: "100% 离线治愈合成台 · 细雨 · 炉火 · 轻琴".into(),
             mood_line: "即使没有网络也不必担心，这间雨夜小琴房永远为你留着一盏暖灯。".into(),
             kind: RadioStationKind::AmbientSynth,
@@ -412,109 +400,48 @@ pub fn default_book_echo_segments() -> Vec<NightSegment> {
     ]
 }
 
-/// Search free global internet radio stations via Radio-Browser public API.
-/// Explicitly restricts to `codec=MP3&hidebroken=true` so every returned station decodes cleanly in rodio.
-pub fn search_online_stations(query: &str, tag: Option<&str>) -> Result<Vec<OnlineStationHit>> {
-    let q = query.trim();
-    let t = tag.map(str::trim).filter(|s| !s.is_empty());
+/// Filter built-in 100% compliant stations and user-added custom stations locally by keyword or tag.
+/// Does not scrape or redistribute unauthorized third-party public radio directories.
+pub fn search_curated_stations(
+    query: &str,
+    tag: Option<&str>,
+    custom: &[CustomRadioStation],
+) -> Result<Vec<OnlineStationHit>> {
+    let q = query.trim().to_lowercase();
+    let t = tag
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_lowercase);
     ensure!(
         !q.is_empty() || t.is_some(),
-        "请输入电台关键词或选择一个治愈标签"
+        "请输入频段关键词或选择一个治愈标签"
     );
 
-    let client = reqwest::blocking::Client::builder()
-        .connect_timeout(Duration::from_secs(7))
-        .timeout(Duration::from_secs(12))
-        .user_agent("GlowReadingFM/0.1.5")
-        .build()
-        .map_err(|e| anyhow!("无法初始化电台搜索连接：{e}"))?;
-
-    let mirrors = [
-        "https://de1.api.radio-browser.info",
-        "https://nl1.api.radio-browser.info",
-        "https://at1.api.radio-browser.info",
-    ];
-
-    let mut params: Vec<(&str, String)> = vec![
-        ("codec", "MP3".into()),
-        ("hidebroken", "true".into()),
-        ("order", "clickcount".into()),
-        ("reverse", "true".into()),
-        ("limit", "18".into()),
-    ];
-    if !q.is_empty() {
-        params.push(("name", q.to_owned()));
-    }
-    if let Some(tag_val) = t {
-        params.push(("tag", tag_val.to_owned()));
-    }
-
-    let mut last_err: Option<anyhow::Error> = None;
-    for base in mirrors {
-        let url = format!("{base}/json/stations/search");
-        match client.get(&url).query(&params).send() {
-            Ok(resp) if resp.status().is_success() => {
-                let raw: Value = resp.json().map_err(|e| anyhow!("电台目录解析失败：{e}"))?;
-                let items = raw.as_array().cloned().unwrap_or_default();
-                let mut seen_urls = std::collections::HashSet::new();
-                let mut hits = Vec::new();
-                for item in items {
-                    let stream_url = item["url_resolved"]
-                        .as_str()
-                        .filter(|s| valid_radio_stream_url(s))
-                        .or_else(|| item["url"].as_str().filter(|s| valid_radio_stream_url(s)))
-                        .unwrap_or("")
-                        .trim()
-                        .to_owned();
-                    if stream_url.is_empty() || !seen_urls.insert(stream_url.clone()) {
-                        continue;
-                    }
-                    let name = item["name"]
-                        .as_str()
-                        .unwrap_or("未命名电台")
-                        .trim()
-                        .to_owned();
-                    if name.is_empty() {
-                        continue;
-                    }
-                    let uuid = item["stationuuid"]
-                        .as_str()
-                        .filter(|s| !s.trim().is_empty())
-                        .map(|s| format!("rb-{}", &s[..s.len().min(16)]))
-                        .unwrap_or_else(|| format!("rb-{}", hits.len() + 1));
-                    let country = item["country"].as_str().unwrap_or("").trim().to_owned();
-                    let tags: Vec<String> = item["tags"]
-                        .as_str()
-                        .unwrap_or("")
-                        .split(',')
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                        .take(4)
-                        .map(str::to_owned)
-                        .collect();
-                    let bitrate = item["bitrate"].as_u64().unwrap_or(128) as u32;
-                    let suggested_mhz = deterministic_mhz(&uuid);
-                    hits.push(OnlineStationHit {
-                        id: uuid,
-                        name,
-                        country,
-                        tags,
-                        stream_url,
-                        bitrate,
-                        suggested_mhz,
-                    });
-                }
-                return Ok(hits);
-            }
-            Ok(resp) => {
-                last_err = Some(anyhow!("电台服务返回状态 {}", resp.status().as_u16()));
-            }
-            Err(err) => {
-                last_err = Some(anyhow!("无法连接到电台目录：{err}"));
-            }
-        }
-    }
-    Err(last_err.unwrap_or_else(|| anyhow!("在线电台搜索暂时不可达，请稍后再试")))
+    let hits = all_stations(custom)
+        .into_iter()
+        .filter(|st| {
+            let haystack = format!(
+                "{} {} {} {}",
+                st.name.to_lowercase(),
+                st.subtitle.to_lowercase(),
+                st.mood_line.to_lowercase(),
+                st.tags.join(" ").to_lowercase()
+            );
+            let q_ok = q.is_empty() || haystack.contains(&q);
+            let t_ok = t.as_deref().is_none_or(|tv| haystack.contains(tv));
+            q_ok && t_ok
+        })
+        .map(|st| OnlineStationHit {
+            id: st.id.clone(),
+            name: st.name.clone(),
+            country: st.kind.badge_label().to_owned(),
+            tags: st.tags.clone(),
+            stream_url: st.stream_urls.first().cloned().unwrap_or_default(),
+            bitrate: if st.is_custom { 128 } else { 0 },
+            suggested_mhz: st.frequency_mhz,
+        })
+        .collect();
+    Ok(hits)
 }
 
 pub fn deterministic_mhz(seed: &str) -> f32 {
@@ -947,6 +874,7 @@ enum RadioCommand {
         book_echoes: Vec<NightSegment>,
         local_folder: Option<PathBuf>,
         with_static: bool,
+        tts_config: tts::TtsRuntimeConfig,
     },
     Pause,
     Resume,
@@ -1009,6 +937,7 @@ impl RadioPlayer {
             .store(factor.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn tune(
         &self,
         station: RadioStation,
@@ -1017,6 +946,7 @@ impl RadioPlayer {
         book_echoes: Vec<NightSegment>,
         local_folder: Option<PathBuf>,
         with_static: bool,
+        tts_config: tts::TtsRuntimeConfig,
     ) {
         let cmd_gen = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         self.stream_stop.store(true, Ordering::SeqCst);
@@ -1049,6 +979,7 @@ impl RadioPlayer {
             book_echoes,
             local_folder,
             with_static,
+            tts_config,
         });
     }
 
@@ -1258,16 +1189,12 @@ fn radio_worker_loop(
     generation: Arc<AtomicU64>,
     stream_stop: Arc<AtomicBool>,
 ) {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .ok();
-
     let mut active_playback: Option<ActivePlayback> = None;
     let mut current_station: Option<RadioStation> = None;
     let mut volume = 0.72_f32;
     let mut paused = false;
     let mut host_voice = tts::VOICES[0].id.to_owned();
+    let mut tts_config = tts::TtsRuntimeConfig::default();
     let mut night_playlist: Vec<NightSegment> = vec![];
     let mut night_idx = 0usize;
     let mut next_host_speak_at: Option<Instant> = None;
@@ -1373,6 +1300,7 @@ fn radio_worker_loop(
                     book_echoes,
                     local_folder,
                     with_static,
+                    tts_config: next_tts_config,
                 } => {
                     if generation.load(Ordering::SeqCst) != cmd_gen {
                         continue;
@@ -1387,6 +1315,7 @@ fn radio_worker_loop(
                     stream_stop.store(false, Ordering::SeqCst);
                     volume = next_vol;
                     host_voice = next_voice;
+                    tts_config = next_tts_config;
                     paused = false;
                     host_speaking = false;
                     next_host_speak_at = None;
@@ -1635,15 +1564,7 @@ fn radio_worker_loop(
                             }
                         }
                         RadioStationKind::AmbientSynth => {
-                            let mix = SoundscapeMix {
-                                rain: 0.56,
-                                fireplace: 0.42,
-                                breeze: 0.18,
-                                cosmos: 0.22,
-                                train: 0.0,
-                                piano: 0.74,
-                                recipe: None,
-                            };
+                            let mix = fallback_mix_for_station(&station.id);
                             match start_bed_playback(
                                 &mix,
                                 volume,
@@ -1757,14 +1678,12 @@ fn radio_worker_loop(
                                 s.current_line = seg.script.clone();
                                 s.source_hint = seg.source_hint.clone();
                             });
-                            if let Some(runtime) = &rt
-                                && let Ok((audio, engine_label)) = tts::synthesize_for_radio(
-                                    runtime,
-                                    &seg.script,
-                                    &host_voice,
-                                    0.90,
-                                )
-                                && generation.load(Ordering::SeqCst) == my_gen
+                            if let Ok((audio, engine_label)) = tts::synthesize_for_radio(
+                                &tts_config,
+                                &seg.script,
+                                &host_voice,
+                                0.90,
+                            ) && generation.load(Ordering::SeqCst) == my_gen
                                 && !paused
                                 && let Some(pb) = &active_playback
                                 && let Some(vs) = &pb.voice_sink
@@ -1882,6 +1801,15 @@ fn start_local_track_playback(
 
 fn fallback_mix_for_station(station_id: &str) -> SoundscapeMix {
     match station_id {
+        "lofi-rain" => SoundscapeMix {
+            rain: 0.68,
+            fireplace: 0.12,
+            breeze: 0.24,
+            cosmos: 0.14,
+            train: 0.0,
+            piano: 0.52,
+            recipe: None,
+        },
         "deep-space-sleep" => SoundscapeMix {
             rain: 0.0,
             fireplace: 0.0,
@@ -1893,6 +1821,15 @@ fn fallback_mix_for_station(station_id: &str) -> SoundscapeMix {
         },
         "midnight-jazz" => SoundscapeMix::from_recipe("rain_hearth"),
         "classical-nocturne" => SoundscapeMix::from_recipe("music_box"),
+        "offline-piano-rain" => SoundscapeMix {
+            rain: 0.56,
+            fireplace: 0.42,
+            breeze: 0.18,
+            cosmos: 0.22,
+            train: 0.0,
+            piano: 0.74,
+            recipe: None,
+        },
         _ => SoundscapeMix::from_recipe("camphor_rain"),
     }
 }
@@ -1900,6 +1837,24 @@ fn fallback_mix_for_station(station_id: &str) -> SoundscapeMix {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn builtin_stations_contain_no_third_party_stream_urls_and_curated_search_works() {
+        let builtins = builtin_stations();
+        assert!(!builtins.is_empty());
+        for st in &builtins {
+            assert!(
+                st.stream_urls.is_empty(),
+                "built-in station {} must not hardcode unauthorized third-party streams",
+                st.id
+            );
+            assert_ne!(st.kind, RadioStationKind::OnlineStream);
+        }
+        let hits = search_curated_stations("琴房", None, &[]).unwrap();
+        assert!(!hits.is_empty());
+        let tag_hits = search_curated_stations("", Some("lofi"), &[]).unwrap();
+        assert!(tag_hits.iter().any(|h| h.id == "lofi-rain"));
+    }
 
     #[test]
     fn builtin_and_custom_stations_sort_and_snap_by_frequency() {
@@ -2024,6 +1979,7 @@ mod tests {
             vec![],
             None,
             false,
+            tts::TtsRuntimeConfig::default(),
         );
         assert_eq!(player.status().station_id, "offline-piano-rain");
         assert!(player.status().playing);
@@ -2036,6 +1992,7 @@ mod tests {
             vec![],
             None,
             false,
+            tts::TtsRuntimeConfig::default(),
         );
         let st = player.status();
         assert_eq!(st.station_id, "glow-night-talk");

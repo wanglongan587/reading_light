@@ -110,7 +110,7 @@ impl SoundscapePreset {
             Self::Breeze => "双频林风 · 远景夜虫",
             Self::Cosmos => "大九和弦 · 水晶风铃",
             Self::Train => "铁轨轻律 · 浅海潮汐",
-            Self::Piano => "温柔电钢 · 久石让五声琶音",
+            Self::Piano => "温柔电钢 · 轻缓五声琶音",
         }
     }
 
