@@ -104,7 +104,7 @@ impl ReadingApp {
             }
         }
 
-        // 5. Poll Edge-TTS audiobook status & synchronize background soundscape ducking
+        // 5. Poll audiobook TTS status & synchronize background soundscape ducking
         if let Some(player) = &self.tts_player {
             let next_status = player.status();
             let changed = next_status.active != self.tts_status.active

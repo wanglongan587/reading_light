@@ -449,7 +449,7 @@ pub fn build_spoiler_safe_context(
 }
 
 /// Split chapter text into crisp speakable segments (~80-220 chars each) starting at the user's
-/// current chapter so Edge-TTS starts speaking quickly and smoothly.
+/// current chapter so audiobook narration starts speaking quickly and smoothly.
 pub fn extract_tts_segments(
     epub_bytes: &[u8],
     current_cfi: Option<&str>,

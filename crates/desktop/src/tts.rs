@@ -77,6 +77,7 @@ pub fn voice_by_id(id: &str) -> VoiceOption {
         .unwrap_or(VOICES[0])
 }
 
+#[allow(dead_code)]
 pub fn format_rate_percent(rate: f32) -> String {
     let pct = ((rate.clamp(0.5, 2.0) - 1.0) * 100.0).round() as i32;
     if pct >= 0 {

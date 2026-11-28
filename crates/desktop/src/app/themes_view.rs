@@ -1,0 +1,603 @@
+use super::*;
+
+impl ReadingApp {
+    pub(super) fn theme_card(
+        &self,
+        i: usize,
+        t: &ReadingTheme,
+        active_theme: &ReadingTheme,
+        is_dark: bool,
+        cx: &Context<Self>,
+    ) -> Div {
+        let active = active_theme.id == t.id;
+        let (subtitle, poster_badge, mood_note) = Self::theme_card_meta(&t.id);
+        let is_scenic_card = Self::is_scenic_space_id(&t.id);
+        let is_prism_card = t.id == "prism";
+        let swatches = h_flex()
+            .gap_1()
+            .items_center()
+            .px_2()
+            .py_1()
+            .rounded_full()
+            .bg(rgb(0x0b1512).opacity(0.66))
+            .child(
+                div()
+                    .size(px(9.))
+                    .rounded_full()
+                    .bg(rgb(hex(&t.background)))
+                    .border_1()
+                    .border_color(rgb(0xffffff).opacity(0.35)),
+            )
+            .child(
+                div()
+                    .size(px(9.))
+                    .rounded_full()
+                    .bg(rgb(hex(&t.paper)))
+                    .border_1()
+                    .border_color(rgb(0xffffff).opacity(0.35)),
+            )
+            .child(
+                div()
+                    .size(px(9.))
+                    .rounded_full()
+                    .bg(rgb(hex(&t.accent)))
+                    .border_1()
+                    .border_color(rgb(0xffffff).opacity(0.35)),
+            )
+            .child(
+                div()
+                    .size(px(9.))
+                    .rounded_full()
+                    .bg(rgb(hex(&t.text)))
+                    .border_1()
+                    .border_color(rgb(0xffffff).opacity(0.35)),
+            );
+        let snap = self.motion_snapshot();
+        let preview_h = px(152.);
+        let preview_inner = if let Some(scene) = Self::scene_asset_for(&t.id) {
+            img(scene)
+                .w_full()
+                .h(preview_h)
+                .object_fit(ObjectFit::Cover)
+                .into_any_element()
+        } else if let Some(image) = &t.image {
+            img(self.store.root.join("themes").join(&t.id).join(image))
+                .w_full()
+                .h(preview_h)
+                .object_fit(ObjectFit::Cover)
+                .into_any_element()
+        } else {
+            v_flex()
+                .w_full()
+                .h(preview_h)
+                .p_4()
+                .justify_between()
+                .bg(rgb(hex(&t.background)))
+                .child(
+                    h_flex()
+                        .gap_1p5()
+                        .items_center()
+                        .child(
+                            Icon::new(IconName::Sun)
+                                .size(px(15.))
+                                .text_color(rgb(hex(&t.accent))),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(9.))
+                                .font_family(self.ui_font())
+                                .text_color(rgb(hex(&t.muted)))
+                                .child("EDITORIAL PAPER"),
+                        ),
+                )
+                .child(
+                    v_flex()
+                        .gap_1p5()
+                        .child(div().w(px(34.)).h(px(2.)).bg(rgb(hex(&t.accent))))
+                        .child(
+                            div()
+                                .text_size(px(15.5))
+                                .font_family(self.display_font())
+                                .line_height(relative(1.48))
+                                .text_color(rgb(hex(&t.text)))
+                                .child("风吹过微黄纸页，\n把心绪轻轻放下。"),
+                        ),
+                )
+                .into_any_element()
+        };
+        let badge_bg = if is_prism_card {
+            rgb(0x090a0f).opacity(0.82)
+        } else if t.id == "lantern" {
+            rgb(0x1a1322).opacity(0.82)
+        } else {
+            rgb(0x132028).opacity(0.72)
+        };
+        let badge_fg = if is_prism_card {
+            rgb(0xe9d5ff)
+        } else if t.id == "lantern" {
+            rgb(0xfde2a6)
+        } else {
+            rgb(0xfffdf7)
+        };
+        let badge_border = if is_prism_card {
+            rgb(0xc4b5fd).opacity(0.42)
+        } else if is_scenic_card {
+            rgb(0xffffff).opacity(0.28)
+        } else {
+            rgb(0xffffff).opacity(0.20)
+        };
+        let card = v_flex()
+            .relative()
+            .overflow_hidden()
+            .w(px(292.))
+            .p_3p5()
+            .gap_3()
+            .rounded_2xl()
+            .bg(rgb(hex(&active_theme.paper)).opacity(if is_dark { 0.90 } else { 0.94 }))
+            .border_1()
+            .border_color(if active {
+                Hsla::from(rgb(hex(&active_theme.accent)).opacity(0.75))
+            } else {
+                self.border_subtle()
+            })
+            .shadow_sm()
+            .hover(|style| {
+                style
+                    .border_color(rgb(hex(&active_theme.accent)).opacity(0.62))
+                    .shadow_md()
+            })
+            .when(is_prism_card || active, |this| {
+                this.child(div().absolute().top_0().left_0().right_0().child(
+                    prism::prism_beam_horizontal(snap.clone(), 2.0, i as f32 * 0.9, is_prism_card),
+                ))
+            })
+            .child(
+                div()
+                    .relative()
+                    .rounded_xl()
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(rgb(hex(&t.text)).opacity(0.12))
+                    .child(preview_inner)
+                    .child(div().absolute().right(px(8.)).top(px(8.)).child(swatches))
+                    .when_some(poster_badge, |this, badge| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .left(px(8.))
+                                .bottom(px(8.))
+                                .px_2()
+                                .py_0p5()
+                                .rounded_full()
+                                .bg(badge_bg)
+                                .border_1()
+                                .border_color(badge_border)
+                                .text_size(px(9.))
+                                .font_family(self.ui_font())
+                                .text_color(badge_fg)
+                                .child(badge),
+                        )
+                    })
+                    .when(is_prism_card, |this| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .bottom_0()
+                                .left_0()
+                                .right_0()
+                                .child(prism::prism_beam_horizontal(snap, 2.0, 1.2, true)),
+                        )
+                    }),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                v_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        div()
+                                            .text_size(px(16.5))
+                                            .font_family(self.display_font())
+                                            .text_color(rgb(hex(&active_theme.text)))
+                                            .child(t.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(9.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&active_theme.muted)))
+                                            .child(subtitle),
+                                    ),
+                            )
+                            .when(active, |style| {
+                                style.child(
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_full()
+                                        .bg(rgb(hex(&active_theme.accent)).opacity(0.14))
+                                        .text_size(px(9.5))
+                                        .font_family(self.ui_font())
+                                        .text_color(rgb(hex(&active_theme.accent)))
+                                        .child(
+                                            Icon::new(IconName::Check)
+                                                .size(px(10.))
+                                                .text_color(rgb(hex(&active_theme.accent))),
+                                        )
+                                        .child("使用中"),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&active_theme.muted)))
+                            .child(mood_note),
+                    ),
+            )
+            .child(if active {
+                self.button_with_icon("正在使用", IconName::Check, Action::PickTheme(i), cx)
+                    .primary()
+                    .w_full()
+            } else {
+                self.button_with_icon("使用此主题", IconName::Sparkles, Action::PickTheme(i), cx)
+                    .outline()
+                    .w_full()
+            });
+        if active {
+            card.border_2()
+                .border_color(rgb(hex(&t.accent)))
+                .shadow_md()
+        } else {
+            card
+        }
+    }
+    pub(super) fn theme_page(&self, cx: &Context<Self>) -> AnyElement {
+        let active_theme = self.theme();
+        let is_dark = self.is_dark();
+        let all = self.all_themes();
+        let mut view = v_flex()
+            .id("themes-scroll")
+            .overflow_y_scroll()
+            .size_full()
+            .px_7()
+            .py_6()
+            .gap_5()
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_start()
+                    .gap_6()
+                    .child(self.heading(
+                        "MAKE YOURSELF AT HOME · 空间与声景调音台",
+                        "把这里，变成喜欢的样子。",
+                        "从原创手绘水彩般的温柔光影，到素纸晨光与星空棱镜；主题包不包含你的书和日记。",
+                    ))
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(self.button_with_icon(
+                                "导入主题包",
+                                IconName::Plus,
+                                Action::ImportTheme,
+                                cx,
+                            ))
+                            .child(self.button_with_icon(
+                                "导出当前主题",
+                                IconName::ArrowUpRight,
+                                Action::ExportTheme,
+                                cx,
+                            )),
+                    ),
+            );
+        let mut scenic_row = h_flex().gap_4().flex_wrap();
+        let mut classic_row = h_flex().gap_4().flex_wrap();
+        let mut custom_row = h_flex().gap_4().flex_wrap();
+        let mut custom_count = 0usize;
+        for (i, t) in all.iter().enumerate() {
+            let card = self.theme_card(i, t, active_theme, is_dark, cx);
+            if Self::is_scenic_space_id(&t.id) {
+                scenic_row = scenic_row.child(card);
+            } else if matches!(t.id.as_str(), "paper" | "night" | "prism") {
+                classic_row = classic_row.child(card);
+            } else {
+                custom_count += 1;
+                custom_row = custom_row.child(card);
+            }
+        }
+        view = view
+            .child(
+                v_flex()
+                    .gap_3()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_end()
+                            .flex_wrap()
+                            .gap_2()
+                            .child(
+                                v_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        div()
+                                            .text_size(px(10.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&active_theme.accent)))
+                                            .child("GLOW SPACE GALLERY · 原创手绘微光空间"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(18.5))
+                                            .font_family(self.display_font())
+                                            .text_color(rgb(hex(&active_theme.text)))
+                                            .child("微光空间画廊"),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&active_theme.muted)))
+                                    .child("晴空旧书房、夏风樟树下、浅海晚风号、山谷秘密花园、海港烘焙屋与雨夜灯笼巷 · 均满足高对比度护眼阅读"),
+                            ),
+                    )
+                    .child(scenic_row),
+            )
+            .child(
+                v_flex()
+                    .gap_3()
+                    .pt_1()
+                    .child(
+                        v_flex()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .text_size(px(10.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&active_theme.accent)))
+                                    .child("CLASSIC & AMBIENT · 经典与夜读"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(17.5))
+                                    .font_family(self.display_font())
+                                    .text_color(rgb(hex(&active_theme.text)))
+                                    .child("经典与光影空间"),
+                            ),
+                    )
+                    .child(classic_row),
+            );
+        if custom_count > 0 {
+            view = view.child(
+                v_flex()
+                    .gap_3()
+                    .pt_1()
+                    .child(
+                        v_flex()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .text_size(px(10.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&active_theme.accent)))
+                                    .child("PERSONAL THEMES · 自定义"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(17.5))
+                                    .font_family(self.display_font())
+                                    .text_color(rgb(hex(&active_theme.text)))
+                                    .child("我的私藏主题"),
+                            ),
+                    )
+                    .child(custom_row),
+            );
+        }
+        view = view
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_3()
+                    .p_4()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&active_theme.paper)).opacity(if is_dark { 0.88 } else { 0.92 }))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .child(
+                        h_flex()
+                            .gap_3()
+                            .items_center()
+                            .flex_wrap()
+                            .child(
+                                self.button_with_icon(
+                                    "自定义 / 另存主题",
+                                    IconName::Feather,
+                                    Action::EditTheme,
+                                    cx,
+                                )
+                                .primary(),
+                            )
+                            .child(
+                                self.button_with_icon(
+                                    if active_theme.reduced_motion {
+                                        "流光交互：已静谧"
+                                    } else {
+                                        "流光交互：已开启"
+                                    },
+                                    IconName::Sparkles,
+                                    Action::ToggleFlow,
+                                    cx,
+                                )
+                                .outline(),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&active_theme.muted)))
+                                    .child("支持鼠标流光、棱镜边缘折射与自定义素材"),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .px_3()
+                            .py_1p5()
+                            .rounded_full()
+                            .bg(rgb(hex(&active_theme.accent)).opacity(0.12))
+                            .child(
+                                Icon::new(IconName::ShieldCheck)
+                                    .size(px(14.))
+                                    .text_color(rgb(hex(&active_theme.accent))),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&active_theme.accent)))
+                                    .child(format!(
+                                        "当前正文对比度 {:.1}:1 · 最低要求 4.5:1",
+                                        glow_core::theme::contrast(
+                                            &active_theme.text,
+                                            &active_theme.paper
+                                        )
+                                    )),
+                            ),
+                    ),
+            )
+            .child(self.settings_ai_card(cx))
+            .child(self.settings_sync_card(cx));
+        if let Some(draft) = &self.draft {
+            let labels = [
+                "主题名称",
+                "界面底色 #RRGGBB",
+                "纸面颜色 #RRGGBB",
+                "正文颜色 #RRGGBB",
+                "次要文字 #RRGGBB",
+                "强调色 #RRGGBB",
+                "正文字体",
+                "字号 14—36",
+                "行距 1.3—2.6",
+                "正文宽度 400—1100",
+                "背景遮罩 0—1",
+                "环境音量 0—1",
+            ];
+            let mut fields = h_flex().flex_wrap().gap_4();
+            for (i, label) in labels.iter().enumerate() {
+                fields = fields.child(
+                    v_flex()
+                        .w(px(212.))
+                        .gap_1p5()
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .font_family(self.ui_font())
+                                .text_color(rgb(hex(&active_theme.muted)))
+                                .child((*label).to_owned()),
+                        )
+                        .child(Input::new(&self.fields[i])),
+                );
+            }
+            view = view.child(
+                v_flex()
+                    .p_5()
+                    .gap_5()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&active_theme.paper)).opacity(0.94))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .shadow_sm()
+                    .child(
+                        v_flex()
+                            .gap_1p5()
+                            .child(self.studio_badge("DIY CONSOLE", "MAKE IT YOURS", true))
+                            .child(
+                                div()
+                                    .text_size(px(21.))
+                                    .font_family(self.display_font())
+                                    .child("编辑这一个阅读空间"),
+                            ),
+                    )
+                    .child(fields)
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .flex_wrap()
+                            .child(self.button_with_icon(
+                                "选择背景图片",
+                                IconName::Image,
+                                Action::Asset("background".into()),
+                                cx,
+                            ))
+                            .child(self.button_with_icon(
+                                "选择字体文件",
+                                IconName::AArrowDown,
+                                Action::Asset("font".into()),
+                                cx,
+                            ))
+                            .child(self.button_with_icon(
+                                "选择环境音",
+                                IconName::AudioLines,
+                                Action::Asset("audio".into()),
+                                cx,
+                            ))
+                            .child(self.button_with_icon(
+                                if draft.reduced_motion {
+                                    "减少动态：开"
+                                } else {
+                                    "减少动态：关"
+                                },
+                                IconName::Sparkles,
+                                Action::ReducedMotion,
+                                cx,
+                            )),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&active_theme.muted)))
+                            .child(format!(
+                                "背景：{}  /  字体：{}  /  声音：{}",
+                                draft.image.as_deref().unwrap_or("内置"),
+                                draft.font_asset.as_deref().unwrap_or("系统"),
+                                draft.audio.as_deref().unwrap_or("未选择")
+                            )),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(self.button_with_icon(
+                                "预览",
+                                IconName::Eye,
+                                Action::PreviewTheme,
+                                cx,
+                            ))
+                            .child(
+                                self.button_with_icon(
+                                    "保存主题",
+                                    IconName::Check,
+                                    Action::SaveTheme,
+                                    cx,
+                                )
+                                .primary(),
+                            )
+                            .child(self.button("恢复默认", Action::ResetTheme, cx))
+                            .child(self.button("取消", Action::CancelTheme, cx)),
+                    ),
+            );
+        }
+        view.into_any_element()
+    }
+}
