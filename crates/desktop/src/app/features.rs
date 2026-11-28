@@ -104,7 +104,7 @@ impl ReadingApp {
             }
         }
 
-        // 5. Poll audiobook TTS status & synchronize background soundscape ducking
+        // 5. Poll audiobook TTS status, WebView synced sentence highlight, & soundscape ducking
         if let Some(player) = &self.tts_player {
             let next_status = player.status();
             let changed = next_status.active != self.tts_status.active
@@ -128,8 +128,131 @@ impl ReadingApp {
                     handle.set_ducking(should_duck);
                 }
             }
+            if self.tts_status.active && !self.tts_status.paused {
+                let seg_idx = self.tts_status.segment_index;
+                if self.tts_last_synced_segment != Some(seg_idx)
+                    && !self.tts_status.current_text.trim().is_empty()
+                {
+                    let sentence = self.tts_status.current_text.clone();
+                    let chapter = self.tts_status.chapter_title.clone();
+                    self.tts_last_synced_segment = Some(seg_idx);
+                    self.send(
+                        json!({"kind": "tts_highlight", "text": sentence, "chapter": chapter}),
+                        cx,
+                    );
+                }
+            } else if !self.tts_status.active && self.tts_last_synced_segment.is_some() {
+                self.tts_last_synced_segment = None;
+                self.send(json!({"kind": "tts_clear"}), cx);
+            }
             if changed {
                 cx.notify();
+            }
+        }
+
+        // 6. Poll AI paper-margin footnote generation
+        if let Some(res) = self.footnote_ai_rx.as_ref().map(|rx| rx.try_recv()) {
+            match res {
+                Ok(Ok(reply)) => {
+                    self.footnote_ai_rx = None;
+                    self.footnote_ai_reply = Some(reply);
+                    cx.notify();
+                }
+                Ok(Err(err)) => {
+                    self.footnote_ai_rx = None;
+                    self.error = Some(err.to_string());
+                    cx.notify();
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.footnote_ai_rx = None;
+                    cx.notify();
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+
+        // 7. Poll AI completion letter polish
+        if let Some(res) = self.completion_letter_rx.as_ref().map(|rx| rx.try_recv()) {
+            match res {
+                Ok(Ok(letter)) => {
+                    self.completion_letter_rx = None;
+                    self.completion_draft_letter = letter;
+                    self.notice = Some("已为你润色完读纪念信。".into());
+                    cx.notify();
+                }
+                Ok(Err(err)) => {
+                    self.completion_letter_rx = None;
+                    self.error = Some(err.to_string());
+                    cx.notify();
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.completion_letter_rx = None;
+                    cx.notify();
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+
+        // 8. Poll OPDS 1.2 catalog feed fetch
+        if let Some(res) = self.opds_fetch_rx.as_ref().map(|rx| rx.try_recv()) {
+            match res {
+                Ok(Ok((url, feed))) => {
+                    self.opds_fetch_rx = None;
+                    self.opds_active_url = url;
+                    self.opds_active_title = feed.title;
+                    let count = feed.entries.len();
+                    self.opds_entries = feed.entries;
+                    self.notice = Some(format!(
+                        "已连接 OPDS 书源「{}」，共发现 {} 条书目/分类。",
+                        self.opds_active_title, count
+                    ));
+                    cx.notify();
+                }
+                Ok(Err(err)) => {
+                    self.opds_fetch_rx = None;
+                    self.error = Some(format!("拉取 OPDS 书源失败：{err}"));
+                    cx.notify();
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.opds_fetch_rx = None;
+                    cx.notify();
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+
+        // 9. Poll OPDS EPUB download & import
+        if let Some(res) = self.opds_import_rx.as_ref().map(|rx| rx.try_recv()) {
+            match res {
+                Ok(Ok(bytes)) => {
+                    self.opds_import_rx = None;
+                    match self.store.import_epub_bytes(bytes) {
+                        Ok(book_id) => {
+                            let title = self
+                                .store
+                                .state
+                                .books
+                                .iter()
+                                .find(|b| b.id == book_id)
+                                .map(|b| b.title.clone())
+                                .unwrap_or_else(|| "新书".into());
+                            self.shelf_tab = ShelfTab::Library;
+                            self.notice = Some(format!("已从 OPDS 收入《{title}》至你的书架。"));
+                        }
+                        Err(err) => self.error = Some(format!("OPDS 电子书导入失败：{err}")),
+                    }
+                    cx.notify();
+                }
+                Ok(Err(err)) => {
+                    self.opds_import_rx = None;
+                    self.error = Some(format!("OPDS 下载失败：{err}"));
+                    cx.notify();
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.opds_import_rx = None;
+                    cx.notify();
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
             }
         }
     }
@@ -551,6 +674,427 @@ impl ReadingApp {
                         &settings,
                         &token,
                     ));
+                });
+            }
+            // ================= Phase 1 V1.0 Core Experience =================
+            Action::OnboardingStep(step) => {
+                self.onboarding_step = step.min(2);
+            }
+            Action::OnboardingPickCatalog(catalog_id) => {
+                let book_id = self.store.install_catalog_book(&catalog_id)?;
+                self.store.state.privacy_seen = true;
+                self.save();
+                self.open(&book_id, window, cx)?;
+                self.notice = Some("欢迎来到微光书房，慢慢读这一页吧。".into());
+            }
+            Action::ShelfTab(tab) => {
+                self.shelf_tab = tab;
+                self.editing_book_id = None;
+            }
+            Action::ShelfMoodPick(mood) => {
+                self.shelf_mood_pick = mood;
+            }
+            Action::InstallCatalogBook(catalog_id, open_now) => {
+                let book_id = self.store.install_catalog_book(&catalog_id)?;
+                let title = self
+                    .store
+                    .state
+                    .books
+                    .iter()
+                    .find(|b| b.id == book_id)
+                    .map(|b| b.title.clone())
+                    .unwrap_or_else(|| "公版书".into());
+                if open_now {
+                    self.shelf_tab = ShelfTab::Library;
+                    self.open(&book_id, window, cx)?;
+                } else {
+                    self.shelf_tab = ShelfTab::Library;
+                    self.notice = Some(format!("已将《{title}》收入你的书架。"));
+                }
+            }
+            Action::CycleBookStatus(book_id) => {
+                let next_status = self
+                    .store
+                    .state
+                    .books
+                    .iter()
+                    .find(|b| b.id == book_id)
+                    .map(|b| match b.effective_status() {
+                        "want" => "reading",
+                        "reading" => "paused",
+                        "paused" => "finished",
+                        _ => "want",
+                    })
+                    .unwrap_or("reading");
+                self.store.set_book_status(&book_id, next_status)?;
+                self.notice = Some(format!(
+                    "已将书架状态切换为「{}」。",
+                    glow_core::Book::status_label(next_status)
+                ));
+            }
+            Action::EditBookMeta(book_id) => {
+                if let Some(book) = self.store.state.books.iter().find(|b| b.id == book_id) {
+                    let title = book.title.clone();
+                    let author = book.author.clone();
+                    let tags = book.tags.join(", ");
+                    self.book_meta_title_input
+                        .update(cx, |s, cx| s.set_value(title, window, cx));
+                    self.book_meta_author_input
+                        .update(cx, |s, cx| s.set_value(author, window, cx));
+                    self.book_meta_tags_input
+                        .update(cx, |s, cx| s.set_value(tags, window, cx));
+                    self.editing_book_id = Some(book_id);
+                }
+            }
+            Action::SaveBookMeta => {
+                let book_id = self.editing_book_id.clone().context("没有正在编辑的书籍")?;
+                let title = self.book_meta_title_input.read(cx).value().to_string();
+                let author = self.book_meta_author_input.read(cx).value().to_string();
+                let raw_tags = self.book_meta_tags_input.read(cx).value().to_string();
+                let tags: Vec<String> = raw_tags
+                    .split([',', '，', '、', ';', '；'])
+                    .map(|s| s.trim().to_owned())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                self.store.update_book_meta(&book_id, title, author)?;
+                self.store.set_book_tags(&book_id, tags)?;
+                self.editing_book_id = None;
+                window.focus(&self.focus, cx);
+                self.notice = Some("已更新书名、作者与书单标签。".into());
+            }
+            Action::CancelBookMeta => {
+                self.editing_book_id = None;
+                window.focus(&self.focus, cx);
+            }
+            Action::OpdsAddFeed => {
+                let name = self.opds_name_input.read(cx).value().trim().to_owned();
+                let url = self.opds_url_input.read(cx).value().trim().to_owned();
+                let feed = self.store.add_opds_feed(name, url)?;
+                self.opds_name_input
+                    .update(cx, |s, cx| s.set_value("", window, cx));
+                self.opds_url_input
+                    .update(cx, |s, cx| s.set_value("", window, cx));
+                self.notice = Some(format!("已添加 OPDS 书源「{}」。", feed.name));
+            }
+            Action::OpdsRemoveFeed(id) => {
+                self.store.remove_opds_feed(&id)?;
+                self.notice = Some("已移除该 OPDS 书源。".into());
+            }
+            Action::OpdsFetchFeed(url) => {
+                if self.opds_fetch_rx.is_some() {
+                    return Ok(());
+                }
+                anyhow::ensure!(
+                    glow_core::model::valid_radio_stream_url(&url),
+                    "OPDS 书源地址无效"
+                );
+                let (tx, rx) = mpsc::channel();
+                self.opds_fetch_rx = Some(rx);
+                self.notice = Some(format!("正在连接 OPDS 书源 {url} …"));
+                std::thread::spawn(move || {
+                    let outcome = (|| -> anyhow::Result<(String, opds::OpdsFeed)> {
+                        let client = reqwest::blocking::Client::builder()
+                            .connect_timeout(Duration::from_secs(10))
+                            .timeout(Duration::from_secs(20))
+                            .user_agent("GlowReading/1.0 (OPDS 1.2)")
+                            .build()?;
+                        let resp = client.get(&url).send()?;
+                        anyhow::ensure!(
+                            resp.status().is_success(),
+                            "服务器返回 HTTP {}",
+                            resp.status().as_u16()
+                        );
+                        let xml = resp.text()?;
+                        let feed = opds::parse_feed(&xml, &url)?;
+                        Ok((url, feed))
+                    })();
+                    let _ = tx.send(outcome);
+                });
+            }
+            Action::OpdsImportEntry(idx) => {
+                if self.opds_import_rx.is_some() {
+                    return Ok(());
+                }
+                let entry = self
+                    .opds_entries
+                    .get(idx)
+                    .cloned()
+                    .context("未找到该 OPDS 书目")?;
+                if let Some(epub_url) = entry.epub_url {
+                    let (tx, rx) = mpsc::channel();
+                    self.opds_import_rx = Some(rx);
+                    self.notice = Some(format!("正在下载《{}》…", entry.title));
+                    std::thread::spawn(move || {
+                        let outcome = (|| -> anyhow::Result<Vec<u8>> {
+                            let client = reqwest::blocking::Client::builder()
+                                .connect_timeout(Duration::from_secs(10))
+                                .timeout(Duration::from_secs(45))
+                                .user_agent("GlowReading/1.0 (OPDS 1.2)")
+                                .build()?;
+                            let resp = client.get(&epub_url).send()?;
+                            anyhow::ensure!(
+                                resp.status().is_success(),
+                                "下载返回 HTTP {}",
+                                resp.status().as_u16()
+                            );
+                            let bytes = resp.bytes()?.to_vec();
+                            anyhow::ensure!(
+                                bytes.len() as u64 <= glow_core::library::MAX_ARCHIVE,
+                                "EPUB 文件超过 100 MB 限制"
+                            );
+                            Ok(bytes)
+                        })();
+                        let _ = tx.send(outcome);
+                    });
+                } else if let Some(sub_url) = entry.subsection_url {
+                    self.perform_feature(Action::OpdsFetchFeed(sub_url), window, cx)?;
+                }
+            }
+            Action::DismissReunion => {
+                self.reunion_dismissed = true;
+            }
+            Action::OpenFootnote(term) => {
+                let cleaned = term.trim().to_owned();
+                anyhow::ensure!(!cleaned.is_empty(), "请先选择要查询纸边注脚的词句");
+                self.footnote_dict = dictionary::lookup(&cleaned);
+                self.footnote_term = cleaned;
+                self.footnote_ai_reply = None;
+                self.footnote_ai_rx = None;
+                self.drawer = "footnote".into();
+            }
+            Action::AskAiFootnote => {
+                if self.footnote_ai_rx.is_some() {
+                    return Ok(());
+                }
+                let term = self.footnote_term.trim().to_owned();
+                anyhow::ensure!(!term.is_empty(), "没有待释义的词句");
+                let book_title = self
+                    .store
+                    .state
+                    .books
+                    .iter()
+                    .find(|b| Some(&b.id) == self.active_book.as_ref())
+                    .map(|b| b.title.clone())
+                    .unwrap_or_else(|| "微光藏书".into());
+                let ai_settings = self.store.state.ai.clone();
+                let secrets = self.store.load_secrets();
+                let (tx, rx) = mpsc::channel();
+                self.footnote_ai_rx = Some(rx);
+                self.notice = Some("正在生成克制的防剧透纸边注脚…".into());
+                std::thread::spawn(move || {
+                    let _ = tx.send(mood::generate_margin_footnote(
+                        &ai_settings,
+                        &secrets,
+                        &term,
+                        &book_title,
+                    ));
+                });
+            }
+            Action::CloseFootnote => {
+                self.footnote_ai_rx = None;
+                if self.drawer == "footnote" {
+                    self.drawer.clear();
+                    self.send(json!({"kind": "restore"}), cx);
+                }
+            }
+            Action::OpenCompletionModal(book_id) => {
+                let book = self
+                    .store
+                    .state
+                    .books
+                    .iter()
+                    .find(|b| b.id == book_id)
+                    .context("未找到这本书")?;
+                let highlights: Vec<String> =
+                    book.highlights.iter().map(|h| h.text.clone()).collect();
+                let draft_letter = book.finish_letter.clone().unwrap_or_else(|| {
+                    mood::offline_completion_letter(
+                        &book.title,
+                        &book.author,
+                        &highlights,
+                        book.total_reading_minutes,
+                    )
+                });
+                self.palette_open = false;
+                self.mixer_open = false;
+                self.focus_timer_picker_open = false;
+                self.quote_card = None;
+                self.completion_letter_rx = None;
+                self.completion_draft_letter = draft_letter;
+                self.completion_book_id = Some(book_id);
+            }
+            Action::GenerateAiCompletionLetter => {
+                if self.completion_letter_rx.is_some() {
+                    return Ok(());
+                }
+                let book_id = self
+                    .completion_book_id
+                    .clone()
+                    .context("请先打开完读仪式")?;
+                let book = self
+                    .store
+                    .state
+                    .books
+                    .iter()
+                    .find(|b| b.id == book_id)
+                    .context("书籍已不在书架中")?
+                    .clone();
+                let highlights: Vec<String> =
+                    book.highlights.iter().map(|h| h.text.clone()).collect();
+                let ai_settings = self.store.state.ai.clone();
+                let secrets = self.store.load_secrets();
+                let (tx, rx) = mpsc::channel();
+                self.completion_letter_rx = Some(rx);
+                self.notice = Some("正在为你写一封专属完读纪念信…".into());
+                std::thread::spawn(move || {
+                    let _ = tx.send(mood::generate_completion_letter(
+                        &ai_settings,
+                        &secrets,
+                        &book.title,
+                        &book.author,
+                        &highlights,
+                        book.total_reading_minutes,
+                    ));
+                });
+            }
+            Action::ConfirmCompleteBook => {
+                let book_id = self
+                    .completion_book_id
+                    .clone()
+                    .context("请先打开完读仪式")?;
+                let favorite_quote = self
+                    .store
+                    .state
+                    .books
+                    .iter()
+                    .find(|b| b.id == book_id)
+                    .and_then(|b| b.highlights.last())
+                    .map(|h| h.text.clone());
+                let letter = self.completion_draft_letter.clone();
+                let ticket_no = self.store.complete_book(&book_id, letter, favorite_quote)?;
+                let origin = self.pet_celebration_origin(window);
+                self.motion
+                    .trigger_pet_celebration(origin, self.theme().reduced_motion);
+                self.play_chime();
+                self.notice = Some(format!(
+                    "完读仪式完成！已珍藏纪念票根 NO.{ticket_no:04} 至你的微光手账。"
+                ));
+            }
+            Action::SaveCompletionTicketPng => {
+                let book_id = self
+                    .completion_book_id
+                    .clone()
+                    .context("请先打开完读仪式")?;
+                let book = self
+                    .store
+                    .state
+                    .books
+                    .iter()
+                    .find(|b| b.id == book_id)
+                    .context("书籍已不在书架中")?;
+                let draft = CompletionTicketDraft {
+                    ticket_no: book
+                        .completion_ticket_no
+                        .unwrap_or(self.store.state.next_ticket_no.max(1)),
+                    title: book.title.clone(),
+                    author: book.author.clone(),
+                    finished_date: today_ymd(),
+                    reading_minutes: book.total_reading_minutes,
+                    highlight: book.highlights.last().map(|h| h.text.clone()),
+                    letter: self.completion_draft_letter.clone(),
+                    style: QuoteCardStyle::from_theme_id(&self.theme().id),
+                };
+                self.hide(cx);
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_parent(window)
+                    .set_title("保存高清完读纪念票根 PNG")
+                    .set_file_name(format!("完读票根-NO{:04}.png", draft.ticket_no))
+                    .add_filter("PNG 图片", &["png"])
+                    .save_file()
+                {
+                    quotecard::save_ticket_png(&draft, &path)?;
+                    self.notice = Some("完读纪念票根已保存为高清 PNG。".into());
+                }
+            }
+            Action::SaveJournalTicketPng(entry_id) => {
+                let entry = self
+                    .store
+                    .state
+                    .journal
+                    .iter()
+                    .find(|e| e.id == entry_id)
+                    .context("未找到该完读票根")?;
+                let (title, author, highlight) = entry
+                    .echo
+                    .quotes
+                    .first()
+                    .map(|q| (q.work.clone(), q.author.clone(), Some(q.text.clone())))
+                    .unwrap_or_else(|| (entry.input.clone(), "微光藏书".into(), None));
+                let draft = CompletionTicketDraft {
+                    ticket_no: 1,
+                    title,
+                    author,
+                    finished_date: entry
+                        .created_at
+                        .get(..10)
+                        .unwrap_or(&today_ymd())
+                        .to_owned(),
+                    reading_minutes: 0,
+                    highlight,
+                    letter: entry.echo.reply.clone(),
+                    style: QuoteCardStyle::from_theme_id(&self.theme().id),
+                };
+                self.hide(cx);
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_parent(window)
+                    .set_title("保存高清完读纪念票根 PNG")
+                    .set_file_name("完读纪念票根.png")
+                    .add_filter("PNG 图片", &["png"])
+                    .save_file()
+                {
+                    quotecard::save_ticket_png(&draft, &path)?;
+                    self.notice = Some("完读纪念票根已保存为高清 PNG。".into());
+                }
+            }
+            Action::CloseCompletionModal => {
+                self.completion_book_id = None;
+                self.completion_letter_rx = None;
+                window.focus(&self.focus, cx);
+            }
+            Action::ToggleJournalLock => {
+                self.store.state.journal_locked = !self.store.state.journal_locked;
+                self.save();
+                self.notice = Some(if self.store.state.journal_locked {
+                    "已开启手账私密遮罩，旁人路过无法窥见你的心绪。".into()
+                } else {
+                    "已解锁手账内容，欢迎回到私人档案。".into()
+                });
+            }
+            Action::ToggleDaylightAuto => {
+                self.store.state.daylight_auto = !self.store.state.daylight_auto;
+                self.configure(cx);
+                self.save();
+                let (stage, is_warm) = circadian_daylight_stage();
+                self.notice = Some(if self.store.state.daylight_auto {
+                    format!(
+                        "已开启昼夜自然光影（当前时段：{stage}{}）。",
+                        if is_warm {
+                            " · 自动柔暖护眼"
+                        } else {
+                            " · 清澈日光"
+                        }
+                    )
+                } else {
+                    "已关闭昼夜自动光影，保持手动设定。".into()
+                });
+            }
+            Action::ToggleAmbientPresence => {
+                self.store.state.show_ambient_presence = !self.store.state.show_ambient_presence;
+                self.save();
+                self.notice = Some(if self.store.state.show_ambient_presence {
+                    "已点亮匿名同频微光，感受安静的远方陪伴。".into()
+                } else {
+                    "已切换为纯粹独处模式，关闭同频微光显示。".into()
                 });
             }
             _ => {}

@@ -3,6 +3,220 @@ use super::*;
 impl ReadingApp {
     #[inline(never)]
     pub(super) fn render_welcome(&self, t: &ReadingTheme, cx: &Context<Self>) -> AnyElement {
+        let step = self.onboarding_step.min(2);
+        let mut steps_bar = h_flex().gap_2().items_center();
+        for (idx, label) in [
+            (0u8, "1 · 选书房"),
+            (1u8, "2 · 挑一本书"),
+            (2u8, "3 · 安心启程"),
+        ] {
+            let active = step == idx;
+            steps_bar = steps_bar.child(self.pill_button(
+                label,
+                None,
+                active,
+                Action::OnboardingStep(idx),
+                cx,
+            ));
+        }
+
+        let step_body = match step {
+            0 => v_flex()
+                .gap_4()
+                .child(self.heading(
+                    "STEP 1 OF 3 · 30 秒布置你的微光书房",
+                    "挑一间今晚想待着的书房。",
+                    "每一套都是原创微光空间，带专属配色与纸张氛围，随时可一键切换。",
+                ))
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .flex_wrap()
+                        .child(self.pill_button(
+                            "晴空旧书房 · 蓝天流云",
+                            Some(IconName::Cloud),
+                            t.id == "forest",
+                            Action::PickTheme(0),
+                            cx,
+                        ))
+                        .child(self.pill_button(
+                            "夏风樟树下 · 林荫",
+                            Some(IconName::Leaf),
+                            t.id == "totoro",
+                            Action::PickTheme(4),
+                            cx,
+                        ))
+                        .child(self.pill_button(
+                            "浅海晚风号 · 黄昏",
+                            Some(IconName::Sparkles),
+                            t.id == "spirited",
+                            Action::PickTheme(5),
+                            cx,
+                        ))
+                        .child(self.pill_button(
+                            "雨夜灯笼巷 · 暖灯",
+                            Some(IconName::Flame),
+                            t.id == "lantern",
+                            Action::PickTheme(8),
+                            cx,
+                        ))
+                        .child(self.pill_button(
+                            "星空棱镜 · 暗夜流光",
+                            Some(IconName::Sparkles),
+                            t.id == "prism",
+                            Action::PickTheme(3),
+                            cx,
+                        )),
+                )
+                .child(
+                    h_flex()
+                        .gap_3()
+                        .items_center()
+                        .flex_wrap()
+                        .child(
+                            self.button_with_icon(
+                                "下一步：挑一本书",
+                                IconName::ChevronRight,
+                                Action::OnboardingStep(1),
+                                cx,
+                            )
+                            .primary(),
+                        )
+                        .child(self.button_with_icon(
+                            "知道了，先坐一会儿",
+                            IconName::BookOpen,
+                            Action::Privacy,
+                            cx,
+                        )),
+                )
+                .into_any_element(),
+            1 => {
+                let mut picks = h_flex().gap_2p5().flex_wrap();
+                for book in catalog::all_books().iter().take(4) {
+                    let cid = book.id.to_owned();
+                    picks = picks.child(
+                        v_flex()
+                            .id(SharedString::from(format!("onboard-book-{cid}")))
+                            .cursor_pointer()
+                            .w(px(266.))
+                            .p_3p5()
+                            .gap_1p5()
+                            .rounded_xl()
+                            .bg(rgb(hex(&t.background)).opacity(0.68))
+                            .border_1()
+                            .border_color(self.border_subtle())
+                            .hover(|s| s.border_color(rgb(hex(&t.accent)).opacity(0.65)))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, window, cx| {
+                                    this.act(
+                                        Action::OnboardingPickCatalog(cid.clone()),
+                                        window,
+                                        cx,
+                                    );
+                                }),
+                            )
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_size(px(14.5))
+                                            .font_family(self.display_font())
+                                            .child(format!("《{}》", book.title)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(10.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&t.accent)))
+                                            .child(format!("约 {} 分钟", book.minutes)),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child(format!("{} · {}", book.author, book.era)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .line_height(relative(1.5))
+                                    .text_color(rgb(hex(&t.text)).opacity(0.84))
+                                    .child(book.tagline),
+                            ),
+                    );
+                }
+                v_flex()
+                    .gap_4()
+                    .child(self.heading(
+                        "STEP 2 OF 3 · 微光公版馆",
+                        "点一本立即翻开，不必空着书架。",
+                        "全部内置离线公版/原创作品，点击即可直接进入书页开始慢读。",
+                    ))
+                    .child(picks)
+                    .child(
+                        h_flex()
+                            .gap_3()
+                            .items_center()
+                            .flex_wrap()
+                            .child(self.button("上一步", Action::OnboardingStep(0), cx))
+                            .child(
+                                self.button_with_icon(
+                                    "下一步：隐私承诺",
+                                    IconName::ChevronRight,
+                                    Action::OnboardingStep(2),
+                                    cx,
+                                )
+                                .primary(),
+                            )
+                            .child(self.button("稍后自己导入", Action::Privacy, cx)),
+                    )
+                    .into_any_element()
+            }
+            _ => v_flex()
+                .gap_4()
+                .child(self.heading(
+                    "STEP 3 OF 3 · LOCAL-FIRST",
+                    "你的书与心事，只留在你手里。",
+                    "书库、划线、手账与全文检索全部以 SQLite 本地离线存储；无广告、无强制登录、无打卡焦虑。",
+                ))
+                .child(
+                    div()
+                        .p_4()
+                        .rounded_xl()
+                        .bg(rgb(hex(&t.background)).opacity(0.62))
+                        .border_1()
+                        .border_color(self.border_subtle())
+                        .text_size(px(13.))
+                        .font_family(self.ui_font())
+                        .line_height(relative(1.7))
+                        .text_color(rgb(hex(&t.muted)))
+                        .child("仅当你主动触发 AI 共读、纸边释义或完读信润色时，才将当次最小片段发送给你配置的模型（支持本地 Ollama 完全离线）；平时零联网上传。"),
+                )
+                .child(
+                    h_flex()
+                        .gap_3()
+                        .items_center()
+                        .child(self.button("上一步", Action::OnboardingStep(1), cx))
+                        .child(
+                            self.button_with_icon(
+                                "进入我的微光书房",
+                                IconName::BookOpen,
+                                Action::Privacy,
+                                cx,
+                            )
+                            .primary(),
+                        ),
+                )
+                .into_any_element(),
+        };
+
         v_flex()
             .size_full()
             .p_8()
@@ -11,10 +225,10 @@ impl ReadingApp {
             .bg(rgb(hex(&t.background)).opacity(0.45))
             .child(
                 v_flex()
-                    .w(px(620.))
+                    .w(px(640.))
                     .max_w_full()
-                    .p_8()
-                    .gap_6()
+                    .p_7()
+                    .gap_5()
                     .rounded_2xl()
                     .bg(rgb(hex(&t.paper)).opacity(0.97))
                     .border_1()
@@ -25,84 +239,23 @@ impl ReadingApp {
                         h_flex()
                             .items_center()
                             .justify_between()
-                            .child(
-                                img("glow-icon.png")
-                                    .size(px(56.))
-                                    .object_fit(ObjectFit::Contain)
-                                    .rounded_2xl(),
-                            )
-                            .child(self.studio_badge("LOCAL-FIRST", "PRIVATE STORAGE", true)),
-                    )
-                    .child(self.heading(
-                        "WELCOME TO GLOW STATION",
-                        "欢迎来到微光。",
-                        "书库、划线和日记保存在这台电脑上；心情回复可连接 OpenAI。",
-                    ))
-                    .child(
-                        div()
-                            .text_size(px(14.))
-                            .font_family(self.ui_font())
-                            .line_height(relative(1.75))
-                            .text_color(rgb(hex(&t.muted)))
-                            .child("书库、多色划线、批注、原生声景与书摘卡均 100% 在本机运行。仅当你主动提交心情或点击「问问微光（AI 深度共读）」时，才将当次单段文字发给 OpenAI 生成回复。"),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
                             .flex_wrap()
+                            .gap_3()
                             .child(
-                                div()
-                                    .text_size(px(11.5))
-                                    .font_family(self.ui_font())
-                                    .text_color(rgb(hex(&t.muted)))
-                                    .child("选择初始空间："),
+                                h_flex()
+                                    .gap_3()
+                                    .items_center()
+                                    .child(
+                                        img("glow-icon.png")
+                                            .size(px(48.))
+                                            .object_fit(ObjectFit::Contain)
+                                            .rounded_2xl(),
+                                    )
+                                    .child(self.studio_badge("GLOW 2.0", "LOCAL-FIRST", true)),
                             )
-                            .child(self.pill_button(
-                                "晴空旧书房 · 蓝天流云",
-                                Some(IconName::Cloud),
-                                t.id == "forest",
-                                Action::PickTheme(0),
-                                cx,
-                            ))
-                            .child(self.pill_button(
-                                "夏风樟树下 · 林荫",
-                                Some(IconName::Leaf),
-                                t.id == "totoro",
-                                Action::PickTheme(4),
-                                cx,
-                            ))
-                            .child(self.pill_button(
-                                "浅海晚风号 · 黄昏",
-                                Some(IconName::Sparkles),
-                                t.id == "spirited",
-                                Action::PickTheme(5),
-                                cx,
-                            ))
-                            .child(self.pill_button(
-                                "雨夜灯笼巷 · 暖灯",
-                                Some(IconName::Flame),
-                                t.id == "lantern",
-                                Action::PickTheme(8),
-                                cx,
-                            ))
-                            .child(self.pill_button(
-                                "星空棱镜 · 暗夜流光",
-                                Some(IconName::Sparkles),
-                                t.id == "prism",
-                                Action::PickTheme(3),
-                                cx,
-                            )),
+                            .child(steps_bar),
                     )
-                    .child(
-                        self.button_with_icon(
-                            "知道了，先坐一会儿",
-                            IconName::BookOpen,
-                            Action::Privacy,
-                            cx,
-                        )
-                        .primary(),
-                    ),
+                    .child(step_body),
             )
             .into_any_element()
     }
@@ -689,8 +842,41 @@ impl ReadingApp {
                 IconName::Download,
                 Action::ExportJournalMarkdown,
             ),
+            (
+                "手账 · 切换手账私密遮罩",
+                "一键隐藏或解锁私人手账正文内容",
+                IconName::Focus,
+                Action::ToggleJournalLock,
+            ),
+            (
+                "书房 · 打开微光公版馆",
+                "内置精排公版经典与原创散文，离线一键直读",
+                IconName::BookOpen,
+                Action::ShelfTab(ShelfTab::Catalog),
+            ),
+            (
+                "书房 · 连接 OPDS 1.2 书源",
+                "接入 Calibre / Komga / 公版库开放书源",
+                IconName::Download,
+                Action::ShelfTab(ShelfTab::Opds),
+            ),
+            (
+                "光影 · 切换昼夜自然光影随动",
+                "依本地晨光/晴午/暮色/深夜自动调节暖光护眼",
+                IconName::Sun,
+                Action::ToggleDaylightAuto,
+            ),
         ];
-        if self.active_book.is_some() {
+        if let Some(book_id) = self.active_book.clone() {
+            commands.insert(
+                0,
+                (
+                    "仪式 · 打开当前书籍的完读仪式",
+                    "生成编号完读纪念票根与完读私信",
+                    IconName::Sparkles,
+                    Action::OpenCompletionModal(book_id),
+                ),
+            );
             commands.insert(
                 0,
                 (
@@ -1237,6 +1423,193 @@ impl ReadingApp {
                             .font_family(self.ui_font())
                             .text_color(rgb(hex(&t.muted)))
                             .child("↑ / ↓ 选择 · Enter 执行 · Esc 或点击空白处关闭"),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    #[inline(never)]
+    pub(super) fn completion_ceremony_modal(
+        &self,
+        book_id: &str,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let t = self.theme();
+        let is_dark = self.is_dark();
+        let book = self.store.state.books.iter().find(|b| b.id == book_id);
+        let title = book.map(|b| b.title.as_str()).unwrap_or("微光藏书");
+        let author = book.map(|b| b.author.as_str()).unwrap_or("佚名");
+        let minutes = book.map(|b| b.total_reading_minutes).unwrap_or(0);
+        let ticket_no = book
+            .and_then(|b| b.completion_ticket_no)
+            .unwrap_or(self.store.state.next_ticket_no.max(1));
+        let already_archived = book.and_then(|b| b.completion_ticket_no).is_some();
+        let best_quote = book
+            .and_then(|b| b.highlights.last())
+            .map(|h| h.text.chars().take(84).collect::<String>());
+        let date = today_ymd();
+
+        div()
+            .id("completion-ceremony-overlay")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .p_6()
+            .bg(rgb(0x0b101b).opacity(0.62))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.act(Action::CloseCompletionModal, window, cx);
+                }),
+            )
+            .child(
+                v_flex()
+                    .id("completion-ceremony-card")
+                    .w(px(580.))
+                    .max_w_full()
+                    .p_7()
+                    .gap_5()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&t.paper)).opacity(0.98))
+                    .border_1()
+                    .border_color(rgb(hex(&t.accent)).opacity(0.45))
+                    .shadow_lg()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(self.studio_badge(
+                                &format!("TICKET NO.{ticket_no:04}"),
+                                "合上书页 · 完读纪念仪式",
+                                true,
+                            ))
+                            .child(self.button_with_icon(
+                                "收起",
+                                IconName::X,
+                                Action::CloseCompletionModal,
+                                cx,
+                            )),
+                    )
+                    // Vintage ticket stub preview card
+                    .child(
+                        v_flex()
+                            .p_5()
+                            .gap_3()
+                            .rounded_2xl()
+                            .bg(rgb(hex(&t.background)).opacity(if is_dark { 0.72 } else { 0.80 }))
+                            .border_1()
+                            .border_color(rgb(hex(&t.accent)).opacity(0.32))
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .items_start()
+                                    .gap_3()
+                                    .child(
+                                        v_flex()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .text_size(px(23.))
+                                                    .font_family(self.display_font())
+                                                    .child(format!("《{title}》")),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.5))
+                                                    .font_family(self.ui_font())
+                                                    .text_color(rgb(hex(&t.muted)))
+                                                    .child(if minutes > 0 {
+                                                        format!(
+                                                            "{author}  ·  完读于 {date}  ·  共静读 {minutes} 分钟"
+                                                        )
+                                                    } else {
+                                                        format!("{author}  ·  完读于 {date}")
+                                                    }),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .px_2p5()
+                                            .py_1p5()
+                                            .rounded_lg()
+                                            .bg(rgb(0xb84338).opacity(0.92))
+                                            .border_1()
+                                            .border_color(rgb(0xfff4ec).opacity(0.55))
+                                            .text_size(px(12.))
+                                            .font_family(self.display_font())
+                                            .text_color(rgb(0xfff8f2))
+                                            .child("完读"),
+                                    ),
+                            )
+                            .when_some(best_quote, |this, q| {
+                                this.child(
+                                    div()
+                                        .p_3()
+                                        .rounded_xl()
+                                        .bg(rgb(hex(&t.paper)).opacity(0.75))
+                                        .border_l_3()
+                                        .border_color(rgb(hex(&t.accent)))
+                                        .text_size(px(13.))
+                                        .font_family(self.display_font())
+                                        .line_height(relative(1.55))
+                                        .child(format!("「{q}」")),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .h(px(1.))
+                                    .w_full()
+                                    .bg(rgb(hex(&t.accent)).opacity(0.24)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(13.5))
+                                    .font_family(self.ui_font())
+                                    .line_height(relative(1.75))
+                                    .text_color(rgb(hex(&t.text)).opacity(0.92))
+                                    .child(self.completion_draft_letter.clone()),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .flex_wrap()
+                            .child(
+                                self.button_with_icon(
+                                    if already_archived {
+                                        "更新手账中的完读票根"
+                                    } else {
+                                        "珍藏票根至手账"
+                                    },
+                                    IconName::Bookmark,
+                                    Action::ConfirmCompleteBook,
+                                    cx,
+                                )
+                                .primary(),
+                            )
+                            .child(self.button_with_icon(
+                                "保存高清票根 PNG",
+                                IconName::ImageDown,
+                                Action::SaveCompletionTicketPng,
+                                cx,
+                            ))
+                            .child(
+                                self.button_with_icon(
+                                    if self.completion_letter_rx.is_some() {
+                                        "正在写完读信…"
+                                    } else {
+                                        "AI 润色完读信"
+                                    },
+                                    IconName::WandSparkles,
+                                    Action::GenerateAiCompletionLetter,
+                                    cx,
+                                )
+                                .disabled(self.completion_letter_rx.is_some()),
+                            ),
                     ),
             )
             .into_any_element()

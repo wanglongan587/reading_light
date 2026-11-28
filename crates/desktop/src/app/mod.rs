@@ -18,7 +18,7 @@ use theme_meta::*;
 use crate::{
     mood, platform,
     prism::{self, MotionEngine, MotionSnapshot, ThemeAtmosphere},
-    quotecard::{self, QuoteCardDraft, QuoteCardStyle},
+    quotecard::{self, CompletionTicketDraft, QuoteCardDraft, QuoteCardStyle},
     radio,
     soundscape::{ChimeSource, SoundscapeHandle, SoundscapePreset, SoundscapeSource},
     sync_client, tts,
@@ -26,10 +26,11 @@ use crate::{
 use anyhow::Context as _;
 use glow_core::{
     AiSettings, BookCompanionCache, Bookmark, EchoResult, JournalEntry, LocalSecrets, Location,
-    SoundscapeMix, Store, Theme as ReadingTheme,
+    MemoryHit, SoundscapeMix, Store, Theme as ReadingTheme,
     bridge::{ReaderEvent, SearchHit, TocEntry},
-    echo,
+    catalog, dictionary, echo,
     model::themes,
+    opds,
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::base::Disableable;
@@ -65,6 +66,14 @@ enum ShelfFilter {
     Reading,
     Unread,
     Finished,
+    Paused,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShelfTab {
+    Library,
+    Catalog,
+    Opds,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,6 +82,7 @@ enum JournalFilter {
     Favorite,
     Mood,
     Selection,
+    Ticket,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -231,6 +241,33 @@ enum Action {
     RadioPickLocalFolder,
     RadioSetHostVoice(String),
     RadioSaveLineToJournal,
+    // Phase 1 V1.0 Core Experience
+    OnboardingStep(u8),
+    OnboardingPickCatalog(String),
+    ShelfTab(ShelfTab),
+    ShelfMoodPick(String),
+    InstallCatalogBook(String, bool),
+    CycleBookStatus(String),
+    EditBookMeta(String),
+    SaveBookMeta,
+    CancelBookMeta,
+    OpdsAddFeed,
+    OpdsRemoveFeed(String),
+    OpdsFetchFeed(String),
+    OpdsImportEntry(usize),
+    DismissReunion,
+    OpenFootnote(String),
+    AskAiFootnote,
+    CloseFootnote,
+    OpenCompletionModal(String),
+    GenerateAiCompletionLetter,
+    ConfirmCompleteBook,
+    SaveCompletionTicketPng,
+    SaveJournalTicketPng(String),
+    CloseCompletionModal,
+    ToggleJournalLock,
+    ToggleDaylightAuto,
+    ToggleAmbientPresence,
 }
 
 struct PassageGenerated {
@@ -265,6 +302,7 @@ pub struct ReadingApp {
     echo_saved: bool,
     echo_ai_rx: Option<mpsc::Receiver<anyhow::Result<PassageGenerated>>>,
     echo_ai_worker: fn(&str, &str) -> anyhow::Result<EchoResult>,
+    echo_memories: Vec<MemoryHit>,
     highlight_note_target: Option<String>,
     highlight_note_input: Entity<TextareaState>,
     mood_reply: Option<(String, EchoResult)>,
@@ -282,6 +320,28 @@ pub struct ReadingApp {
     focus_timer_with_audio: bool,
     shelf_search: Entity<InputState>,
     shelf_filter: ShelfFilter,
+    shelf_tab: ShelfTab,
+    shelf_mood_pick: String,
+    editing_book_id: Option<String>,
+    book_meta_title_input: Entity<InputState>,
+    book_meta_author_input: Entity<InputState>,
+    book_meta_tags_input: Entity<InputState>,
+    opds_name_input: Entity<InputState>,
+    opds_url_input: Entity<InputState>,
+    opds_active_title: String,
+    opds_active_url: String,
+    opds_entries: Vec<opds::OpdsEntry>,
+    opds_fetch_rx: Option<mpsc::Receiver<anyhow::Result<(String, opds::OpdsFeed)>>>,
+    opds_import_rx: Option<mpsc::Receiver<anyhow::Result<Vec<u8>>>>,
+    onboarding_step: u8,
+    reunion_dismissed: bool,
+    footnote_term: String,
+    footnote_dict: Option<dictionary::DictEntry>,
+    footnote_ai_reply: Option<String>,
+    footnote_ai_rx: Option<mpsc::Receiver<anyhow::Result<String>>>,
+    completion_book_id: Option<String>,
+    completion_draft_letter: String,
+    completion_letter_rx: Option<mpsc::Receiver<anyhow::Result<String>>>,
     rediscovery_offset: usize,
     journal_search: Entity<InputState>,
     journal_filter: JournalFilter,
@@ -318,6 +378,7 @@ pub struct ReadingApp {
     tts_player: Option<tts::TtsPlayer>,
     tts_status: tts::TtsStatus,
     tts_ducking_applied: bool,
+    tts_last_synced_segment: Option<usize>,
     ai_base_url_input: Entity<InputState>,
     ai_model_input: Entity<InputState>,
     ai_key_input: Entity<InputState>,
@@ -513,6 +574,15 @@ impl ReadingApp {
         let radio_custom_url_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder("音频流地址（https://...mp3 或 .ogg）")
         });
+        let book_meta_title_input = cx.new(|cx| InputState::new(window, cx).placeholder("书名"));
+        let book_meta_author_input = cx.new(|cx| InputState::new(window, cx).placeholder("作者"));
+        let book_meta_tags_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("书单标签（逗号分隔，如：睡前, 散文）")
+        });
+        let opds_name_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("书源名称（如：Calibre 书房）"));
+        let opds_url_input = cx
+            .new(|cx| InputState::new(window, cx).placeholder("OPDS 1.2 地址（https://.../opds）"));
         cx.subscribe_in(
             &radio_custom_url_input,
             window,
@@ -553,6 +623,7 @@ impl ReadingApp {
             echo_saved: false,
             echo_ai_rx: None,
             echo_ai_worker: mood::generate_passage,
+            echo_memories: vec![],
             highlight_note_target: None,
             highlight_note_input,
             mood_reply: None,
@@ -570,6 +641,28 @@ impl ReadingApp {
             focus_timer_with_audio: false,
             shelf_search,
             shelf_filter: ShelfFilter::All,
+            shelf_tab: ShelfTab::Library,
+            shelf_mood_pick: "睡前".into(),
+            editing_book_id: None,
+            book_meta_title_input,
+            book_meta_author_input,
+            book_meta_tags_input,
+            opds_name_input,
+            opds_url_input,
+            opds_active_title: String::new(),
+            opds_active_url: String::new(),
+            opds_entries: vec![],
+            opds_fetch_rx: None,
+            opds_import_rx: None,
+            onboarding_step: 0,
+            reunion_dismissed: false,
+            footnote_term: String::new(),
+            footnote_dict: None,
+            footnote_ai_reply: None,
+            footnote_ai_rx: None,
+            completion_book_id: None,
+            completion_draft_letter: String::new(),
+            completion_letter_rx: None,
             rediscovery_offset: 0,
             journal_search,
             journal_filter: JournalFilter::All,
@@ -605,6 +698,7 @@ impl ReadingApp {
             tts_player: None,
             tts_status: tts::TtsStatus::default(),
             tts_ducking_applied: false,
+            tts_last_synced_segment: None,
             ai_base_url_input,
             ai_model_input,
             ai_key_input,
@@ -784,7 +878,7 @@ impl ReadingApp {
         if let Some(font) = &t.font_asset {
             value["font_url"] = json!(format!("{}/theme/{}/{}", platform::origin(), t.id, font));
         }
-        value["warm_filter"] = json!(self.store.state.warm_filter);
+        value["warm_filter"] = json!(self.effective_warm_filter());
         value
     }
     fn active_soundscape_preset(&self) -> SoundscapePreset {
@@ -913,6 +1007,15 @@ impl ReadingApp {
             self.quote_card = None;
             window.focus(&self.focus, cx);
             cx.notify();
+        } else if self.completion_book_id.is_some() {
+            self.completion_book_id = None;
+            self.completion_letter_rx = None;
+            window.focus(&self.focus, cx);
+            cx.notify();
+        } else if self.editing_book_id.is_some() {
+            self.editing_book_id = None;
+            window.focus(&self.focus, cx);
+            cx.notify();
         } else if self.confirm.is_some() {
             self.confirm = None;
             cx.notify();
@@ -989,6 +1092,13 @@ impl ReadingApp {
         self.echo_cfi.clear();
         self.echo_saved = false;
         self.echo_ai_rx = None;
+        self.echo_memories.clear();
+        self.reunion_dismissed = false;
+        self.footnote_term.clear();
+        self.footnote_dict = None;
+        self.footnote_ai_reply = None;
+        self.footnote_ai_rx = None;
+        self.tts_last_synced_segment = None;
         self.highlight_note_target = None;
         self.zen_reveal_top = false;
         self.zen_reveal_bottom = false;
@@ -1026,6 +1136,7 @@ impl Render for ReadingApp {
             && !self.busy
             && self.confirm.is_none()
             && self.quote_card.is_none()
+            && self.completion_book_id.is_none()
             && !self.focus_timer_picker_open
             && !self.mixer_open
             && !self.radio_drawer_open
@@ -1242,6 +1353,9 @@ impl Render for ReadingApp {
         root = root.child(main.relative());
         if let Some(draft) = &self.quote_card {
             root = root.child(self.quote_card_modal(draft, cx));
+        }
+        if let Some(book_id) = &self.completion_book_id {
+            root = root.child(self.completion_ceremony_modal(book_id, cx));
         }
         if self.focus_timer_picker_open {
             root = root.child(self.focus_timer_modal(snap.clone(), cx));

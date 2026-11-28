@@ -451,6 +451,7 @@ impl ReadingApp {
                     JournalFilter::Favorite => entry.favorite,
                     JournalFilter::Mood => entry.kind == "mood",
                     JournalFilter::Selection => entry.kind == "selection",
+                    JournalFilter::Ticket => entry.kind == "ticket",
                 };
                 if !kind_ok {
                     return false;
@@ -486,6 +487,7 @@ impl ReadingApp {
             ("已收藏", JournalFilter::Favorite),
             ("心情", JournalFilter::Mood),
             ("阅读回响", JournalFilter::Selection),
+            ("完读票根", JournalFilter::Ticket),
         ] {
             filter_bar = filter_bar.child(self.pill_button(
                 label,
@@ -496,6 +498,194 @@ impl ReadingApp {
             ));
         }
 
+        // Anti-anxiety Monthly Glow Calendar (zero streaks, zero penalties)
+        let (ym, year, month) = current_ym();
+        let monthly =
+            self.store
+                .monthly_reading_summary(&ym)
+                .unwrap_or(glow_core::MonthlyReadingSummary {
+                    year_month: ym.clone(),
+                    total_minutes: 0,
+                    active_days: 0,
+                    daily_minutes: vec![],
+                });
+        let total_days = days_in_month(year, month);
+        let mut day_cells = h_flex().gap_1p5().flex_wrap().items_center();
+        for day in 1..=total_days {
+            let key = format!("{year:04}-{month:02}-{day:02}");
+            let mins = monthly
+                .daily_minutes
+                .iter()
+                .find(|(d, _)| d == &key)
+                .map(|(_, m)| *m)
+                .unwrap_or(0);
+            let opacity = if mins >= 40 {
+                0.92
+            } else if mins >= 15 {
+                0.62
+            } else if mins > 0 {
+                0.34
+            } else {
+                0.08
+            };
+            day_cells = day_cells.child(
+                div()
+                    .w(px(22.))
+                    .h(px(22.))
+                    .rounded_md()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(if mins > 0 {
+                        rgb(hex(&t.accent)).opacity(opacity)
+                    } else {
+                        rgb(hex(&t.text)).opacity(0.06)
+                    })
+                    .border_1()
+                    .border_color(if mins > 0 {
+                        Hsla::from(rgb(hex(&t.accent)).opacity(0.45))
+                    } else {
+                        self.border_subtle()
+                    })
+                    .text_size(px(9.))
+                    .font_family(self.ui_font())
+                    .text_color(if mins >= 40 {
+                        rgb(hex(&t.paper))
+                    } else if mins > 0 {
+                        rgb(hex(&t.text))
+                    } else {
+                        rgb(hex(&t.muted)).opacity(0.65)
+                    })
+                    .child(format!("{day}")),
+            );
+        }
+        let calendar_card = v_flex()
+            .id("monthly-glow-calendar")
+            .p_4()
+            .gap_3()
+            .rounded_2xl()
+            .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.86 } else { 0.92 }))
+            .border_1()
+            .border_color(self.border_subtle())
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .font_family(self.display_font())
+                                    .child(format!("{year} 年 {month} 月 · 微光日历")),
+                            )
+                            .child(
+                                div()
+                                    .px_2p5()
+                                    .py_0p5()
+                                    .rounded_full()
+                                    .bg(rgb(hex(&t.accent)).opacity(0.14))
+                                    .text_size(px(10.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.accent)))
+                                    .child(format!(
+                                        "{} 个有微光的日子 · 共 {} 分钟",
+                                        monthly.active_days, monthly.total_minutes
+                                    )),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&t.muted)))
+                            .child("无连续打卡压力 · 留白的日子同样美好"),
+                    ),
+            )
+            .child(day_cells);
+
+        // Compact inline mood composer inside the unified Journal axis
+        let mut quick_moods = h_flex().gap_1p5().flex_wrap().items_center();
+        for m in echo::MOODS {
+            quick_moods = quick_moods.child(self.pill_button(
+                m,
+                None,
+                self.mood == *m,
+                Action::Mood((*m).into()),
+                cx,
+            ));
+        }
+        let inline_composer = v_flex()
+            .p_4()
+            .gap_3()
+            .rounded_2xl()
+            .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.86 } else { 0.92 }))
+            .border_1()
+            .border_color(self.border_subtle())
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .font_family(self.display_font())
+                            .child("随手记下此刻心绪"),
+                    )
+                    .child(quick_moods),
+            )
+            .child(
+                Textarea::new(&self.mood_input)
+                    .aria_label("手账此刻心绪")
+                    .w_full(),
+            )
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                self.button_with_icon(
+                                    if self.mood_rx.is_some() {
+                                        "正在写回响…"
+                                    } else {
+                                        "记入手账并收下微光"
+                                    },
+                                    IconName::MessageCircleHeart,
+                                    Action::SubmitMood,
+                                    cx,
+                                )
+                                .primary()
+                                .disabled(self.mood_rx.is_some()),
+                            )
+                            .child(self.button_with_icon(
+                                "4-7-8 呼吸室",
+                                IconName::Wind,
+                                Action::Page(Page::Mood),
+                                cx,
+                            )),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&t.muted)))
+                            .child("保存在本地 SQLite，随时可开启私密遮罩"),
+                    ),
+            );
+
+        let locked = self.store.state.journal_locked;
         let mut content = v_flex()
             .id("journal-scroll")
             .overflow_y_scroll()
@@ -512,7 +702,7 @@ impl ReadingApp {
                     .child(self.heading(
                         "LITTLE THINGS KEPT · 微光手账档案",
                         "那些被文字接住的时刻",
-                        "手账保存在这台电脑上，支持随时检索、导出 Markdown 或生成微光书摘卡。",
+                        "书摘、心绪与完读票根全部保存在这台电脑上，支持随时检索、私密遮罩与导出 Markdown。",
                     ))
                     .child(
                         h_flex()
@@ -536,6 +726,19 @@ impl ReadingApp {
                                         fav_count
                                     )),
                             )
+                            .child(
+                                self.button_with_icon(
+                                    if locked {
+                                        "解锁手账"
+                                    } else {
+                                        "私密遮罩"
+                                    },
+                                    IconName::Focus,
+                                    Action::ToggleJournalLock,
+                                    cx,
+                                )
+                                .toggled(locked),
+                            )
                             .child(self.button_with_icon(
                                 "导出 Markdown",
                                 IconName::Download,
@@ -549,7 +752,9 @@ impl ReadingApp {
                                 cx,
                             )),
                     ),
-            );
+            )
+            .child(calendar_card)
+            .child(inline_composer);
         if !self.store.state.journal.is_empty() {
             content = content.child(
                 h_flex()
@@ -627,7 +832,7 @@ impl ReadingApp {
                             .text_size(px(13.))
                             .font_family(self.ui_font())
                             .text_color(rgb(hex(&t.muted)))
-                            .child("下一次回响，会替你记住那个时刻。"),
+                            .child("下一次回响或完读票根，会替你记住那个时刻。"),
                     ),
             );
         } else if filtered.is_empty() {
@@ -699,7 +904,11 @@ impl ReadingApp {
                                 .text_size(px(10.5))
                                 .font_family(self.ui_font())
                                 .text_color(rgb(badge_text))
-                                .child(entry.mood.as_deref().unwrap_or("阅读回响").to_owned()),
+                                .child(if entry.kind == "ticket" {
+                                    "完读票根".to_owned()
+                                } else {
+                                    entry.mood.as_deref().unwrap_or("阅读回响").to_owned()
+                                }),
                         )
                         .child(
                             div()
@@ -708,7 +917,16 @@ impl ReadingApp {
                                 .text_color(rgb(hex(&t.muted)))
                                 .child(display_time(&entry.created_at)),
                         ),
-                )
+                );
+            if entry.kind == "ticket" {
+                bar = bar.child(self.button_with_icon(
+                    "保存票根 PNG",
+                    IconName::ImageDown,
+                    Action::SaveJournalTicketPng(entry.id.clone()),
+                    cx,
+                ));
+            }
+            bar = bar
                 .child(self.button_with_icon(
                     "生成书摘卡",
                     IconName::ImageDown,
@@ -756,6 +974,21 @@ impl ReadingApp {
                         })),
                 );
             }
+            let entry_body = if locked {
+                div()
+                    .p_5()
+                    .rounded_xl()
+                    .bg(rgb(hex(&t.background)).opacity(0.68))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .text_size(px(12.5))
+                    .font_family(self.ui_font())
+                    .text_color(rgb(hex(&t.muted)))
+                    .child("手账私密遮罩已开启 · 点击右上角「解锁手账」后阅读内容")
+                    .into_any_element()
+            } else {
+                self.echo_card(&entry.echo, &display_input, entry.kind == "selection", cx)
+            };
             content = content.child(
                 v_flex()
                     .id(SharedString::from(entry.id.clone()))
@@ -767,12 +1000,7 @@ impl ReadingApp {
                     .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.90 } else { 0.94 }))
                     .shadow_sm()
                     .child(bar)
-                    .child(self.echo_card(
-                        &entry.echo,
-                        &display_input,
-                        entry.kind == "selection",
-                        cx,
-                    )),
+                    .child(entry_body),
             );
         }
         content.into_any_element()

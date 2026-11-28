@@ -480,9 +480,24 @@ impl ReadingApp {
             .when(active, |this| this.bg(rgb(hex(&t.accent))).shadow_sm())
             .child(button)
     }
+    pub(super) fn effective_warm_filter(&self) -> bool {
+        self.store.state.warm_filter
+            || (self.store.state.daylight_auto && circadian_daylight_stage().1)
+    }
     pub(super) fn nav_button(
         &self,
         label: &str,
+        icon: IconName,
+        active: bool,
+        action: Action,
+        cx: &Context<Self>,
+    ) -> Div {
+        self.nav_button_with_selector(label, label, icon, active, action, cx)
+    }
+    pub(super) fn nav_button_with_selector(
+        &self,
+        label: &str,
+        selector: &str,
         icon: IconName,
         active: bool,
         action: Action,
@@ -518,8 +533,8 @@ impl ReadingApp {
             .toggled(active)
             .disabled(self.busy)
             .debug_selector({
-                let label = label.to_owned();
-                move || label.clone()
+                let selector = selector.to_owned();
+                move || selector.clone()
             })
             .on_click(cx.listener(move |this, _, window, cx| this.act(action.clone(), window, cx)));
         div()
@@ -722,6 +737,56 @@ pub(super) fn circadian_greeting() -> (&'static str, &'static str, &'static str,
 pub(super) fn today_ymd() -> String {
     let dt = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
     format!("{:04}-{:02}-{:02}", dt.year(), dt.month() as u8, dt.day())
+}
+
+pub(super) fn current_ym() -> (String, i32, u8) {
+    let dt = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+    let year = dt.year();
+    let month = dt.month() as u8;
+    (format!("{year:04}-{month:02}"), year, month)
+}
+
+pub(super) fn days_in_month(year: i32, month: u8) -> u8 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => 30,
+    }
+}
+
+/// Returns `(stage_label, should_enable_warm_evening_tint)` based on local clock hour.
+pub(super) fn circadian_daylight_stage() -> (&'static str, bool) {
+    let hour = time::OffsetDateTime::now_local()
+        .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+        .hour();
+    match hour {
+        5..=10 => ("晨光", false),
+        11..=16 => ("晴午", false),
+        17..=20 => ("暮色", true),
+        _ => ("深夜", true),
+    }
+}
+
+/// Gentle, zero-tracking circadian quiet-presence number for optional ambient companionship.
+pub(super) fn ambient_presence_count() -> u32 {
+    let dt = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+    let hour = dt.hour() as u32;
+    let minute_bucket = (dt.minute() as u32) / 5;
+    let base = match hour {
+        21..=23 | 0..=1 => 46,
+        18..=20 => 34,
+        13..=17 => 26,
+        7..=12 => 22,
+        _ => 14,
+    };
+    base + ((hour * 7 + minute_bucket * 3) % 13)
 }
 
 pub(super) fn format_journal_markdown(entries: &[JournalEntry]) -> String {

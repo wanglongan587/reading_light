@@ -22,13 +22,13 @@ impl ReadingApp {
             .iter()
             .enumerate()
             .filter(|(_, b)| {
+                let status = b.effective_status();
                 let status_ok = match self.shelf_filter {
                     ShelfFilter::All => true,
-                    ShelfFilter::Finished => b.progress.is_some_and(|p| p >= 0.95),
-                    ShelfFilter::Reading => {
-                        b.location.is_some() && !b.progress.is_some_and(|p| p >= 0.95)
-                    }
-                    ShelfFilter::Unread => b.location.is_none(),
+                    ShelfFilter::Finished => status == "finished",
+                    ShelfFilter::Reading => status == "reading",
+                    ShelfFilter::Unread => status == "want",
+                    ShelfFilter::Paused => status == "paused",
                 };
                 if !status_ok {
                     return false;
@@ -36,18 +36,27 @@ impl ReadingApp {
                 if query.is_empty() {
                     return true;
                 }
-                b.title.to_lowercase().contains(&query) || b.author.to_lowercase().contains(&query)
+                b.title.to_lowercase().contains(&query)
+                    || b.author.to_lowercase().contains(&query)
+                    || b.tags.iter().any(|tag| tag.to_lowercase().contains(&query))
             })
             .collect();
         let mut books = h_flex().flex_wrap().gap_5().items_start();
         for (i, b) in filtered_books.iter().copied() {
             let colors = cover_colors;
-            let reading_label = if let Some(progress) = b.progress {
-                format!("已读 {:.0}%", progress * 100.0)
-            } else if b.location.is_some() {
-                "阅读中".to_owned()
+            let status = b.effective_status();
+            let reading_label = if let Some(no) = b.completion_ticket_no {
+                format!("已完读 · NO.{no:04}")
+            } else if status == "paused" {
+                "已搁置".to_owned()
+            } else if let Some(progress) = b.progress {
+                format!(
+                    "{} · {:.0}%",
+                    glow_core::Book::status_label(status),
+                    progress * 100.0
+                )
             } else {
-                "未开始".to_owned()
+                glow_core::Book::status_label(status).to_owned()
             };
             let format_badge = b.format.to_uppercase();
             let cover = if let Some(name) = &b.cover {
@@ -327,7 +336,40 @@ impl ReadingApp {
                             Action::Remove(b.id.clone()),
                             cx,
                         )),
-                );
+                )
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .justify_between()
+                        .pt_1()
+                        .border_t_1()
+                        .border_color(self.border_subtle())
+                        .child(self.button(
+                            glow_core::Book::status_label(status),
+                            Action::CycleBookStatus(b.id.clone()),
+                            cx,
+                        ))
+                        .child(self.button("编辑", Action::EditBookMeta(b.id.clone()), cx))
+                        .child(self.button("完读", Action::OpenCompletionModal(b.id.clone()), cx)),
+                )
+                .when(!b.tags.is_empty(), |card_el| {
+                    let mut tag_row = h_flex().gap_1().flex_wrap();
+                    for tag in b.tags.iter().take(3) {
+                        tag_row = tag_row.child(
+                            div()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_full()
+                                .bg(rgb(hex(&t.accent)).opacity(0.11))
+                                .text_size(px(9.5))
+                                .font_family(self.ui_font())
+                                .text_color(rgb(hex(&t.accent)))
+                                .child(format!("#{tag}")),
+                        );
+                    }
+                    card_el.child(tag_row)
+                });
             books = books.child(card);
         }
         books = books.child(
@@ -710,8 +752,9 @@ impl ReadingApp {
         for (label, filter) in [
             ("全部", ShelfFilter::All),
             ("在读", ShelfFilter::Reading),
-            ("未开始", ShelfFilter::Unread),
-            ("已读完", ShelfFilter::Finished),
+            ("想读", ShelfFilter::Unread),
+            ("已完读", ShelfFilter::Finished),
+            ("搁置", ShelfFilter::Paused),
         ] {
             let active = self.shelf_filter == filter;
             filter_pills = filter_pills.child(self.pill_button(
@@ -722,12 +765,135 @@ impl ReadingApp {
                 cx,
             ));
         }
+        let mut study_tabs = h_flex().gap_1p5().items_center().flex_wrap();
+        for (label, tab, icon) in [
+            ("我的书架", ShelfTab::Library, IconName::LibraryBig),
+            ("微光公版馆", ShelfTab::Catalog, IconName::BookOpen),
+            ("OPDS 书源", ShelfTab::Opds, IconName::Download),
+        ] {
+            study_tabs = study_tabs.child(self.pill_button(
+                label,
+                Some(icon),
+                self.shelf_tab == tab,
+                Action::ShelfTab(tab),
+                cx,
+            ));
+        }
         let today_mins = if self.store.state.reading_minutes_date.as_deref() == Some(&today_ymd()) {
             self.store.state.reading_minutes_today
         } else {
             0
         };
-        v_flex()
+        // Mood Book Picker strip ("此刻想读什么？")
+        let mut mood_chips = h_flex().gap_1p5().items_center().flex_wrap();
+        for mood in ["睡前", "疲惫", "独处", "迷茫", "希望"] {
+            mood_chips = mood_chips.child(self.pill_button(
+                mood,
+                None,
+                self.shelf_mood_pick == mood,
+                Action::ShelfMoodPick(mood.into()),
+                cx,
+            ));
+        }
+        let mut mood_picks = h_flex().gap_3().flex_wrap().items_stretch();
+        for entry in catalog::recommend_for_mood(&self.shelf_mood_pick)
+            .into_iter()
+            .take(3)
+        {
+            mood_picks = mood_picks.child(
+                v_flex()
+                    .w(px(274.))
+                    .p_3p5()
+                    .gap_1p5()
+                    .rounded_xl()
+                    .bg(rgb(hex(&t.background)).opacity(if is_dark { 0.62 } else { 0.72 }))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .font_family(self.display_font())
+                                    .child(format!("《{}》", entry.title)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(9.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.accent)))
+                                    .child(format!("约 {} 分钟", entry.minutes)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .font_family(self.ui_font())
+                            .line_height(relative(1.5))
+                            .text_color(rgb(hex(&t.muted)))
+                            .child(entry.tagline),
+                    )
+                    .child(
+                        h_flex()
+                            .pt_1()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                self.button_with_icon(
+                                    "翻开阅读",
+                                    IconName::BookOpen,
+                                    Action::InstallCatalogBook(entry.id.into(), true),
+                                    cx,
+                                )
+                                .primary(),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child(entry.author),
+                            ),
+                    ),
+            );
+        }
+        let mood_picker_card = v_flex()
+            .p_4()
+            .gap_3()
+            .rounded_2xl()
+            .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.86 } else { 0.92 }))
+            .border_1()
+            .border_color(self.border_subtle())
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                Icon::new(IconName::Sparkles)
+                                    .size(px(14.))
+                                    .text_color(rgb(hex(&t.accent))),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .font_family(self.display_font())
+                                    .child("按此刻心绪，挑一段公版微光"),
+                            ),
+                    )
+                    .child(mood_chips),
+            )
+            .child(mood_picks);
+
+        let mut root = v_flex()
             .id("shelf-scroll")
             .overflow_y_scroll()
             .size_full()
@@ -744,41 +910,13 @@ impl ReadingApp {
                     .gap_3()
                     .child(
                         v_flex()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_size(px(10.))
-                                    .font_family(self.ui_font())
-                                    .text_color(rgb(hex(&t.accent)))
-                                    .child("YOUR QUIET SHELF · 私人藏书架"),
-                            )
+                            .gap_2()
                             .child(
                                 h_flex()
                                     .gap_2p5()
                                     .items_center()
-                                    .child(
-                                        div()
-                                            .text_size(px(22.))
-                                            .font_family(self.display_font())
-                                            .child("我的书架"),
-                                    )
-                                    .child(
-                                        div()
-                                            .px_2p5()
-                                            .py_0p5()
-                                            .rounded_full()
-                                            .bg(rgb(hex(&t.accent)).opacity(0.14))
-                                            .border_1()
-                                            .border_color(rgb(hex(&t.accent)).opacity(0.28))
-                                            .text_size(px(11.))
-                                            .font_family(self.ui_font())
-                                            .text_color(rgb(hex(&t.accent)))
-                                            .child(format!(
-                                                "{} / {} 本",
-                                                filtered_books.len(),
-                                                self.store.state.books.len()
-                                            )),
-                                    )
+                                    .flex_wrap()
+                                    .child(study_tabs)
                                     .when(today_mins > 0, |this| {
                                         this.child(
                                             div()
@@ -794,22 +932,388 @@ impl ReadingApp {
                                                 .child(format!("今日静读 {today_mins} 分钟")),
                                         )
                                     }),
+                            )
+                            .when(self.shelf_tab == ShelfTab::Library, |this| {
+                                this.child(
+                                    h_flex()
+                                        .gap_2p5()
+                                        .items_center()
+                                        .child(
+                                            div()
+                                                .text_size(px(20.))
+                                                .font_family(self.display_font())
+                                                .child("我的藏书"),
+                                        )
+                                        .child(
+                                            div()
+                                                .px_2p5()
+                                                .py_0p5()
+                                                .rounded_full()
+                                                .bg(rgb(hex(&t.accent)).opacity(0.14))
+                                                .border_1()
+                                                .border_color(rgb(hex(&t.accent)).opacity(0.28))
+                                                .text_size(px(11.))
+                                                .font_family(self.ui_font())
+                                                .text_color(rgb(hex(&t.accent)))
+                                                .child(format!(
+                                                    "{} / {} 本",
+                                                    filtered_books.len(),
+                                                    self.store.state.books.len()
+                                                )),
+                                        ),
+                                )
+                            }),
+                    )
+                    .when(self.shelf_tab == ShelfTab::Library, |this| {
+                        this.child(
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .flex_wrap()
+                                .child(filter_pills)
+                                .child(
+                                    div()
+                                        .w(px(220.))
+                                        .child(Input::new(&self.shelf_search).w_full()),
+                                ),
+                        )
+                    }),
+            );
+
+        // Optional inline metadata editor card
+        if self.shelf_tab == ShelfTab::Library && self.editing_book_id.is_some() {
+            root = root.child(
+                v_flex()
+                    .p_4()
+                    .gap_3()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&t.paper)).opacity(0.96))
+                    .border_1()
+                    .border_color(rgb(hex(&t.accent)).opacity(0.45))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .font_family(self.display_font())
+                            .child("编辑书目信息与书单标签"),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_3()
+                            .flex_wrap()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(200.))
+                                    .child(Input::new(&self.book_meta_title_input).w_full()),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(160.))
+                                    .child(Input::new(&self.book_meta_author_input).w_full()),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(220.))
+                                    .child(Input::new(&self.book_meta_tags_input).w_full()),
                             ),
                     )
                     .child(
                         h_flex()
                             .gap_2()
-                            .items_center()
-                            .flex_wrap()
-                            .child(filter_pills)
+                            .child(self.button("保存修改", Action::SaveBookMeta, cx).primary())
+                            .child(self.button("取消", Action::CancelBookMeta, cx)),
+                    ),
+            );
+        }
+
+        match self.shelf_tab {
+            ShelfTab::Library => {
+                root = root.child(mood_picker_card).child(books);
+            }
+            ShelfTab::Catalog => {
+                root = root.child(self.shelf_catalog_view(cx));
+            }
+            ShelfTab::Opds => {
+                root = root.child(self.shelf_opds_view(cx));
+            }
+        }
+        root.into_any_element()
+    }
+
+    fn shelf_catalog_view(&self, cx: &Context<Self>) -> AnyElement {
+        let t = self.theme();
+        let is_dark = self.is_dark();
+        let mut grid = h_flex().flex_wrap().gap_4().items_stretch();
+        for entry in catalog::all_books() {
+            let accent_col = hex(entry.accent_hex);
+            let mut mood_row = h_flex().gap_1().flex_wrap();
+            for m in entry.moods {
+                mood_row = mood_row.child(
+                    div()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_full()
+                        .bg(rgb(accent_col).opacity(0.14))
+                        .text_size(px(9.5))
+                        .font_family(self.ui_font())
+                        .text_color(rgb(accent_col))
+                        .child(*m),
+                );
+            }
+            grid = grid.child(
+                v_flex()
+                    .w(px(292.))
+                    .p_5()
+                    .gap_3()
+                    .justify_between()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.90 } else { 0.95 }))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .border_t_4()
+                    .shadow_sm()
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_size(px(10.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(accent_col))
+                                            .child(entry.era),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(10.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&t.muted)))
+                                            .child(format!("约 {} 分钟", entry.minutes)),
+                                    ),
+                            )
                             .child(
                                 div()
-                                    .w(px(220.))
-                                    .child(Input::new(&self.shelf_search).w_full()),
+                                    .text_size(px(18.))
+                                    .font_family(self.display_font())
+                                    .child(format!("《{}》", entry.title)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child(entry.author),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .font_family(self.ui_font())
+                                    .line_height(relative(1.6))
+                                    .text_color(rgb(hex(&t.text)).opacity(0.86))
+                                    .child(entry.tagline),
+                            )
+                            .child(mood_row),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .pt_2()
+                            .child(
+                                self.button_with_icon(
+                                    "收入并翻开",
+                                    IconName::BookOpen,
+                                    Action::InstallCatalogBook(entry.id.into(), true),
+                                    cx,
+                                )
+                                .primary(),
+                            )
+                            .child(self.button_with_icon(
+                                "仅收入书架",
+                                IconName::Plus,
+                                Action::InstallCatalogBook(entry.id.into(), false),
+                                cx,
+                            )),
+                    ),
+            );
+        }
+        v_flex()
+            .gap_4()
+            .child(
+                div()
+                    .text_size(px(12.5))
+                    .font_family(self.ui_font())
+                    .text_color(rgb(hex(&t.muted)))
+                    .child("微光公版馆全部内置精排公版经典与原创散文，完全离线可用，打开即可直接划线、听书与 AI 共读。"),
+            )
+            .child(grid)
+            .into_any_element()
+    }
+
+    fn shelf_opds_view(&self, cx: &Context<Self>) -> AnyElement {
+        let t = self.theme();
+        let is_dark = self.is_dark();
+        let mut feeds_bar = h_flex().gap_2().flex_wrap().items_center();
+        for preset in opds::preset_feeds() {
+            feeds_bar = feeds_bar.child(self.button_with_icon(
+                &preset.name,
+                IconName::Download,
+                Action::OpdsFetchFeed(preset.url),
+                cx,
+            ));
+        }
+        for saved in &self.store.state.opds_feeds {
+            feeds_bar = feeds_bar.child(
+                h_flex()
+                    .gap_1()
+                    .items_center()
+                    .px_2()
+                    .py_1()
+                    .rounded_xl()
+                    .bg(rgb(hex(&t.background)).opacity(0.65))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .child(self.button(&saved.name, Action::OpdsFetchFeed(saved.url.clone()), cx))
+                    .child(self.button_with_icon(
+                        "移除",
+                        IconName::X,
+                        Action::OpdsRemoveFeed(saved.id.clone()),
+                        cx,
+                    )),
+            );
+        }
+
+        let mut view = v_flex()
+            .gap_4()
+            .child(
+                v_flex()
+                    .p_5()
+                    .gap_3()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.88 } else { 0.94 }))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .child(
+                        div()
+                            .text_size(px(15.))
+                            .font_family(self.display_font())
+                            .child("连接 OPDS 1.2 开放书源（Calibre / Komga / Kavita / 公版库）"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&t.muted)))
+                            .child("输入你的私人书库或开放公版 OPDS 地址，即可直接浏览目录并一键下载 EPUB 至本地书架。"),
+                    )
+                    .child(feeds_bar)
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .flex_wrap()
+                            .items_center()
+                            .child(
+                                div()
+                                    .w(px(200.))
+                                    .child(Input::new(&self.opds_name_input).w_full()),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(260.))
+                                    .child(Input::new(&self.opds_url_input).w_full()),
+                            )
+                            .child(
+                                self.button_with_icon(
+                                    "添加书源",
+                                    IconName::Plus,
+                                    Action::OpdsAddFeed,
+                                    cx,
+                                )
+                                .primary(),
                             ),
                     ),
-            )
-            .child(books)
-            .into_any_element()
+            );
+
+        if !self.opds_entries.is_empty() {
+            let mut list = v_flex().gap_2p5();
+            for (idx, entry) in self.opds_entries.iter().enumerate() {
+                let is_book = entry.epub_url.is_some();
+                list = list.child(
+                    h_flex()
+                        .p_4()
+                        .gap_3()
+                        .justify_between()
+                        .items_center()
+                        .rounded_xl()
+                        .bg(rgb(hex(&t.paper)).opacity(0.92))
+                        .border_1()
+                        .border_color(self.border_subtle())
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_size(px(14.5))
+                                        .font_family(self.display_font())
+                                        .child(entry.title.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .font_family(self.ui_font())
+                                        .text_color(rgb(hex(&t.muted)))
+                                        .child(if entry.summary.is_empty() {
+                                            entry.author.clone()
+                                        } else {
+                                            format!("{} · {}", entry.author, entry.summary)
+                                        }),
+                                ),
+                        )
+                        .child(
+                            self.button_with_icon(
+                                if is_book {
+                                    "下载收入书架"
+                                } else {
+                                    "进入分类"
+                                },
+                                if is_book {
+                                    IconName::Download
+                                } else {
+                                    IconName::ChevronRight
+                                },
+                                Action::OpdsImportEntry(idx),
+                                cx,
+                            )
+                            .primary()
+                            .disabled(
+                                self.opds_fetch_rx.is_some() || self.opds_import_rx.is_some(),
+                            ),
+                        ),
+                );
+            }
+            view = view.child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .font_family(self.display_font())
+                            .child(format!(
+                                "当前目录：{}（{} 条）",
+                                self.opds_active_title,
+                                self.opds_entries.len()
+                            )),
+                    )
+                    .child(list),
+            );
+        }
+        view.into_any_element()
     }
 }

@@ -1415,3 +1415,206 @@ fn radio_station_switching_has_zero_layout_jitter_and_dial_is_continuously_dragg
     });
     assert!(cx.debug_bounds("sidebar-radio-mini").is_some());
 }
+
+#[gpui::test]
+fn phase1_onboarding_catalog_shelf_lifecycle_and_opds_work_end_to_end(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().into()).unwrap();
+    let (app, cx) = cx.add_window_view(|window, cx| test_app(store, window, cx));
+
+    // 1. 3-step 30-second healing onboarding ritual
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    app.update_in(cx, |app, window, cx| {
+        assert!(!app.store.state.privacy_seen);
+        assert_eq!(app.onboarding_step, 0);
+        app.act(Action::OnboardingStep(1), window, cx);
+        assert_eq!(app.onboarding_step, 1);
+        app.act(Action::OnboardingStep(2), window, cx);
+        assert_eq!(app.onboarding_step, 2);
+        app.act(Action::Privacy, window, cx);
+        assert!(app.store.state.privacy_seen);
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // 2. Built-in 微光公版馆 & Mood Book Picker
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::ShelfMoodPick("迷茫".into()), window, cx);
+        app.act(Action::ShelfTab(ShelfTab::Catalog), window, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    app.update_in(cx, |app, window, cx| {
+        app.act(
+            Action::InstallCatalogBook("chibi-sushi".into(), false),
+            window,
+            cx,
+        );
+        assert_eq!(app.shelf_tab, ShelfTab::Library);
+        assert_eq!(app.store.state.books.len(), 1);
+        assert_eq!(app.store.state.books[0].title, "赤壁夜游集");
+    });
+
+    // 3. Book status cycle + inline metadata & tags editing
+    let book_id = app.read_with(cx, |app, _| app.store.state.books[0].id.clone());
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::CycleBookStatus(book_id.clone()), window, cx);
+        assert_eq!(app.store.state.books[0].effective_status(), "reading");
+        app.act(Action::EditBookMeta(book_id.clone()), window, cx);
+        assert_eq!(app.editing_book_id.as_deref(), Some(book_id.as_str()));
+        app.book_meta_title_input
+            .update(cx, |s, cx| s.set_value("赤壁夜游集 · 典藏", window, cx));
+        app.book_meta_tags_input
+            .update(cx, |s, cx| s.set_value("宋词, 睡前必读", window, cx));
+        app.act(Action::SaveBookMeta, window, cx);
+        assert!(app.editing_book_id.is_none());
+        assert_eq!(app.store.state.books[0].title, "赤壁夜游集 · 典藏");
+        assert_eq!(app.store.state.books[0].tags, vec!["宋词", "睡前必读"]);
+    });
+
+    // 4. OPDS 1.2 feed management & rendering
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::ShelfTab(ShelfTab::Opds), window, cx);
+        app.opds_name_input
+            .update(cx, |s, cx| s.set_value("Calibre 私人库", window, cx));
+        app.opds_url_input.update(cx, |s, cx| {
+            s.set_value("https://books.example.com/opds", window, cx)
+        });
+        app.act(Action::OpdsAddFeed, window, cx);
+        assert_eq!(app.store.state.opds_feeds.len(), 1);
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // 5. Circadian daylight & quiet ambient presence toggles
+    app.update_in(cx, |app, window, cx| {
+        assert!(!app.store.state.daylight_auto);
+        app.act(Action::ToggleDaylightAuto, window, cx);
+        assert!(app.store.state.daylight_auto);
+        assert!(app.store.state.show_ambient_presence);
+        app.act(Action::ToggleAmbientPresence, window, cx);
+        assert!(!app.store.state.show_ambient_presence);
+    });
+}
+
+#[gpui::test]
+fn phase1_footnote_cross_book_fts5_completion_ceremony_and_journal_lock_work(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().into()).unwrap();
+    store.state.privacy_seen = true;
+    let book1 = store.install_catalog_book("taohuayuan").unwrap();
+    let book2 = store.install_catalog_book("chibi-sushi").unwrap();
+    // Seed a highlight in Book 1 containing "清风" & "桃花" so Book 2 can trigger cross-book FTS5 recall
+    store
+        .add_highlight_styled(
+            &book1,
+            "清风吹过落英缤纷的桃花林，忽然豁然开朗。".into(),
+            "epubcfi(/6/2!/4/2,/1:0,/1:12)".into(),
+            Some("amber".into()),
+            Some("去年秋天在林间散步时划下的句子".into()),
+        )
+        .unwrap();
+    let today = today_ymd();
+    store
+        .record_reading_session(Some(book2.clone()), 28, &today, Some("forest".into()))
+        .unwrap();
+
+    let (app, cx) = cx.add_window_view(|window, cx| test_app(store, window, cx));
+    app.update_in(cx, |app, _, cx| {
+        app.active_book = Some(book2.clone());
+        app.page = Page::Reader;
+        app.opened = true;
+        if let Some(b) = app.store.state.books.iter_mut().find(|b| b.id == book2) {
+            b.progress = Some(0.35);
+            b.chapter = Some("前赤壁赋".into());
+        }
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // 1. Reunion spoiler-free banner dismisses cleanly
+    app.update_in(cx, |app, window, cx| {
+        assert!(!app.reunion_dismissed);
+        app.act(Action::DismissReunion, window, cx);
+        assert!(app.reunion_dismissed);
+    });
+
+    // 2. Paper-margin offline footnote lookup via WebView event
+    app.update_in(cx, |app, _, cx| {
+        app.event(
+            ReaderEvent {
+                version: 1,
+                session: app.session.clone(),
+                request_id: 10,
+                kind: "footnote".into(),
+                text: "豁然开朗。".into(),
+                cfi: String::new(),
+                color: String::new(),
+                open_note: false,
+                entries: vec![],
+                progress: None,
+                chapter: String::new(),
+                results: vec![],
+            },
+            cx,
+        );
+        assert_eq!(app.drawer, "footnote");
+        assert_eq!(app.footnote_dict.unwrap().headword, "豁然开朗");
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // 3. Cross-book FTS5 personal memory recall on echo event
+    app.update_in(cx, |app, _, cx| {
+        app.event(
+            ReaderEvent {
+                version: 1,
+                session: app.session.clone(),
+                request_id: 11,
+                kind: "echo".into(),
+                text: "清风徐来，水波不兴。".into(),
+                cfi: "epubcfi(/6/2!/4/4,/1:0,/1:8)".into(),
+                color: String::new(),
+                open_note: false,
+                entries: vec![],
+                progress: None,
+                chapter: String::new(),
+                results: vec![],
+            },
+            cx,
+        );
+        assert_eq!(app.drawer, "echo");
+        assert!(
+            !app.echo_memories.is_empty(),
+            "should recall Book 1's highlight via local SQLite FTS5"
+        );
+        assert_eq!(app.echo_memories[0].book_title, "归园田居与桃花源");
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // 4. Completion Ceremony modal -> archive collectible ticket stub to Journal
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::OpenCompletionModal(book2.clone()), window, cx);
+        assert_eq!(app.completion_book_id.as_deref(), Some(book2.as_str()));
+        assert!(app.completion_draft_letter.contains("赤壁夜游集"));
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::ConfirmCompleteBook, window, cx);
+        app.act(Action::CloseCompletionModal, window, cx);
+        assert!(app.completion_book_id.is_none());
+        assert_eq!(app.store.state.journal[0].kind, "ticket");
+    });
+
+    // 5. Unified Journal view: monthly glow calendar + ticket filter + privacy lock
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::Page(Page::Journal), window, cx);
+        app.act(Action::JournalFilter(JournalFilter::Ticket), window, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::ToggleJournalLock, window, cx);
+        assert!(app.store.state.journal_locked);
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+}

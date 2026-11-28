@@ -49,7 +49,9 @@ impl ReadingApp {
             cx.notify();
         }
         if let Some(started) = self.focus_timer_started {
-            if started.elapsed().as_secs() >= self.focus_timer_total_secs as u64 {
+            let elapsed_secs = started.elapsed().as_secs();
+            let total_secs = self.focus_timer_total_secs as u64;
+            if elapsed_secs >= total_secs {
                 self.focus_timer_started = None;
                 let mins = (self.focus_timer_total_secs / 60).max(1);
                 let today = today_ymd();
@@ -64,13 +66,33 @@ impl ReadingApp {
                 self.notice = Some(format!(
                     "棱镜喵：静读光瓶已蓄满 {mins} 分钟，今天共静心阅读 {total_today} 分钟。"
                 ));
-                if self.store.state.tts.sleep_with_timer && self.tts_status.active {
-                    if let Some(player) = &self.tts_player {
+                if self.store.state.tts.sleep_with_timer {
+                    if self.tts_status.active
+                        && let Some(player) = &self.tts_player
+                    {
                         player.stop();
+                        player.set_volume(1.0);
+                    }
+                    if self.audio.is_some() {
+                        self.stop_audio_smoothly();
                     }
                     self.notice = Some(format!(
-                        "棱镜喵：静读光瓶已蓄满 {mins} 分钟，并已轻声停止听书，晚安。"
+                        "棱镜喵：静读光瓶已蓄满 {mins} 分钟，声音已轻声渐弱淡出，晚安。"
                     ));
+                }
+            } else if self.store.state.tts.sleep_with_timer {
+                let remaining = total_secs.saturating_sub(elapsed_secs);
+                if remaining <= 60 {
+                    let fade = (remaining as f32 / 60.0).clamp(0.08, 1.0);
+                    if let Some(player) = &self.tts_player
+                        && self.tts_status.active
+                    {
+                        player.set_volume(fade);
+                    }
+                    if let Some((_, sink, _)) = &self.audio {
+                        let base = self.theme().volume.clamp(0.05, 1.0);
+                        sink.set_volume((base * fade).clamp(0.02, 1.0));
+                    }
                 }
             }
             cx.notify();
@@ -232,6 +254,15 @@ impl ReadingApp {
             }
             "echo" => {
                 let result = echo::respond(&event.text, None);
+                let normalized_input = event.text.trim().to_owned();
+                self.echo_memories = self
+                    .store
+                    .recall_related_memories(&normalized_input, 6)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|hit| hit.excerpt.trim() != normalized_input)
+                    .take(3)
+                    .collect();
                 self.echo_input = event.text;
                 self.echo_cfi = event.cfi;
                 self.echo = Some(result);
@@ -239,6 +270,14 @@ impl ReadingApp {
                 self.echo_ai_rx = None;
                 self.drawer = "echo".into();
                 self.spoilers.clear();
+            }
+            "footnote" => {
+                let term = event.text.trim().to_owned();
+                self.footnote_dict = dictionary::lookup(&term);
+                self.footnote_term = term;
+                self.footnote_ai_reply = None;
+                self.footnote_ai_rx = None;
+                self.drawer = "footnote".into();
             }
             "highlight" => {
                 let Some(book_id) = self.active_book.clone() else {
@@ -391,6 +430,23 @@ impl ReadingApp {
     ) -> anyhow::Result<()> {
         match action {
             Action::Page(page) => {
+                if page == Page::Reader && self.active_book.is_none() {
+                    let target = self
+                        .store
+                        .state
+                        .last_book
+                        .clone()
+                        .filter(|id| self.store.state.books.iter().any(|b| &b.id == id))
+                        .or_else(|| self.store.state.books.first().map(|b| b.id.clone()));
+                    if let Some(book_id) = target {
+                        self.open(&book_id, window, cx)?;
+                        return Ok(());
+                    }
+                    self.page = Page::Shelf;
+                    self.shelf_tab = ShelfTab::Catalog;
+                    self.notice = Some("书架上还没有书，从微光公版馆挑一本翻开吧。".into());
+                    return Ok(());
+                }
                 let was_previewing = self.preview.is_some();
                 let entering_radio = page == Page::Radio && self.page != Page::Radio;
                 self.page = page.clone();
@@ -741,17 +797,19 @@ impl ReadingApp {
                         != (mood::generate_passage as *const () as usize);
                 let ai_settings = self.store.state.ai.clone();
                 let secrets = self.store.load_secrets();
+                let local_memories = self.echo_memories.clone();
                 let (sender, receiver) = mpsc::channel();
                 self.echo_ai_rx = Some(receiver);
                 std::thread::spawn(move || {
                     let generated = if use_custom {
                         worker(&passage, &book_title)
                     } else {
-                        mood::generate_passage_with_settings(
+                        mood::generate_passage_with_memories(
                             &ai_settings,
                             &secrets,
                             &passage,
                             &book_title,
+                            &local_memories,
                         )
                     };
                     let outcome = generated.map(|result| PassageGenerated {

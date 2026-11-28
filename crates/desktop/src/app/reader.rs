@@ -531,6 +531,14 @@ impl ReadingApp {
                     .toggled(self.drawer == "type"),
             )
             .child(self.button_with_icon("留下书签", IconName::Bookmark, Action::Bookmark, cx));
+        if let Some(active_id) = self.active_book.clone() {
+            bottom = bottom.child(self.button_with_icon(
+                "完读仪式",
+                IconName::Sparkles,
+                Action::OpenCompletionModal(active_id),
+                cx,
+            ));
+        }
         if book.is_some_and(|b| b.format == "txt") {
             bottom = bottom
                 .child(
@@ -573,6 +581,91 @@ impl ReadingApp {
                     )),
             );
         }
+        // Spoiler-free reunion welcome strip when returning to a book already in progress
+        if show_top
+            && !self.reunion_dismissed
+            && let Some(active_book) = book
+            && active_book.progress.unwrap_or(0.0) >= 0.02
+            && active_book.progress.unwrap_or(0.0) < 0.99
+        {
+            let pct = (active_book.progress.unwrap_or(0.0) * 100.0).round() as u32;
+            let reunion_hint = active_book
+                .companion
+                .as_ref()
+                .map(|c| c.resume_moment.clone())
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| {
+                    active_book.highlights.last().map(|h| {
+                        format!(
+                            "上次留下的句子：「{}」",
+                            h.text.chars().take(38).collect::<String>()
+                        )
+                    })
+                })
+                .unwrap_or_else(|| {
+                    format!(
+                        "上次读至 {}（已读 {pct}%），点击右侧可 3 秒唤醒防剧透前情。",
+                        chapter.unwrap_or("上次停下的页面")
+                    )
+                });
+            stage = stage.child(
+                h_flex()
+                    .id("reunion-banner")
+                    .px_5()
+                    .py_2()
+                    .gap_3()
+                    .items_center()
+                    .justify_between()
+                    .bg(rgb(hex(&t.accent)).opacity(if is_dark { 0.14 } else { 0.09 }))
+                    .border_b_1()
+                    .border_color(rgb(hex(&t.accent)).opacity(0.24))
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_full()
+                                    .bg(rgb(hex(&t.accent)).opacity(0.18))
+                                    .text_size(px(9.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.accent)))
+                                    .child("久别重逢 · 防剧透"),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(px(11.5))
+                                    .font_family(self.ui_font())
+                                    .text_ellipsis()
+                                    .text_color(rgb(hex(&t.text)).opacity(0.88))
+                                    .child(reunion_hint),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .child(self.button_with_icon(
+                                "前情唤醒",
+                                IconName::WandSparkles,
+                                Action::ToggleCompanion,
+                                cx,
+                            ))
+                            .child(self.button_with_icon(
+                                "收起提示",
+                                IconName::X,
+                                Action::DismissReunion,
+                                cx,
+                            )),
+                    ),
+            );
+        }
         stage = stage.child(body);
         if show_bottom {
             stage = stage.child(bottom);
@@ -584,7 +677,8 @@ impl ReadingApp {
         let t = self.theme();
         let title = match self.drawer.as_str() {
             "companion" => "防剧透 AI 共读",
-            "tts" => "微光神经听书",
+            "tts" => "微光双轨听书",
+            "footnote" => "纸边注脚",
             "toc" => "沿着目录走",
             "search" => "在书里找一句话",
             "highlights" => "划过的地方",
@@ -594,7 +688,8 @@ impl ReadingApp {
         };
         let kicker = match self.drawer.as_str() {
             "companion" => "SPOILER-FREE AI · 前情提要与人物图谱",
-            "tts" => "EDGE NEURAL AUDIOBOOK · 朗读伴听",
+            "tts" => "DUAL-TRACK AUDIOBOOK · 双轨朗读伴听",
+            "footnote" => "PAPER-MARGIN FOOTNOTE · 离线词典与防剧透释义",
             "toc" => "IN THIS BOOK · 章节导航",
             "search" => "FIND THE WORDS · 全书检索",
             "highlights" => "LINES WORTH KEEPING · 划线",
@@ -634,6 +729,9 @@ impl ReadingApp {
             }
             "tts" => {
                 content = content.child(self.drawer_tts(cx));
+            }
+            "footnote" => {
+                content = content.child(self.drawer_footnote(cx));
             }
             "toc" => {
                 if self.toc.is_empty() {
@@ -1367,66 +1465,150 @@ impl ReadingApp {
                         .child(div().size(px(11.)).rounded_full().bg(rgb(chex))),
                 );
             }
+            box_el = box_el.child(
+                v_flex()
+                    .gap_2()
+                    .p_2p5()
+                    .rounded_xl()
+                    .bg(rgb(hex(&t.background)).opacity(0.55))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .flex_wrap()
+                            .items_center()
+                            .child(
+                                self.button_with_icon(
+                                    if already_kept {
+                                        "已留下划线"
+                                    } else {
+                                        "留下划线"
+                                    },
+                                    IconName::Feather,
+                                    Action::Highlight,
+                                    cx,
+                                )
+                                .disabled(already_kept),
+                            )
+                            .child(color_row),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .flex_wrap()
+                            .child(
+                                self.button_with_icon(
+                                    if self.echo_saved {
+                                        "已存入日记"
+                                    } else {
+                                        "存入日记"
+                                    },
+                                    IconName::NotebookPen,
+                                    Action::SaveEchoToJournal,
+                                    cx,
+                                )
+                                .disabled(self.echo_saved),
+                            )
+                            .child(self.button_with_icon(
+                                "书摘卡",
+                                IconName::ImageDown,
+                                Action::OpenQuoteCard(Box::new(card_draft)),
+                                cx,
+                            ))
+                            .child(self.button_with_icon(
+                                "纸边注脚",
+                                IconName::BookOpen,
+                                Action::OpenFootnote(self.echo_input.clone()),
+                                cx,
+                            ))
+                            .child(self.button_with_icon(
+                                "所有划线",
+                                IconName::Bookmark,
+                                Action::Highlights,
+                                cx,
+                            )),
+                    ),
+            );
+            // Cross-book local FTS5 personal memory resonance (100% offline & zero cost!)
+            if !self.echo_memories.is_empty() {
+                let mut mem_card = v_flex()
+                    .gap_2p5()
+                    .p_3p5()
+                    .rounded_xl()
+                    .bg(rgb(hex(&t.background)).opacity(if self.is_dark() { 0.68 } else { 0.78 }))
+                    .border_1()
+                    .border_color(rgb(hex(&t.accent)).opacity(0.32))
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.accent)))
+                                    .child(format!(
+                                        "跨书记忆重逢 · 本地召回 {} 条",
+                                        self.echo_memories.len()
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(9.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child("SQLite FTS5 离线检索"),
+                            ),
+                    );
+                for hit in &self.echo_memories {
+                    let date = hit.created_at.get(..10).unwrap_or(&hit.created_at);
+                    let snippet: String = hit.excerpt.chars().take(74).collect();
+                    let label = if hit.kind == "journal" {
+                        format!("手账 · {date}")
+                    } else {
+                        format!("《{}》 · {date}", hit.book_title)
+                    };
+                    mem_card = mem_card.child(
+                        v_flex()
+                            .p_2p5()
+                            .gap_1()
+                            .rounded_lg()
+                            .bg(rgb(hex(&t.paper)).opacity(0.84))
+                            .border_l_2()
+                            .border_color(rgb(hex(&t.accent)).opacity(0.65))
+                            .child(
+                                div()
+                                    .text_size(px(9.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.accent)))
+                                    .child(label),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .font_family(self.display_font())
+                                    .line_height(relative(1.5))
+                                    .text_color(rgb(hex(&t.text)).opacity(0.90))
+                                    .child(format!("「{snippet}」")),
+                            )
+                            .when_some(
+                                hit.note.as_deref().filter(|n| !n.trim().is_empty()),
+                                |this, note| {
+                                    this.child(
+                                        div()
+                                            .text_size(px(10.5))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&t.muted)))
+                                            .child(format!("当时批注：{note}")),
+                                    )
+                                },
+                            ),
+                    );
+                }
+                box_el = box_el.child(mem_card);
+            }
             box_el = box_el
-                .child(
-                    v_flex()
-                        .gap_2()
-                        .p_2p5()
-                        .rounded_xl()
-                        .bg(rgb(hex(&t.background)).opacity(0.55))
-                        .border_1()
-                        .border_color(self.border_subtle())
-                        .child(
-                            h_flex()
-                                .gap_1p5()
-                                .flex_wrap()
-                                .items_center()
-                                .child(
-                                    self.button_with_icon(
-                                        if already_kept {
-                                            "已留下划线"
-                                        } else {
-                                            "留下划线"
-                                        },
-                                        IconName::Feather,
-                                        Action::Highlight,
-                                        cx,
-                                    )
-                                    .disabled(already_kept),
-                                )
-                                .child(color_row),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_1p5()
-                                .flex_wrap()
-                                .child(
-                                    self.button_with_icon(
-                                        if self.echo_saved {
-                                            "已存入日记"
-                                        } else {
-                                            "存入日记"
-                                        },
-                                        IconName::NotebookPen,
-                                        Action::SaveEchoToJournal,
-                                        cx,
-                                    )
-                                    .disabled(self.echo_saved),
-                                )
-                                .child(self.button_with_icon(
-                                    "书摘卡",
-                                    IconName::ImageDown,
-                                    Action::OpenQuoteCard(Box::new(card_draft)),
-                                    cx,
-                                ))
-                                .child(self.button_with_icon(
-                                    "所有划线",
-                                    IconName::Bookmark,
-                                    Action::Highlights,
-                                    cx,
-                                )),
-                        ),
-                )
                 .child(
                     v_flex()
                         .gap_2()
@@ -1444,6 +1626,8 @@ impl ReadingApp {
                                     self.button_with_icon(
                                         if self.echo_ai_rx.is_some() {
                                             "正在细读这段文字…"
+                                        } else if !self.echo_memories.is_empty() {
+                                            "结合过往记忆 · AI 深度共读"
                                         } else {
                                             "问问微光（AI 深度共读）"
                                         },
@@ -1464,14 +1648,133 @@ impl ReadingApp {
                                 .font_family(self.ui_font())
                                 .line_height(relative(1.5))
                                 .text_color(rgb(hex(&t.muted)))
-                                .child(
-                                    "手动触发：仅发送本段选文与书名给 OpenAI，不上传整本书或日记。",
-                                ),
+                                .child(if self.echo_memories.is_empty() {
+                                    "手动触发：仅发送本段选文与书名给已配置的 AI 模型，不上传整本书或日记。"
+                                } else {
+                                    "手动触发：仅发送本段选文与上方召回的少量关联片段，绝不上传整个书库。"
+                                }),
                         ),
                 )
                 .child(self.echo_card(echo, &self.echo_input, true, cx));
         }
         box_el.into_any_element()
+    }
+    #[inline(never)]
+    pub(super) fn drawer_footnote(&self, cx: &Context<Self>) -> AnyElement {
+        let t = self.theme();
+        let is_dark = self.is_dark();
+        let mut view = v_flex().gap_4().child(
+            v_flex()
+                .p_4()
+                .gap_2()
+                .rounded_xl()
+                .bg(rgb(hex(&t.background)).opacity(if is_dark { 0.65 } else { 0.76 }))
+                .border_l_3()
+                .border_color(rgb(hex(&t.accent)))
+                .child(
+                    div()
+                        .text_size(px(10.))
+                        .font_family(self.ui_font())
+                        .text_color(rgb(hex(&t.accent)))
+                        .child("选中的词句 · MARGIN TERM"),
+                )
+                .child(
+                    div()
+                        .text_size(px(17.))
+                        .font_family(self.display_font())
+                        .line_height(relative(1.45))
+                        .child(if self.footnote_term.is_empty() {
+                            "尚未选中词句".to_owned()
+                        } else {
+                            self.footnote_term.clone()
+                        }),
+                ),
+        );
+        if let Some(entry) = self.footnote_dict {
+            view = view.child(
+                v_flex()
+                    .p_4()
+                    .gap_2p5()
+                    .rounded_xl()
+                    .bg(rgb(hex(&t.paper)).opacity(0.94))
+                    .border_1()
+                    .border_color(rgb(hex(&t.accent)).opacity(0.32))
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_baseline()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(px(19.))
+                                    .font_family(self.display_font())
+                                    .child(entry.headword),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.accent)))
+                                    .child(entry.reading),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.5))
+                            .font_family(self.ui_font())
+                            .line_height(relative(1.65))
+                            .child(entry.brief),
+                    )
+                    .child(
+                        div()
+                            .pt_2()
+                            .border_t_1()
+                            .border_color(self.border_subtle())
+                            .text_size(px(11.5))
+                            .font_family(self.ui_font())
+                            .line_height(relative(1.6))
+                            .text_color(rgb(hex(&t.muted)))
+                            .child(entry.literary_note),
+                    ),
+            );
+        } else {
+            view = view.child(
+                div()
+                    .p_4()
+                    .rounded_xl()
+                    .bg(rgb(hex(&t.background)).opacity(0.56))
+                    .text_size(px(12.5))
+                    .font_family(self.ui_font())
+                    .line_height(relative(1.65))
+                    .text_color(rgb(hex(&t.muted)))
+                    .child("离线文学词典暂未收录该词条，可点击下方按钮请求 AI 给出克制的防剧透纸边释义。"),
+            );
+        }
+        if let Some(reply) = &self.footnote_ai_reply {
+            view = view.child(self.reply_card(reply));
+        }
+        view.child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .flex_wrap()
+                .child(
+                    self.button_with_icon(
+                        if self.footnote_ai_rx.is_some() {
+                            "正在生成注脚…"
+                        } else {
+                            "AI 防剧透释义"
+                        },
+                        IconName::WandSparkles,
+                        Action::AskAiFootnote,
+                        cx,
+                    )
+                    .primary()
+                    .disabled(self.footnote_ai_rx.is_some() || self.footnote_term.is_empty()),
+                )
+                .child(self.button_with_icon("关闭注脚", IconName::X, Action::CloseFootnote, cx)),
+        )
+        .into_any_element()
     }
     #[inline(never)]
     pub(super) fn echo_card(

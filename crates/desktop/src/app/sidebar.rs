@@ -133,35 +133,89 @@ impl ReadingApp {
                         .text_size(px(9.))
                         .font_family(self.ui_font())
                         .text_color(rgb(hex(&t.muted)).opacity(0.84))
-                        .child("在这里"),
+                        .child("核心三轴"),
                 )
                 .child(
                     div()
                         .text_size(px(8.))
                         .font_family(self.ui_font())
                         .text_color(rgb(hex(&t.muted)).opacity(0.55))
-                        .child("CHANNELS"),
+                        .child("STUDY · PAGES · JOURNAL"),
                 ),
         );
-        for (label, page, icon) in [
-            ("我的书架", Page::Shelf, IconName::LibraryBig),
-            ("此刻心情", Page::Mood, IconName::MessageCircleHeart),
-            ("深夜电台", Page::Radio, IconName::AudioLines),
-            ("私人日记", Page::Journal, IconName::NotebookPen),
-            ("主题与设置", Page::Themes, IconName::Settings2),
+        for (label, selector, page, icon) in [
+            ("书房", "我的书架", Page::Shelf, IconName::LibraryBig),
+            ("书页", "回到阅读", Page::Reader, IconName::BookOpen),
+            ("手账", "私人日记", Page::Journal, IconName::NotebookPen),
         ] {
             let active = self.page == page;
-            sidebar = sidebar.child(self.nav_button(label, icon, active, Action::Page(page), cx));
-        }
-        if self.active_book.is_some() {
-            sidebar = sidebar.child(self.nav_button(
-                "回到阅读",
-                IconName::BookOpen,
-                self.page == Page::Reader,
-                Action::Page(Page::Reader),
+            sidebar = sidebar.child(self.nav_button_with_selector(
+                label,
+                selector,
+                icon,
+                active,
+                Action::Page(page),
                 cx,
             ));
         }
+        // Compact ambient & studio quick row (keeps sidebar focused on the 3 main axes)
+        let mut studio_row = h_flex().gap_1().pt_1p5().items_center().justify_between();
+        for (label, selector, page, icon) in [
+            ("电台", "深夜电台", Page::Radio, IconName::AudioLines),
+            ("心绪", "此刻心情", Page::Mood, IconName::MessageCircleHeart),
+            ("空间", "主题与设置", Page::Themes, IconName::Settings2),
+        ] {
+            let active = self.page == page;
+            studio_row = studio_row.child(
+                div()
+                    .id(SharedString::from(format!("studio-mini-{selector}")))
+                    .debug_selector(move || selector.to_owned())
+                    .cursor_pointer()
+                    .flex_1()
+                    .py_1p5()
+                    .px_1()
+                    .rounded_xl()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap_1()
+                    .bg(if active {
+                        rgb(hex(&t.accent)).opacity(0.20)
+                    } else {
+                        rgb(hex(&t.background)).opacity(if dark { 0.56 } else { 0.64 })
+                    })
+                    .border_1()
+                    .border_color(if active {
+                        Hsla::from(rgb(hex(&t.accent)).opacity(0.62))
+                    } else {
+                        self.border_subtle()
+                    })
+                    .hover(|s| s.border_color(rgb(hex(&t.accent)).opacity(0.45)))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            this.act(Action::Page(page.clone()), window, cx);
+                        }),
+                    )
+                    .child(Icon::new(icon).size(px(11.)).text_color(if active {
+                        rgb(hex(&t.accent))
+                    } else {
+                        rgb(hex(&t.muted))
+                    }))
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .font_family(self.ui_font())
+                            .text_color(if active {
+                                rgb(hex(&t.accent))
+                            } else {
+                                rgb(hex(&t.text))
+                            })
+                            .child(label),
+                    ),
+            );
+        }
+        sidebar = sidebar.child(studio_row);
         sidebar = sidebar.child(
             div()
                 .id("palette-trigger")
@@ -215,15 +269,40 @@ impl ReadingApp {
                 ),
         );
         let deck = self.render_soundscape_deck(t, snap, quick_swatches, cx);
+        let presence_count = ambient_presence_count();
+        let presence_on = self.store.state.show_ambient_presence;
         sidebar.child(div().flex_1()).child(deck).child(
-            div()
-                .px_3()
-                .pt_1p5()
-                .text_size(px(9.))
-                .font_family(self.ui_font())
-                .line_height(relative(1.5))
-                .text_color(rgb(hex(&t.muted)).opacity(0.84))
-                .child("一盏灯，一本书 · 慢慢读"),
+            h_flex()
+                .id("ambient-presence-toggle")
+                .debug_selector(|| "ambient-presence-toggle".into())
+                .cursor_pointer()
+                .px_2p5()
+                .pt_2()
+                .gap_1p5()
+                .items_center()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| {
+                        this.act(Action::ToggleAmbientPresence, window, cx);
+                    }),
+                )
+                .child(div().size(px(5.5)).rounded_full().bg(if presence_on {
+                    rgb(hex(&t.accent)).opacity(0.88)
+                } else {
+                    rgb(hex(&t.muted)).opacity(0.35)
+                }))
+                .child(
+                    div()
+                        .text_size(px(8.5))
+                        .font_family(self.ui_font())
+                        .line_height(relative(1.45))
+                        .text_color(rgb(hex(&t.muted)).opacity(0.86))
+                        .child(if presence_on {
+                            format!("此刻约 {presence_count} 盏微光正安静阅读")
+                        } else {
+                            "纯粹独处中 · 一盏灯，一本书".to_owned()
+                        }),
+                ),
         )
     }
     #[inline(never)]
@@ -594,14 +673,49 @@ impl ReadingApp {
                                     .text_size(px(8.5))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child("快速切换主题"),
+                                    .child("微光空间"),
                             )
                             .child(
                                 div()
+                                    .id("daylight-auto-pill")
+                                    .debug_selector(|| "daylight-auto-pill".into())
+                                    .cursor_pointer()
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded_full()
+                                    .bg(if self.store.state.daylight_auto {
+                                        rgb(hex(&t.accent)).opacity(0.22)
+                                    } else {
+                                        rgb(hex(&t.paper)).opacity(0.55)
+                                    })
+                                    .border_1()
+                                    .border_color(if self.store.state.daylight_auto {
+                                        Hsla::from(rgb(hex(&t.accent)).opacity(0.55))
+                                    } else {
+                                        self.border_subtle()
+                                    })
                                     .text_size(px(8.))
                                     .font_family(self.ui_font())
-                                    .text_color(rgb(hex(&t.muted)).opacity(0.76))
-                                    .child(format!("{} 套", themes().len())),
+                                    .text_color(if self.store.state.daylight_auto {
+                                        rgb(hex(&t.accent))
+                                    } else {
+                                        rgb(hex(&t.muted))
+                                    })
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, window, cx| {
+                                            this.act(Action::ToggleDaylightAuto, window, cx);
+                                        }),
+                                    )
+                                    .child(format!(
+                                        "昼夜·{}{}",
+                                        circadian_daylight_stage().0,
+                                        if self.store.state.daylight_auto {
+                                            " ✓"
+                                        } else {
+                                            ""
+                                        }
+                                    )),
                             ),
                     )
                     .child(quick_swatches),
