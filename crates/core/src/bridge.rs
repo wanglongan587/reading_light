@@ -52,6 +52,7 @@ pub fn parse_event(input: &str, session: &str) -> Result<ReaderEvent> {
             "opened",
             "selection",
             "echo",
+            "footnote",
             "highlight",
             "copy",
             "edge",
@@ -189,6 +190,13 @@ mod tests {
         assert!(
             parse_event(
                 r#"{"version":1,"session":"s","request_id":7,"kind":"palette"}"#,
+                "s"
+            )
+            .is_ok()
+        );
+        assert!(
+            parse_event(
+                r#"{"version":1,"session":"s","request_id":8,"kind":"footnote","text":"豁然开朗","cfi":"epubcfi(/6/2!/4/2,/1:0,/1:4)"}"#,
                 "s"
             )
             .is_ok()

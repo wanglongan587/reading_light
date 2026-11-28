@@ -219,6 +219,40 @@ fn merge_single_book(
         if remote.updated_at.is_some() {
             merged.updated_at = remote.updated_at.clone();
         }
+        if remote.shelf_status.is_some() && remote.shelf_status != local.shelf_status {
+            merged.shelf_status = remote.shelf_status.clone();
+            changed_local = true;
+        }
+    }
+
+    // Merge booklist tags (union preserving order)
+    for tag in &remote.tags {
+        if !tag.trim().is_empty() && !merged.tags.iter().any(|t| t == tag) {
+            merged.tags.push(tag.clone());
+            changed_local = true;
+        }
+    }
+
+    // Merge completion ceremony fields (never drop completion data)
+    if merged.finished_at.is_none() && remote.finished_at.is_some() {
+        merged.finished_at = remote.finished_at.clone();
+        merged.shelf_status = Some("finished".into());
+        changed_local = true;
+    }
+    if merged.finish_letter.is_none() && remote.finish_letter.is_some() {
+        merged.finish_letter = remote.finish_letter.clone();
+        changed_local = true;
+    }
+    if merged.completion_ticket_no.is_none() && remote.completion_ticket_no.is_some() {
+        merged.completion_ticket_no = remote.completion_ticket_no;
+        changed_local = true;
+    }
+    let best_minutes = merged
+        .total_reading_minutes
+        .max(remote.total_reading_minutes);
+    if best_minutes != merged.total_reading_minutes {
+        merged.total_reading_minutes = best_minutes;
+        changed_local = true;
     }
 
     // Bookmarks union by CFI
@@ -537,6 +571,12 @@ mod tests {
             encoding: None,
             updated_at: Some(updated_at.into()),
             companion: None,
+            shelf_status: None,
+            tags: vec![],
+            finished_at: None,
+            finish_letter: None,
+            completion_ticket_no: None,
+            total_reading_minutes: 0,
         }
     }
 

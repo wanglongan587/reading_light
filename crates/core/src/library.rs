@@ -580,9 +580,33 @@ pub fn prepare_book(path: &Path, encoding: Option<&str>) -> Result<PreparedBook>
     })
 }
 
+pub fn prepare_epub_bytes(bytes: Vec<u8>) -> Result<PreparedBook> {
+    ensure!(bytes.len() as u64 <= MAX_ARCHIVE, "文件超过 100 MB");
+    let id = format!("{:x}", Sha256::digest(&bytes));
+    let NormalizedEpub {
+        bytes: epub,
+        title,
+        author,
+        cover,
+    } = normalize_epub(&bytes)?;
+    Ok(PreparedBook {
+        id,
+        epub,
+        title,
+        author,
+        ext: "epub".into(),
+        cover,
+        selected_encoding: None,
+        original: None,
+    })
+}
+
 impl Store {
     pub fn import_book(&mut self, path: &Path, encoding: Option<&str>) -> Result<String> {
         self.commit_book(prepare_book(path, encoding)?, encoding.is_some())
+    }
+    pub fn import_epub_bytes(&mut self, bytes: Vec<u8>) -> Result<String> {
+        self.commit_book(prepare_epub_bytes(bytes)?, false)
     }
     pub fn commit_book(&mut self, prepared: PreparedBook, replace: bool) -> Result<String> {
         self.commit_book_as(prepared, replace.then_some(String::new()).as_deref())
@@ -663,6 +687,20 @@ impl Store {
             encoding: selected_encoding,
             updated_at: Some(now()),
             companion: previous.as_ref().and_then(|book| book.companion.clone()),
+            shelf_status: previous.as_ref().and_then(|book| book.shelf_status.clone()),
+            tags: previous
+                .as_ref()
+                .map(|book| book.tags.clone())
+                .unwrap_or_default(),
+            finished_at: previous.as_ref().and_then(|book| book.finished_at.clone()),
+            finish_letter: previous
+                .as_ref()
+                .and_then(|book| book.finish_letter.clone()),
+            completion_ticket_no: previous.as_ref().and_then(|book| book.completion_ticket_no),
+            total_reading_minutes: previous
+                .as_ref()
+                .map(|book| book.total_reading_minutes)
+                .unwrap_or(0),
         });
         self.state
             .deleted_book_ids

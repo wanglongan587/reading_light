@@ -28,6 +28,71 @@ pub struct Book {
     pub updated_at: Option<String>,
     #[serde(default)]
     pub companion: Option<BookCompanionCache>,
+    /// Optional explicit shelf status: "want" | "reading" | "finished" | "paused"
+    #[serde(default)]
+    pub shelf_status: Option<String>,
+    /// User-defined booklist tags (e.g. "睡前必读", "心流散文")
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub finished_at: Option<String>,
+    #[serde(default)]
+    pub finish_letter: Option<String>,
+    #[serde(default)]
+    pub completion_ticket_no: Option<u32>,
+    #[serde(default)]
+    pub total_reading_minutes: u32,
+}
+
+pub fn valid_shelf_status(value: &str) -> bool {
+    matches!(value, "want" | "reading" | "finished" | "paused")
+}
+
+impl Book {
+    pub fn effective_status(&self) -> &'static str {
+        match self.shelf_status.as_deref() {
+            Some("want") => "want",
+            Some("reading") => "reading",
+            Some("finished") => "finished",
+            Some("paused") => "paused",
+            _ => {
+                if self.finished_at.is_some() || self.progress.unwrap_or(0.0) >= 0.99 {
+                    "finished"
+                } else if self.progress.unwrap_or(0.0) > 0.0 || self.location.is_some() {
+                    "reading"
+                } else {
+                    "want"
+                }
+            }
+        }
+    }
+
+    pub fn status_label(status: &str) -> &'static str {
+        match status {
+            "reading" => "在读",
+            "finished" => "已完读",
+            "paused" => "搁置",
+            _ => "想读",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct OpdsFeedConfig {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+}
+
+impl Default for OpdsFeedConfig {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            url: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -778,6 +843,16 @@ pub struct State {
     pub deleted_journal_ids: Vec<String>,
     #[serde(default)]
     pub deleted_highlight_ids: Vec<String>,
+    #[serde(default)]
+    pub daylight_auto: bool,
+    #[serde(default)]
+    pub journal_locked: bool,
+    #[serde(default)]
+    pub show_ambient_presence: bool,
+    #[serde(default)]
+    pub opds_feeds: Vec<OpdsFeedConfig>,
+    #[serde(default)]
+    pub next_ticket_no: u32,
 }
 
 impl Default for State {
@@ -807,6 +882,11 @@ impl Default for State {
             deleted_book_ids: vec![],
             deleted_journal_ids: vec![],
             deleted_highlight_ids: vec![],
+            daylight_auto: false,
+            journal_locked: false,
+            show_ambient_presence: true,
+            opds_feeds: vec![],
+            next_ticket_no: 1,
         }
     }
 }
