@@ -2706,6 +2706,7 @@ dependencies = [
  "anyhow",
  "directories",
  "encoding_rs",
+ "flate2",
  "html5ever 0.40.1",
  "markup5ever_rcdom 0.40.1+unofficial",
  "percent-encoding",

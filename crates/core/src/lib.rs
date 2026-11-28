@@ -1,12 +1,17 @@
 pub mod book_context;
 pub mod bridge;
 pub mod catalog;
+pub mod clipper;
 pub mod db;
 pub mod dictionary;
 pub mod echo;
+pub mod exporter;
+pub mod formats;
+pub mod i18n;
 pub mod library;
 pub mod model;
 pub mod opds;
+pub mod rss;
 pub mod store;
 pub mod sync;
 pub mod theme;

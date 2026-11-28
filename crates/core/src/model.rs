@@ -95,6 +95,15 @@ impl Default for OpdsFeedConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct RssFeedConfig {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub added_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct CharacterNode {
@@ -852,7 +861,15 @@ pub struct State {
     #[serde(default)]
     pub opds_feeds: Vec<OpdsFeedConfig>,
     #[serde(default)]
+    pub rss_feeds: Vec<RssFeedConfig>,
+    #[serde(default)]
     pub next_ticket_no: u32,
+    #[serde(default = "default_locale")]
+    pub locale: String,
+}
+
+fn default_locale() -> String {
+    "zh-CN".into()
 }
 
 impl Default for State {
@@ -886,7 +903,9 @@ impl Default for State {
             journal_locked: false,
             show_ambient_presence: true,
             opds_feeds: vec![],
+            rss_feeds: vec![],
             next_ticket_no: 1,
+            locale: default_locale(),
         }
     }
 }

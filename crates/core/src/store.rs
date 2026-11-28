@@ -779,6 +779,56 @@ impl Store {
         Ok(())
     }
 
+    pub fn add_rss_feed(&mut self, name: String, url: String) -> Result<RssFeedConfig> {
+        let name = name.trim().to_owned();
+        let url = url.trim().to_owned();
+        ensure!(
+            !name.is_empty() && name.chars().count() <= 80,
+            "慢读订阅名称请控制在 1–80 字"
+        );
+        ensure!(
+            crate::model::valid_radio_stream_url(&url),
+            "RSS 订阅地址必须以 http:// 或 https:// 开头"
+        );
+        if let Some(existing) = self.state.rss_feeds.iter().find(|f| f.url == url) {
+            return Ok(existing.clone());
+        }
+        let feed = RssFeedConfig {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            url,
+            added_at: now(),
+        };
+        let previous = self.state.rss_feeds.clone();
+        self.state.rss_feeds.push(feed.clone());
+        if let Err(error) = self.save() {
+            self.state.rss_feeds = previous;
+            return Err(error);
+        }
+        Ok(feed)
+    }
+
+    pub fn remove_rss_feed(&mut self, id: &str) -> Result<()> {
+        let previous = self.state.rss_feeds.clone();
+        self.state.rss_feeds.retain(|f| f.id != id);
+        if let Err(error) = self.save() {
+            self.state.rss_feeds = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn set_locale(&mut self, code: &str) -> Result<crate::i18n::Locale> {
+        let locale = crate::i18n::Locale::from_code(code);
+        let prev = self.state.locale.clone();
+        self.state.locale = locale.code().into();
+        if let Err(error) = self.save() {
+            self.state.locale = prev;
+            return Err(error);
+        }
+        Ok(locale)
+    }
+
     pub fn remove_highlight(
         &mut self,
         book_id: &str,
