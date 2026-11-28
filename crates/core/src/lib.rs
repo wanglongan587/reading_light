@@ -1,10 +1,12 @@
 pub mod book_context;
 pub mod bridge;
+pub mod db;
 pub mod echo;
 pub mod library;
 pub mod model;
 pub mod store;
 pub mod sync;
 pub mod theme;
+pub use db::{MemoryHit, MonthlyReadingSummary};
 pub use model::*;
 pub use store::Store;

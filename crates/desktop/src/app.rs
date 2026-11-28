@@ -2463,10 +2463,10 @@ impl ReadingApp {
     fn is_sky(&self) -> bool {
         self.theme().id == "forest"
     }
-    fn is_ghibli(&self) -> bool {
-        Self::is_ghibli_id(&self.theme().id)
+    fn is_scenic_space(&self) -> bool {
+        Self::is_scenic_space_id(&self.theme().id)
     }
-    fn is_ghibli_id(id: &str) -> bool {
+    fn is_scenic_space_id(id: &str) -> bool {
         matches!(
             id,
             "forest" | "totoro" | "spirited" | "howl" | "kiki" | "lantern"
@@ -2488,43 +2488,47 @@ impl ReadingApp {
     fn theme_card_meta(id: &str) -> (&'static str, Option<&'static str>, &'static str) {
         match id {
             "forest" => (
-                "LAPUTA SKY · 天空之城 · 88.6 FM",
-                Some("✦ 天空之城"),
-                "蓝天流云与浮岛树屋，清澈舒展",
+                "SKY STUDY · 晴空旧书房 · 88.6 FM",
+                Some("✦ 微光空间"),
+                "蓝天流云与高窗书桌，清澈舒展",
             ),
             "totoro" => (
-                "TOTORO WOODLAND · 龙猫森林 · 90.2 FM",
-                Some("✦ 龙猫"),
+                "CAMPHOR SHADE · 夏风樟树下 · 90.2 FM",
+                Some("✦ 微光空间"),
                 "古樟树荫与林间晴雨，温柔护眼",
             ),
             "spirited" => (
-                "SPIRITED SEA TRAIN · 海上电车 · 94.8 FM",
-                Some("✦ 千与千寻"),
-                "浅海黄昏与温柔车厢，卸下疲惫",
+                "TWILIGHT SEA · 浅海晚风号 · 94.8 FM",
+                Some("✦ 微光空间"),
+                "浅海黄昏与远岸灯塔，卸下疲惫",
             ),
             "howl" => (
-                "HOWL'S MEADOW · 秘密花原 · 96.5 FM",
-                Some("✦ 哈尔的移动城堡"),
-                "微风花海与雪山湖畔，轻盈开阔",
+                "MEADOW BREEZE · 山谷秘密花园 · 96.5 FM",
+                Some("✦ 微光空间"),
+                "晨雾花海与雪山微风，轻盈开阔",
             ),
             "kiki" => (
-                "KIKI'S COAST · 海风烘焙镇 · 98.4 FM",
-                Some("✦ 魔女宅急便"),
+                "HARBOR BAKERY · 海港烘焙屋 · 98.4 FM",
+                Some("✦ 微光空间"),
                 "红瓦海港与暖阳窗台，惬意日常",
             ),
             "lantern" => (
-                "SPIRITED LANTERN · 汤屋灯夜 · 103.6 FM",
-                Some("✦ 千与千寻 · 夜灯"),
-                "红桥暖灯与静谧暮川，治愈夜读",
+                "LANTERN RAIN · 雨夜灯笼巷 · 103.6 FM",
+                Some("✦ 微光夜读"),
+                "暖灯雨窗与静谧暮川，治愈夜读",
             ),
-            "paper" => ("QUIET PAPER · 92.4 FM", None, "温润古典素纸，专注文字本身"),
-            "night" => ("NIGHT GARDEN · 101.7 FM", None, "低亮度青墨夜色，静心深读"),
+            "paper" => (
+                "MORNING PAPER · 92.4 FM",
+                None,
+                "温润古典素纸，专注文字本身",
+            ),
+            "night" => ("NIGHT LAMP · 101.7 FM", None, "低亮度青墨夜色，静心深读"),
             "prism" => (
-                "OBSIDIAN PRISM · 108.0 FM",
+                "STARLIGHT PRISM · 108.0 FM",
                 Some("✦ 鼠标流光"),
-                "黑曜光谱与流光粒子交互",
+                "星夜光谱与流光粒子交互",
             ),
-            _ => ("PERSONAL THEME · 96.0 FM", None, "你亲手调制的私人阅读空间"),
+            _ => ("PERSONAL SPACE · 96.0 FM", None, "你亲手调制的私人阅读空间"),
         }
     }
     fn theme_cover_palette(&self) -> [u32; 4] {
@@ -3478,10 +3482,15 @@ impl ReadingApp {
             ));
         if is_late_night && !is_dark {
             hero_actions = hero_actions
-                .child(self.button_with_icon("汤屋灯夜", IconName::Flame, Action::PickTheme(8), cx))
-                .child(self.button_with_icon("切到静夜", IconName::Moon, Action::PickTheme(2), cx))
                 .child(self.button_with_icon(
-                    "黑曜棱镜",
+                    "雨夜灯笼巷",
+                    IconName::Flame,
+                    Action::PickTheme(8),
+                    cx,
+                ))
+                .child(self.button_with_icon("静夜台灯", IconName::Moon, Action::PickTheme(2), cx))
+                .child(self.button_with_icon(
+                    "星空棱镜",
                     IconName::Sparkles,
                     Action::PickTheme(3),
                     cx,
@@ -3629,7 +3638,7 @@ impl ReadingApp {
                     .child(self.heading(hero_kicker, &hero_title, &hero_sub))
                     .child(hero_actions),
             )
-            // Right-side MineRadio Floating Telemetry & Daily Rediscovery HUD
+            // Right-side Glow Study Floating Telemetry & Daily Rediscovery HUD
             .child(
                 v_flex()
                     .absolute()
@@ -6297,7 +6306,7 @@ impl ReadingApp {
     ) -> Div {
         let active = active_theme.id == t.id;
         let (subtitle, poster_badge, mood_note) = Self::theme_card_meta(&t.id);
-        let is_ghibli_card = Self::is_ghibli_id(&t.id);
+        let is_scenic_card = Self::is_scenic_space_id(&t.id);
         let is_prism_card = t.id == "prism";
         let swatches = h_flex()
             .gap_1()
@@ -6407,7 +6416,7 @@ impl ReadingApp {
         };
         let badge_border = if is_prism_card {
             rgb(0xc4b5fd).opacity(0.42)
-        } else if is_ghibli_card {
+        } else if is_scenic_card {
             rgb(0xffffff).opacity(0.28)
         } else {
             rgb(0xffffff).opacity(0.20)
@@ -6565,7 +6574,7 @@ impl ReadingApp {
                     .child(self.heading(
                         "MAKE YOURSELF AT HOME · 空间与声景调音台",
                         "把这里，变成喜欢的样子。",
-                        "从宫崎骏水彩海报般的温柔光影，到素纸静夜与流光棱镜；主题包不包含你的书和日记。",
+                        "从原创手绘水彩般的温柔光影，到素纸晨光与星空棱镜；主题包不包含你的书和日记。",
                     ))
                     .child(
                         h_flex()
@@ -6584,14 +6593,14 @@ impl ReadingApp {
                             )),
                     ),
             );
-        let mut ghibli_row = h_flex().gap_4().flex_wrap();
+        let mut scenic_row = h_flex().gap_4().flex_wrap();
         let mut classic_row = h_flex().gap_4().flex_wrap();
         let mut custom_row = h_flex().gap_4().flex_wrap();
         let mut custom_count = 0usize;
         for (i, t) in all.iter().enumerate() {
             let card = self.theme_card(i, t, active_theme, is_dark, cx);
-            if Self::is_ghibli_id(&t.id) {
-                ghibli_row = ghibli_row.child(card);
+            if Self::is_scenic_space_id(&t.id) {
+                scenic_row = scenic_row.child(card);
             } else if matches!(t.id.as_str(), "paper" | "night" | "prism") {
                 classic_row = classic_row.child(card);
             } else {
@@ -6617,14 +6626,14 @@ impl ReadingApp {
                                             .text_size(px(10.))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&active_theme.accent)))
-                                            .child("GHIBLI WATERCOLOR GALLERY · 宫崎骏手绘海报"),
+                                            .child("GLOW SPACE GALLERY · 原创手绘微光空间"),
                                     )
                                     .child(
                                         div()
                                             .text_size(px(18.5))
                                             .font_family(self.display_font())
                                             .text_color(rgb(hex(&active_theme.text)))
-                                            .child("温柔治愈画廊"),
+                                            .child("微光空间画廊"),
                                     ),
                             )
                             .child(
@@ -6632,10 +6641,10 @@ impl ReadingApp {
                                     .text_size(px(11.5))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&active_theme.muted)))
-                                    .child("龙猫、千与千寻、天空之城、哈尔花原与魔女海镇 · 均满足高对比度护眼阅读"),
+                                    .child("晴空旧书房、夏风樟树下、浅海晚风号、山谷秘密花园、海港烘焙屋与雨夜灯笼巷 · 均满足高对比度护眼阅读"),
                             ),
                     )
-                    .child(ghibli_row),
+                    .child(scenic_row),
             )
             .child(
                 v_flex()
@@ -7401,9 +7410,9 @@ impl ReadingApp {
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
                                     .child(if is_prism {
-                                        "OBSIDIAN PRISM STATION"
-                                    } else if self.is_ghibli() {
-                                        "GHIBLI READING STATION"
+                                        "STARLIGHT PRISM STATION"
+                                    } else if self.is_scenic_space() {
+                                        "GLOW SPACE STATION"
                                     } else {
                                         "AMBIENT READING STATION"
                                     }),
@@ -7968,35 +7977,35 @@ impl ReadingApp {
                                     .child("选择初始空间："),
                             )
                             .child(self.pill_button(
-                                "林间暖光 · 天空之城",
+                                "晴空旧书房 · 蓝天流云",
                                 Some(IconName::Cloud),
                                 t.id == "forest",
                                 Action::PickTheme(0),
                                 cx,
                             ))
                             .child(self.pill_button(
-                                "龙猫林荫 · 森林",
+                                "夏风樟树下 · 林荫",
                                 Some(IconName::Leaf),
                                 t.id == "totoro",
                                 Action::PickTheme(4),
                                 cx,
                             ))
                             .child(self.pill_button(
-                                "千寻海轨 · 海上电车",
+                                "浅海晚风号 · 黄昏",
                                 Some(IconName::Sparkles),
                                 t.id == "spirited",
                                 Action::PickTheme(5),
                                 cx,
                             ))
                             .child(self.pill_button(
-                                "汤屋灯夜 · 暖灯",
+                                "雨夜灯笼巷 · 暖灯",
                                 Some(IconName::Flame),
                                 t.id == "lantern",
                                 Action::PickTheme(8),
                                 cx,
                             ))
                             .child(self.pill_button(
-                                "黑曜棱镜 · 暗夜流光",
+                                "星空棱镜 · 暗夜流光",
                                 Some(IconName::Sparkles),
                                 t.id == "prism",
                                 Action::PickTheme(3),
@@ -8088,7 +8097,7 @@ impl ReadingApp {
                 0x1a324cu32,
                 0x4f6e8eu32,
                 0x2573b8u32,
-                "GLOW · 天空云境书摘",
+                "GLOW · 晴空书房书摘",
             ),
             QuoteCardStyle::Totoro => (
                 0xb7d9b8u32,
@@ -8096,7 +8105,7 @@ impl ReadingApp {
                 0x1f3626u32,
                 0x4e6b56u32,
                 0x3d7a52u32,
-                "GLOW · 龙猫林荫书摘",
+                "GLOW · 夏风樟树书摘",
             ),
             QuoteCardStyle::Spirited => (
                 0xeec4b8u32,
@@ -8104,7 +8113,7 @@ impl ReadingApp {
                 0x3b2427u32,
                 0x745458u32,
                 0xb84b42u32,
-                "GLOW · 海上电车书摘",
+                "GLOW · 浅海晚风书摘",
             ),
             QuoteCardStyle::Howl => (
                 0xc8c2efu32,
@@ -8112,7 +8121,7 @@ impl ReadingApp {
                 0x2b2740u32,
                 0x5f5a7au32,
                 0x63549eu32,
-                "GLOW · 秘密花原书摘",
+                "GLOW · 秘密花园书摘",
             ),
             QuoteCardStyle::Kiki => (
                 0xead4b7u32,
@@ -8120,7 +8129,7 @@ impl ReadingApp {
                 0x3b2a1eu32,
                 0x755d4au32,
                 0xae572au32,
-                "GLOW · 魔女海镇书摘",
+                "GLOW · 海港暖阳书摘",
             ),
             QuoteCardStyle::Lantern => (
                 0x17141fu32,
@@ -8128,7 +8137,7 @@ impl ReadingApp {
                 0xf5e9d6u32,
                 0xbca895u32,
                 0xe69f52u32,
-                "GLOW · 汤屋灯夜书摘",
+                "GLOW · 雨夜灯巷书摘",
             ),
             QuoteCardStyle::Prism => (
                 0x090c16u32,
@@ -8136,7 +8145,7 @@ impl ReadingApp {
                 0xeef1fau32,
                 0x94a0beu32,
                 0xa78bfau32,
-                "GLOW · 黑曜棱镜书摘",
+                "GLOW · 星空棱镜书摘",
             ),
             QuoteCardStyle::Paper => (
                 0xede5d4u32,
@@ -8374,55 +8383,55 @@ impl ReadingApp {
         let query = self.palette_input.read(cx).value().trim().to_lowercase();
         let mut commands: Vec<(&'static str, &'static str, IconName, Action)> = vec![
             (
-                "主题 · 林间暖光（天空之城蓝白）",
-                "宫崎骏天空之城蓝天白云手绘主题",
+                "主题 · 晴空旧书房（蓝天流云）",
+                "原创晴空流云与高窗书桌手绘主题",
                 IconName::Cloud,
                 Action::PickTheme(0),
             ),
             (
-                "主题 · 龙猫林荫（龙猫森林）",
-                "宫崎骏龙猫古樟树荫与林间晴雨 · 护眼治愈绿",
+                "主题 · 夏风樟树下（林荫晴雨）",
+                "原创古樟树荫与林间晴雨 · 护眼治愈绿",
                 IconName::Leaf,
                 Action::PickTheme(4),
             ),
             (
-                "主题 · 千寻海轨（千与千寻海上电车）",
-                "宫崎骏千与千寻浅海黄昏电车 · 温柔暖杏玫红",
+                "主题 · 浅海晚风号（浅海黄昏）",
+                "原创浅海黄昏与远岸灯塔 · 温柔暖杏玫红",
                 IconName::Sparkles,
                 Action::PickTheme(5),
             ),
             (
-                "主题 · 哈尔花原（哈尔的移动城堡）",
-                "宫崎骏哈尔秘密花海与雪山微风 · 柔和丁香紫",
+                "主题 · 山谷秘密花园（晨雾花海）",
+                "原创山谷花海与雪山微风 · 柔和丁香紫",
                 IconName::Wind,
                 Action::PickTheme(6),
             ),
             (
-                "主题 · 魔女海镇（魔女宅急便）",
-                "宫崎骏魔女宅急便红瓦海港与暖阳窗台 · 温柔陶土金",
+                "主题 · 海港烘焙屋（海风暖阳）",
+                "原创红瓦海港与暖阳窗台 · 温柔陶土金",
                 IconName::Sun,
                 Action::PickTheme(7),
             ),
             (
-                "主题 · 汤屋灯夜（千与千寻夜灯）",
-                "宫崎骏千与千寻红桥暖灯与暮川萤火 · 深色治愈夜读",
+                "主题 · 雨夜灯笼巷（暖灯夜读）",
+                "原创暖灯雨窗与暮川萤火 · 深色治愈夜读",
                 IconName::Flame,
                 Action::PickTheme(8),
             ),
             (
-                "主题 · 素纸",
+                "主题 · 素纸晨光",
                 "温润护眼古典纸页",
                 IconName::Sun,
                 Action::PickTheme(1),
             ),
             (
-                "主题 · 静夜",
+                "主题 · 静夜台灯",
                 "低亮度柔和深色夜读",
                 IconName::Moon,
                 Action::PickTheme(2),
             ),
             (
-                "主题 · 黑曜棱镜",
+                "主题 · 星空棱镜",
                 "光谱流光与交互粒子",
                 IconName::Sparkles,
                 Action::PickTheme(3),
@@ -8433,7 +8442,7 @@ impl ReadingApp {
                 } else {
                     "声景 · 开启环境音"
                 },
-                "切换 MineRadio 原生合成自然声景",
+                "切换微光原生程序化自然声景",
                 if self.audio.is_some() {
                     IconName::VolumeX
                 } else {
@@ -8473,7 +8482,7 @@ impl ReadingApp {
             ),
             (
                 "声景 · 治愈琴韵",
-                "久石让式温柔电钢五声琶音",
+                "温柔电钢轻缓五声琶音",
                 IconName::AudioLines,
                 Action::Soundscape(SoundscapePreset::Piano),
             ),
@@ -8490,8 +8499,8 @@ impl ReadingApp {
                 Action::ToggleCompanion,
             ),
             (
-                "听书 · 打开 Edge 神经语音听书台",
-                "晓晓/云希等多音色朗读，自动压低背景声景",
+                "听书 · 打开双轨合规语音听书台",
+                "支持本机离线系统语音与 OpenAI 兼容神经语音服务，自动压低背景声景",
                 IconName::AudioLines,
                 Action::ToggleTtsDrawer,
             ),
@@ -10107,7 +10116,7 @@ mod tests {
             // 2. Edit & save note + recolor
             app.act(Action::EditHighlightNote(hl_id.clone()), window, cx);
             app.highlight_note_input
-                .update(cx, |s, cx| s.set_value("像天空之城里的云朵。", window, cx));
+                .update(cx, |s, cx| s.set_value("像晴空里舒展的云朵。", window, cx));
             app.act(Action::SaveHighlightNote, window, cx);
             app.act(
                 Action::RecolorHighlight(Box::new((hl_id, "prism".into()))),
@@ -10116,7 +10125,7 @@ mod tests {
             );
             assert_eq!(
                 app.store.state.books[0].highlights[0].note.as_deref(),
-                Some("像天空之城里的云朵。")
+                Some("像晴空里舒展的云朵。")
             );
             assert_eq!(
                 app.store.state.books[0].highlights[0].color.as_deref(),
@@ -10160,7 +10169,7 @@ mod tests {
         let reopened = Store::open(data).unwrap();
         assert_eq!(
             reopened.state.books[0].highlights[0].note.as_deref(),
-            Some("像天空之城里的云朵。")
+            Some("像晴空里舒展的云朵。")
         );
         assert_eq!(reopened.state.journal.len(), 1);
     }
@@ -10346,7 +10355,7 @@ mod tests {
         app.update_in(cx, |app, window, cx| {
             app.act(Action::TogglePalette, window, cx);
             app.palette_input
-                .update(cx, |s, cx| s.set_value("黑曜棱镜", window, cx));
+                .update(cx, |s, cx| s.set_value("星空棱镜", window, cx));
             cx.notify();
         });
         cx.update(|window, cx| window.draw(cx).clear(cx));
@@ -10458,7 +10467,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn miyazaki_themes_switch_render_pair_soundscapes_and_filter_in_palette(
+    fn glow_space_themes_switch_render_pair_soundscapes_and_filter_in_palette(
         cx: &mut TestAppContext,
     ) {
         cx.update(|cx| {
@@ -10524,7 +10533,7 @@ mod tests {
             app.update_in(cx, |app, window, cx| {
                 app.act(Action::PickTheme(idx), window, cx);
                 assert_eq!(app.theme().id, id);
-                assert!(app.is_ghibli());
+                assert!(app.is_scenic_space());
                 assert_eq!(app.is_dark(), dark);
                 assert_eq!(app.scene_asset(), asset);
                 assert_eq!(app.active_soundscape_preset(), preset);
@@ -10544,13 +10553,13 @@ mod tests {
             cx.update(|window, cx| window.draw(cx).clear(cx));
         }
 
-        // Command palette search resolves every new Miyazaki theme accurately
+        // Command palette search resolves every original Glow Space theme accurately
         for &(query, expected_id) in &[
-            ("龙猫", "totoro"),
-            ("海上电车", "spirited"),
-            ("哈尔", "howl"),
-            ("魔女", "kiki"),
-            ("汤屋", "lantern"),
+            ("樟树", "totoro"),
+            ("浅海晚风", "spirited"),
+            ("秘密花园", "howl"),
+            ("烘焙屋", "kiki"),
+            ("灯笼巷", "lantern"),
         ] {
             app.update_in(cx, |app, window, cx| {
                 app.act(Action::TogglePalette, window, cx);
@@ -10566,7 +10575,7 @@ mod tests {
             });
         }
 
-        // Persisted state reloads the selected Miyazaki theme cleanly
+        // Persisted state reloads the selected Glow Space theme cleanly
         let reopened = Store::open(data).unwrap();
         assert_eq!(reopened.state.theme.id, "lantern");
     }

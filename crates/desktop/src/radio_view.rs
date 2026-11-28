@@ -398,14 +398,27 @@ impl ReadingApp {
                 .local_audio_folder
                 .as_deref()
                 .map(PathBuf::from);
-            self.ensure_radio()
-                .tune(station, vol, host_voice, echoes, local_folder, with_static);
+            let tts_cfg = tts::TtsRuntimeConfig::from_store(
+                &self.store.state.tts,
+                &self.store.state.ai,
+                &self.store.load_secrets(),
+                &self.store.root,
+            );
+            self.ensure_radio().tune(
+                station,
+                vol,
+                host_voice,
+                echoes,
+                local_folder,
+                with_static,
+                tts_cfg,
+            );
         }
         self.schedule_motion_frame(window, cx);
     }
 
     pub(super) fn tick_radio(&mut self, cx: &mut Context<Self>) {
-        // 1. Poll online Radio-Browser search results
+        // 1. Poll curated station search results
         if let Some(res) = self.radio_search_rx.as_ref().map(|rx| rx.try_recv()) {
             match res {
                 Ok(Ok(hits)) => {
@@ -699,13 +712,14 @@ impl ReadingApp {
                 let query = self.radio_search_input.read(cx).value().trim().to_owned();
                 anyhow::ensure!(
                     !query.is_empty(),
-                    "请输入想搜索的电台名称或风格关键词（如 lofi、jazz、piano）"
+                    "请输入频段名称或风格关键词（如 lofi、piano、夜话）"
                 );
+                let custom = self.store.state.radio.custom_stations.clone();
                 let (tx, rx) = mpsc::channel();
                 self.radio_search_rx = Some(rx);
-                self.set_radio_toast(format!("正在电台库中搜索「{query}」…"));
+                self.set_radio_toast(format!("正在筛选匹配「{query}」的频段…"));
                 std::thread::spawn(move || {
-                    let _ = tx.send(radio::search_online_stations(&query, None));
+                    let _ = tx.send(radio::search_curated_stations(&query, None, &custom));
                 });
             }
             Action::RadioSearchTag(tag) => {
@@ -713,35 +727,40 @@ impl ReadingApp {
                     return Ok(());
                 }
                 let tag_owned = tag.to_owned();
+                let custom = self.store.state.radio.custom_stations.clone();
                 let (tx, rx) = mpsc::channel();
                 self.radio_search_rx = Some(rx);
-                self.set_radio_toast(format!("正在寻找「{tag}」治愈频段…"));
+                self.set_radio_toast(format!("正在筛选「{tag}」治愈频段…"));
                 std::thread::spawn(move || {
-                    let _ = tx.send(radio::search_online_stations("", Some(&tag_owned)));
+                    let _ = tx.send(radio::search_curated_stations(
+                        "",
+                        Some(&tag_owned),
+                        &custom,
+                    ));
                 });
             }
             Action::RadioPreviewHit(idx) => {
                 if let Some(hit) = self.radio_search_results.get(idx).cloned() {
-                    let temp = RadioStation {
-                        id: hit.id.clone(),
-                        frequency_mhz: hit.suggested_mhz,
-                        name: hit.name.clone(),
-                        subtitle: if hit.country.is_empty() {
-                            format!("在线搜索试听 · {} kbps MP3", hit.bitrate)
-                        } else {
-                            format!("{} · {} kbps MP3", hit.country, hit.bitrate)
-                        },
-                        mood_line: format!(
-                            "正在试听「{}」，如果喜欢可点击收藏固定到刻度尺。",
-                            hit.name
-                        ),
-                        kind: RadioStationKind::OnlineStream,
-                        stream_urls: vec![hit.stream_url],
-                        suggested_lamp: "amber",
-                        tags: hit.tags,
-                        is_custom: true,
-                    };
-                    self.tune_to_station(temp, true, window, cx);
+                    let all = self.all_radio_stations();
+                    let target =
+                        all.into_iter()
+                            .find(|s| s.id == hit.id)
+                            .unwrap_or_else(|| RadioStation {
+                                id: hit.id.clone(),
+                                frequency_mhz: hit.suggested_mhz,
+                                name: hit.name.clone(),
+                                subtitle: format!("自定义流试听 · {} kbps", hit.bitrate),
+                                mood_line: format!(
+                                    "正在试听「{}」，如果喜欢可点击收藏固定到刻度尺。",
+                                    hit.name
+                                ),
+                                kind: RadioStationKind::OnlineStream,
+                                stream_urls: vec![hit.stream_url],
+                                suggested_lamp: "amber",
+                                tags: hit.tags,
+                                is_custom: true,
+                            });
+                    self.tune_to_station(target, true, window, cx);
                 }
             }
             Action::RadioAddHit(idx) => {
@@ -3127,7 +3146,7 @@ impl ReadingApp {
                                     .text_size(px(11.5))
                                     .font_family(self.ui_font())
                                     .text_color(text_warm)
-                                    .child("搜索全球免费 MP3 网络电台（Radio-Browser）"),
+                                    .child("筛选内置原创治愈频段与已收藏电台"),
                             )
                             .child(
                                 h_flex()

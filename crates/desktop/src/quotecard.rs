@@ -30,14 +30,14 @@ impl QuoteCardStyle {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Sky => "天空之城 · 蓝天白云",
-            Self::Totoro => "龙猫林荫 · 森林晴雨",
-            Self::Spirited => "千寻海轨 · 浅海黄昏",
-            Self::Howl => "哈尔花原 · 秘密花海",
-            Self::Kiki => "魔女海镇 · 海风烘焙",
-            Self::Lantern => "汤屋灯夜 · 暖灯夜读",
-            Self::Prism => "黑曜棱镜",
-            Self::Paper => "素纸信笺",
+            Self::Sky => "晴空旧书房 · 蓝天流云",
+            Self::Totoro => "夏风樟树下 · 林荫晴雨",
+            Self::Spirited => "浅海晚风号 · 浅海黄昏",
+            Self::Howl => "山谷秘密花园 · 晨雾花海",
+            Self::Kiki => "海港烘焙屋 · 海风暖阳",
+            Self::Lantern => "雨夜灯笼巷 · 暖灯夜读",
+            Self::Prism => "星空棱镜",
+            Self::Paper => "素纸晨光",
         }
     }
 
@@ -295,7 +295,7 @@ pub fn render_png(draft: &QuoteCardDraft) -> Result<Vec<u8>> {
                 (0.76, [218, 238, 253]),
                 (1.0, [245, 251, 255]),
             ]);
-            // Studio Ghibli Laputa hand-painted sunlit cumulus clouds
+            // Original sunlit cumulus clouds in a bright reading sky
             for &(cx, cy, rad, col, a) in &[
                 (170.0, 190.0, 210.0, [255, 255, 255], 0.52),
                 (310.0, 140.0, 175.0, [255, 252, 244], 0.44),
@@ -597,14 +597,14 @@ pub fn render_png(draft: &QuoteCardDraft) -> Result<Vec<u8>> {
     canvas.fill_rounded_rect(BoxRect::new(pad_x + 16, cy + 70, 8, 8), 4.0, accent, 0.92);
 
     let header_tag = match draft.style {
-        QuoteCardStyle::Sky => "GLOW · 天空云境书摘",
-        QuoteCardStyle::Totoro => "GLOW · 龙猫林荫书摘",
-        QuoteCardStyle::Spirited => "GLOW · 海上电车书摘",
-        QuoteCardStyle::Howl => "GLOW · 秘密花原书摘",
-        QuoteCardStyle::Kiki => "GLOW · 魔女海镇书摘",
-        QuoteCardStyle::Lantern => "GLOW · 汤屋灯夜书摘",
-        QuoteCardStyle::Prism => "GLOW · 黑曜棱镜书摘",
-        QuoteCardStyle::Paper => "GLOW · 素纸信笺书摘",
+        QuoteCardStyle::Sky => "GLOW · 晴空书房书摘",
+        QuoteCardStyle::Totoro => "GLOW · 夏风樟树书摘",
+        QuoteCardStyle::Spirited => "GLOW · 浅海晚风书摘",
+        QuoteCardStyle::Howl => "GLOW · 秘密花园书摘",
+        QuoteCardStyle::Kiki => "GLOW · 海港暖阳书摘",
+        QuoteCardStyle::Lantern => "GLOW · 雨夜灯巷书摘",
+        QuoteCardStyle::Prism => "GLOW · 星空棱镜书摘",
+        QuoteCardStyle::Paper => "GLOW · 素纸晨光书摘",
     };
     draw_text(
         &mut canvas,
@@ -1302,7 +1302,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn renders_valid_png_for_all_styles_and_maps_miyazaki_themes() {
+    fn renders_valid_png_for_all_styles_and_maps_glow_space_themes() {
         assert_eq!(QuoteCardStyle::ALL.len(), 8);
         assert_eq!(QuoteCardStyle::from_theme_id("forest"), QuoteCardStyle::Sky);
         assert_eq!(
@@ -1344,13 +1344,12 @@ mod tests {
             窗外的树影摇曳，手边的书页翻过一章又一章；那些被轻轻划下来的句子，\
             会在往后许多个平常的午后重新与你相逢。".repeat(3);
         let long_note = "读到这一段突然想停下来泡一杯茶。\n\n\
-            如果文字能像天空之城的云一样托住疲惫，那每天二十分钟静读就已经非常珍贵。"
+            如果文字能像晴空里的流云一样托住疲惫，那每天二十分钟静读就已经非常珍贵。"
             .repeat(2);
         let draft = QuoteCardDraft {
             text: long_quote,
-            attribution:
-                "《一座漂浮在蓝天白云之间的超长书名测试示例合集》 · 宫崎骏天空之城灵感微光典藏版"
-                    .into(),
+            attribution: "《一座漂浮在蓝天白云之间的超长书名测试示例合集》 · 微光空间原创典藏版"
+                .into(),
             note: Some(long_note),
             style: QuoteCardStyle::Sky,
         };

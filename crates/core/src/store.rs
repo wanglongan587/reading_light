@@ -1,27 +1,66 @@
-use crate::model::*;
+use crate::{
+    db::{Database, MemoryHit, MonthlyReadingSummary},
+    model::*,
+};
 use anyhow::{Context, Result, ensure};
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
+
+const META_SNAPSHOT_SHA256: &str = "last_snapshot_sha256";
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(64);
+    for b in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{b:02x}");
+    }
+    out
+}
 
 pub struct Store {
     pub root: PathBuf,
     pub state: State,
+    db: Mutex<Database>,
 }
 
 impl Store {
     pub fn open(root: PathBuf) -> Result<Self> {
         fs::create_dir_all(root.join("books"))?;
         fs::create_dir_all(root.join("themes"))?;
-        let path = root.join("state.json");
-        let mut state: State = if path.exists() {
-            serde_json::from_slice(&fs::read(&path)?)
-                .context("本地数据无法读取；原文件已保留，请先备份后修复。")?
+
+        let db_path = root.join("glow.db");
+        let json_path = root.join("state.json");
+        let mut db = Database::open(&db_path)?;
+
+        let db_has_state = db.has_state()?;
+        let last_hash = db.get_meta(META_SNAPSHOT_SHA256)?;
+        let json_bytes = if json_path.exists() {
+            Some(fs::read(&json_path).context("本地数据无法读取；原文件已保留，请先备份后修复。")?)
         } else {
-            State::default()
+            None
         };
+
+        let mut migrated_from_json = false;
+        let mut state: State = match (db_has_state, json_bytes.as_deref()) {
+            (true, Some(bytes)) if last_hash.as_deref() == Some(sha256_hex(bytes).as_str()) => {
+                db.load_state()?.unwrap_or_default()
+            }
+            (true, None) => db.load_state()?.unwrap_or_default(),
+            (_, Some(bytes)) => {
+                // Either migrating legacy state.json -> glow.db, or state.json was edited externally.
+                migrated_from_json = !db_has_state;
+                serde_json::from_slice(bytes)
+                    .context("本地数据无法读取；原文件已保留，请先备份后修复。")?
+            }
+            (false, None) => State::default(),
+        };
+
         let is_legacy_forest = state.theme.id == "forest"
             && ((state.theme.background.eq_ignore_ascii_case("#E8EDE6")
                 && state.theme.paper.eq_ignore_ascii_case("#FAF7EE")
@@ -37,6 +76,36 @@ impl Store {
             state.theme.muted = refreshed.muted;
             state.theme.accent = refreshed.accent;
         }
+        migrate_legacy_theme_name(&mut state.theme);
+        for custom in &mut state.custom_themes {
+            migrate_legacy_theme_name(custom);
+        }
+
+        Self::validate_state(&state)?;
+
+        if migrated_from_json {
+            let backup = root.join("state.json.v1.bak");
+            if !backup.exists()
+                && let Some(bytes) = json_bytes.as_deref()
+            {
+                let _ = atomic_write(&backup, bytes);
+            }
+        }
+        if !db_has_state || json_bytes.is_some() {
+            db.save_state(&state)?;
+            if let Some(bytes) = json_bytes.as_deref() {
+                db.set_meta(META_SNAPSHOT_SHA256, &sha256_hex(bytes))?;
+            }
+        }
+
+        Ok(Self {
+            root,
+            state,
+            db: Mutex::new(db),
+        })
+    }
+
+    fn validate_state(state: &State) -> Result<()> {
         ensure!(state.version == 1, "不支持的本地数据版本");
         ensure!(
             state
@@ -117,7 +186,7 @@ impl Store {
                 );
             }
         }
-        Ok(Self { root, state })
+        Ok(())
     }
 
     pub fn default_root() -> Result<PathBuf> {
@@ -133,10 +202,34 @@ impl Store {
     }
 
     pub fn save(&self) -> Result<()> {
-        atomic_write(
-            &self.root.join("state.json"),
-            &serde_json::to_vec_pretty(&self.state)?,
-        )
+        let json_bytes = serde_json::to_vec_pretty(&self.state)?;
+        let snapshot_hash = sha256_hex(&json_bytes);
+        atomic_write(&self.root.join("state.json"), &json_bytes)?;
+        let mut db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("本地数据库锁已损坏"))?;
+        db.save_state(&self.state)?;
+        db.set_meta(META_SNAPSHOT_SHA256, &snapshot_hash)?;
+        Ok(())
+    }
+
+    /// Searches personal highlights and journal entries using local SQLite FTS5.
+    pub fn search_memories(&self, query: &str, limit: usize) -> Result<Vec<MemoryHit>> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("本地数据库锁已损坏"))?;
+        db.search_memories(query, limit)
+    }
+
+    /// Returns monthly reading totals and daily breakdown from `reading_sessions`.
+    pub fn monthly_reading_summary(&self, year_month: &str) -> Result<MonthlyReadingSummary> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("本地数据库锁已损坏"))?;
+        db.monthly_reading_summary(year_month)
     }
 
     pub fn load_secrets(&self) -> LocalSecrets {
@@ -386,16 +479,40 @@ impl Store {
     }
 
     pub fn add_reading_minutes(&mut self, minutes: u32, today: &str) -> Result<u32> {
+        let book_id = self.state.last_book.clone();
+        let theme_id = Some(self.state.theme.id.clone());
+        self.record_reading_session(book_id, minutes, today, theme_id)
+    }
+
+    pub fn record_reading_session(
+        &mut self,
+        book_id: Option<String>,
+        minutes: u32,
+        today: &str,
+        theme_id: Option<String>,
+    ) -> Result<u32> {
         let prev_mins = self.state.reading_minutes_today;
         let prev_date = self.state.reading_minutes_date.clone();
+        let prev_sessions_len = self.state.reading_sessions.len();
         if self.state.reading_minutes_date.as_deref() != Some(today) {
             self.state.reading_minutes_today = 0;
             self.state.reading_minutes_date = Some(today.to_owned());
         }
         self.state.reading_minutes_today = self.state.reading_minutes_today.saturating_add(minutes);
+        if minutes > 0 {
+            self.state.reading_sessions.push(ReadingSession {
+                id: uuid::Uuid::new_v4().to_string(),
+                book_id,
+                date: today.to_owned(),
+                minutes,
+                recorded_at: now(),
+                theme_id,
+            });
+        }
         if let Err(error) = self.save() {
             self.state.reading_minutes_today = prev_mins;
             self.state.reading_minutes_date = prev_date;
+            self.state.reading_sessions.truncate(prev_sessions_len);
             return Err(error);
         }
         Ok(self.state.reading_minutes_today)
@@ -749,5 +866,126 @@ mod tests {
         )
         .unwrap();
         assert!(Store::open(root).is_err());
+    }
+
+    #[test]
+    fn sqlite_migrates_legacy_json_backs_up_and_supports_fts5_cjk_memory_search_and_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("data");
+        fs::create_dir_all(&root).unwrap();
+        let book_id = "a".repeat(64);
+        let legacy = serde_json::json!({
+            "version": 1,
+            "books": [{
+                "id": book_id,
+                "title": "瓦尔登湖",
+                "author": "梭罗",
+                "format": "epub",
+                "imported_at": "2026-10-01T00:00:00Z",
+                "cover": null,
+                "location": null,
+                "bookmarks": [],
+                "highlights": [{
+                    "id": "hl-walden",
+                    "text": "我步入丛林，因为我希望生活得有意义 Walden",
+                    "cfi": "epubcfi(/6/4!/4/2,/1:0,/1:20)",
+                    "created_at": "2026-10-15T12:00:00Z",
+                    "color": "amber",
+                    "note": "那天加班后读到这句突然慢下来"
+                }]
+            }],
+            "journal": [{
+                "id": "j-rain",
+                "created_at": "2026-11-02T22:10:00Z",
+                "kind": "mood",
+                "input": "雨夜读完一小节，肩膀终于放松了",
+                "mood": "疲惫",
+                "echo": {
+                    "quotes": [],
+                    "reply": "允许自己慢慢来，今晚的丛林微光一直都在。",
+                    "demo": false
+                },
+                "location": null,
+                "favorite": true
+            }],
+            "theme": {
+                "version": 1,
+                "id": "totoro",
+                "name": "龙猫林荫",
+                "background": "#E1ECDF",
+                "paper": "#F9FCF6",
+                "text": "#1F3626",
+                "muted": "#4E6B56",
+                "accent": "#3D7A52",
+                "font": "serif",
+                "font_size": 20.0,
+                "line_height": 1.9,
+                "width": 720,
+                "overlay": 0.86,
+                "volume": 0.55,
+                "reduced_motion": false
+            },
+            "custom_themes": [],
+            "mode": "scrolled",
+            "last_book": null,
+            "privacy_seen": true
+        });
+        fs::write(
+            root.join("state.json"),
+            serde_json::to_vec_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        let mut store = Store::open(root.clone()).unwrap();
+        assert!(root.join("glow.db").exists());
+        assert!(root.join("state.json.v1.bak").exists());
+        assert_eq!(store.state.theme.name, "夏风樟树下");
+
+        // FTS5 search matches CJK phrases across highlights & journal AND English words
+        let cjk_hits = store.search_memories("丛林", 10).unwrap();
+        assert_eq!(cjk_hits.len(), 2);
+        assert!(cjk_hits.iter().any(|h| h.kind == "highlight"));
+        assert!(cjk_hits.iter().any(|h| h.kind == "journal"));
+
+        let eng_hits = store.search_memories("walden", 5).unwrap();
+        assert_eq!(eng_hits.len(), 1);
+        assert_eq!(eng_hits[0].book_title, "瓦尔登湖");
+
+        // Record reading sessions across multiple days and aggregate monthly calendar
+        store
+            .record_reading_session(
+                Some(book_id.clone()),
+                25,
+                "2026-11-10",
+                Some("forest".into()),
+            )
+            .unwrap();
+        store
+            .record_reading_session(
+                Some(book_id.clone()),
+                15,
+                "2026-11-10",
+                Some("forest".into()),
+            )
+            .unwrap();
+        store
+            .record_reading_session(Some(book_id), 30, "2026-11-27", Some("lantern".into()))
+            .unwrap();
+
+        // Removing state.json still reloads intact from glow.db!
+        fs::remove_file(root.join("state.json")).unwrap();
+        let reopened = Store::open(root).unwrap();
+        assert_eq!(reopened.state.books.len(), 1);
+        assert_eq!(reopened.state.books[0].highlights.len(), 1);
+        assert_eq!(reopened.state.journal.len(), 1);
+        assert_eq!(reopened.state.reading_sessions.len(), 3);
+
+        let summary = reopened.monthly_reading_summary("2026-11").unwrap();
+        assert_eq!(summary.total_minutes, 70);
+        assert_eq!(summary.active_days, 2);
+        assert_eq!(
+            summary.daily_minutes,
+            vec![("2026-11-10".to_owned(), 40), ("2026-11-27".to_owned(), 30)]
+        );
     }
 }

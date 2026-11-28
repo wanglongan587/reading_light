@@ -568,7 +568,7 @@ pub fn ambient_stage_canvas(snap: MotionSnapshot, is_reader: bool) -> impl IntoE
                     });
                 }
             } else if !is_reader {
-                // Studio Ghibli hand-painted atmospheric lighting & gentle floating motes
+                // Original hand-painted atmospheric lighting & gentle floating motes
                 let p = if snap.reduced_motion { 0.0 } else { snap.phase };
                 match snap.atmosphere {
                     ThemeAtmosphere::Sky => {
@@ -830,7 +830,7 @@ pub fn ambient_stage_canvas(snap: MotionSnapshot, is_reader: bool) -> impl IntoE
                         );
                     }
                     ThemeAtmosphere::Lantern => {
-                        // Cozy Spirited Away night lantern glow & gently rising spirit fireflies
+                        // Cozy night lantern glow & gently rising warm fireflies
                         let lamp1 = point(
                             px(ox + w * (0.32 + 0.04 * (p * 0.14).sin()) - px_norm * 24.0),
                             px(oy + h * 0.22 - py_norm * 14.0),
@@ -1470,7 +1470,7 @@ pub fn prism_companion_canvas(snap: MotionSnapshot) -> impl IntoElement {
             px_block(3.0, 4.0, 7.0, 1.0, cat_hi); // top specular rim
             px_block(2.0, 8.0, 9.0, 1.0, cat_dark); // belly shadow
             if snap.atmosphere == ThemeAtmosphere::Kiki {
-                // Tiny crimson ribbon accent honoring Kiki's little black cat companion
+                // Tiny crimson ribbon accent for the harbor bakery companion cat
                 px_block(4.5, 7.8, 4.0, 0.9, Hsla::from(rgb(0xd9534f)));
             } else if snap.atmosphere == ThemeAtmosphere::Totoro {
                 // Soft cream woodland belly patch
@@ -2231,7 +2231,7 @@ fn paint_arc_stroke(
     }
 }
 
-/// Underlay GPU canvas for the NetEase Cloud Music × MineRadio spinning vinyl turntable:
+/// Underlay GPU canvas for the Glow FM spinning vinyl turntable:
 /// breathing ambient aura, 64-bar radial audio spectrum corona, frosted glass rim, matte obsidian
 /// platter, micro-grooves, rotating anisotropic specular reflections, and strobe rim dots.
 #[allow(clippy::too_many_arguments)]

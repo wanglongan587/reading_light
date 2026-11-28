@@ -22,8 +22,7 @@ rodio = { version = "0.20", default-features = false, features = ["wav", "vorbis
 time = { version = "0.3", features = ["formatting", "local-offset"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
-kothok-edge-tts = "0.2.10"
-tokio = { version = "1", features = ["rt", "time"] }
+sha2 = "0.10"
 image = { version = "0.25", default-features = false, features = ["png"] }
 smallvec = "1"
 

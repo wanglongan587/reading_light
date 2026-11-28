@@ -19,6 +19,7 @@ percent-encoding = "2"
 directories = "6"
 uuid = { version = "1", features = ["v4", "serde"] }
 time = { version = "0.3", features = ["formatting"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 
 tempfile = "3"
 

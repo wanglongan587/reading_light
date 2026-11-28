@@ -281,7 +281,7 @@ impl ReadingApp {
                 });
             }
 
-            // ================= Edge-TTS Audiobook Studio =================
+            // ================= Compliant Dual-Track TTS Audiobook Studio =================
             Action::ToggleTtsDrawer => {
                 if self.drawer == "tts" {
                     self.drawer.clear();
@@ -316,9 +316,15 @@ impl ReadingApp {
                 let voice = self.store.state.tts.voice.clone();
                 let rate = self.store.state.tts.rate;
                 let voice_label = tts::voice_by_id(&voice).label;
+                let tts_cfg = tts::TtsRuntimeConfig::from_store(
+                    &self.store.state.tts,
+                    &self.store.state.ai,
+                    &self.store.load_secrets(),
+                    &self.store.root,
+                );
                 self.stop_radio_if_playing();
                 self.ensure_tts()
-                    .start(segments, start_idx, voice, rate, 0.92);
+                    .start(segments, start_idx, voice, rate, 0.92, tts_cfg);
                 self.schedule_motion_frame(window, cx);
                 self.notice = Some(format!("正在召唤「{voice_label}」为您朗读当前章节…"));
             }
@@ -394,8 +400,14 @@ impl ReadingApp {
                         )
                     {
                         let rate = self.store.state.tts.rate;
+                        let tts_cfg = tts::TtsRuntimeConfig::from_store(
+                            &self.store.state.tts,
+                            &self.store.state.ai,
+                            &self.store.load_secrets(),
+                            &self.store.root,
+                        );
                         self.ensure_tts()
-                            .start(segs, resume_at, voice_id, rate, 0.92);
+                            .start(segs, resume_at, voice_id, rate, 0.92, tts_cfg);
                     }
                 }
                 self.notice = Some(format!("听书音色已切换为「{label}」。"));
@@ -1250,7 +1262,7 @@ impl ReadingApp {
         panel.into_any_element()
     }
 
-    // ================= UI: Edge-TTS Audiobook Studio Drawer =================
+    // ================= UI: Compliant Dual-Track TTS Audiobook Studio Drawer =================
     #[inline(never)]
     pub(super) fn drawer_tts(&self, cx: &Context<Self>) -> AnyElement {
         let t = self.theme();
@@ -1259,12 +1271,12 @@ impl ReadingApp {
         let cur_voice = tts::voice_by_id(&self.store.state.tts.voice);
 
         let status_label = if st.loading {
-            "正在合成神经语音…".to_owned()
+            "正在合成语音…".to_owned()
         } else if st.active && !st.paused {
             format!(
                 "正在朗读 · {}",
                 if st.engine_label.is_empty() {
-                    "Edge 神经语音"
+                    "微光语音引擎"
                 } else {
                     st.engine_label.as_str()
                 }
@@ -1313,7 +1325,7 @@ impl ReadingApp {
                         .line_height(relative(1.7))
                         .text_color(rgb(hex(&t.text)))
                         .child(if st.current_text.is_empty() {
-                            "点击下方「开始听书」，将以微软 Edge 神经语音从当前阅读章节温柔开讲（断网时自动切换系统本地语音）。"
+                            "点击下方「开始听书」，将优先使用您配置的合规云端或本地神经语音服务（自动缓存分段音频），未配置时自动降级为本机离线系统语音。"
                                 .to_owned()
                         } else {
                             st.current_text.clone()
@@ -1440,7 +1452,7 @@ impl ReadingApp {
                         .text_size(px(11.))
                         .font_family(self.ui_font())
                         .text_color(rgb(hex(&t.muted)))
-                        .child("Edge 神经主播音色"),
+                        .child("陪伴主播音色（兼容云端与离线）"),
                 )
                 .child(voices_grid),
         );
