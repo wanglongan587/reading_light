@@ -559,6 +559,13 @@ impl ReadingApp {
                     .child(format!("{day}")),
             );
         }
+        let finished_books_count = self
+            .store
+            .state
+            .books
+            .iter()
+            .filter(|b| b.effective_status() == "finished")
+            .count();
         let calendar_card = v_flex()
             .id("monthly-glow-calendar")
             .p_4()
@@ -577,6 +584,7 @@ impl ReadingApp {
                         h_flex()
                             .gap_2()
                             .items_center()
+                            .flex_wrap()
                             .child(
                                 div()
                                     .text_size(px(12.))
@@ -593,8 +601,10 @@ impl ReadingApp {
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.accent)))
                                     .child(format!(
-                                        "{} 个有微光的日子 · 共 {} 分钟",
-                                        monthly.active_days, monthly.total_minutes
+                                        "{} 个有微光的日子 · 共 {} 分钟 · 已完读 {} 本",
+                                        monthly.active_days,
+                                        monthly.total_minutes,
+                                        finished_books_count
                                     )),
                             ),
                     )
@@ -686,6 +696,76 @@ impl ReadingApp {
             );
 
         let locked = self.store.state.journal_locked;
+        let rediscovery_postcard = (!locked).then(|| self.daily_rediscovery()).flatten().map(
+            |(quote, source, target, total)| {
+                let mut actions = h_flex().gap_2().items_center().flex_wrap();
+                if let Some(loc) = target {
+                    actions = actions.child(
+                        self.button_with_icon(
+                            "回到书中这一段",
+                            IconName::ArrowUpRight,
+                            Action::OpenAt(Box::new(loc)),
+                            cx,
+                        )
+                        .primary(),
+                    );
+                }
+                if total > 1 {
+                    actions = actions.child(self.button_with_icon(
+                        "换一封",
+                        IconName::RefreshCw,
+                        Action::NextRediscovery,
+                        cx,
+                    ));
+                }
+                h_flex()
+                    .id("journal-rediscovery-postcard")
+                    .justify_between()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_4()
+                    .p_4()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.88 } else { 0.94 }))
+                    .border_1()
+                    .border_color(rgb(hex(&t.accent)).opacity(0.32))
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w(px(240.))
+                            .gap_1p5()
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        Icon::new(IconName::Sparkles)
+                                            .size(px(12.5))
+                                            .text_color(rgb(hex(&t.accent))),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(10.5))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&t.accent)))
+                                            .child(format!(
+                                                "跨时空重逢 · 过去寄来的明信片（{source}）"
+                                            )),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .font_family(self.display_font())
+                                    .line_height(relative(1.6))
+                                    .text_color(rgb(hex(&t.text)))
+                                    .child(format!("「{quote}」")),
+                            ),
+                    )
+                    .child(actions)
+            },
+        );
+
         let mut content = v_flex()
             .id("journal-scroll")
             .overflow_y_scroll()
@@ -754,6 +834,7 @@ impl ReadingApp {
                     ),
             )
             .child(calendar_card)
+            .when_some(rediscovery_postcard, |this, card| this.child(card))
             .child(inline_composer);
         if !self.store.state.journal.is_empty() {
             content = content.child(

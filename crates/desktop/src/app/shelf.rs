@@ -1045,9 +1045,36 @@ impl ReadingApp {
     fn shelf_catalog_view(&self, cx: &Context<Self>) -> AnyElement {
         let t = self.theme();
         let is_dark = self.is_dark();
+        let mut cat_bar = h_flex().gap_1p5().flex_wrap().items_center();
+        for cat in [
+            "全部",
+            "睡前故事",
+            "原创散文",
+            "古典诗文",
+            "双语原典",
+            "10分钟内",
+        ] {
+            cat_bar = cat_bar.child(self.pill_button(
+                cat,
+                None,
+                self.catalog_category == cat,
+                Action::CatalogCategory(cat.into()),
+                cx,
+            ));
+        }
+
+        let entries = catalog::filter_by_category(&self.catalog_category);
+        let total_catalog = catalog::all_books().len();
         let mut grid = h_flex().flex_wrap().gap_4().items_stretch();
-        for entry in catalog::all_books() {
+        for entry in &entries {
             let accent_col = hex(entry.accent_hex);
+            let existing_book_id = self
+                .store
+                .state
+                .books
+                .iter()
+                .find(|b| b.title == entry.title)
+                .map(|b| b.id.clone());
             let mut mood_row = h_flex().gap_1().flex_wrap();
             for m in entry.moods {
                 mood_row = mood_row.child(
@@ -1071,7 +1098,11 @@ impl ReadingApp {
                     .rounded_2xl()
                     .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.90 } else { 0.95 }))
                     .border_1()
-                    .border_color(self.border_subtle())
+                    .border_color(if existing_book_id.is_some() {
+                        Hsla::from(rgb(hex(&t.accent)).opacity(0.42))
+                    } else {
+                        self.border_subtle()
+                    })
                     .border_t_4()
                     .shadow_sm()
                     .child(
@@ -1081,20 +1112,31 @@ impl ReadingApp {
                                 h_flex()
                                     .justify_between()
                                     .items_center()
+                                    .gap_2()
                                     .child(
                                         div()
                                             .text_size(px(10.))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(accent_col))
-                                            .child(entry.era),
+                                            .child(format!("{} · {}", entry.category, entry.era)),
                                     )
-                                    .child(
+                                    .child(if existing_book_id.is_some() {
+                                        div()
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_full()
+                                            .bg(rgb(hex(&t.accent)).opacity(0.14))
+                                            .text_size(px(9.5))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&t.accent)))
+                                            .child("已在书架 ✓")
+                                    } else {
                                         div()
                                             .text_size(px(10.))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&t.muted)))
-                                            .child(format!("约 {} 分钟", entry.minutes)),
-                                    ),
+                                            .child(format!("约 {} 分钟", entry.minutes))
+                                    }),
                             )
                             .child(
                                 div()
@@ -1107,7 +1149,7 @@ impl ReadingApp {
                                     .text_size(px(11.5))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child(entry.author),
+                                    .child(format!("{} · 约 {} 分钟", entry.author, entry.minutes)),
                             )
                             .child(
                                 div()
@@ -1119,7 +1161,18 @@ impl ReadingApp {
                             )
                             .child(mood_row),
                     )
-                    .child(
+                    .child(if let Some(book_id) = existing_book_id {
+                        h_flex().gap_2().pt_2().items_center().child(
+                            self.button_with_icon(
+                                "继续阅读",
+                                IconName::BookOpen,
+                                Action::Open(book_id),
+                                cx,
+                            )
+                            .primary()
+                            .flex_1(),
+                        )
+                    } else {
                         h_flex()
                             .gap_2()
                             .pt_2()
@@ -1137,18 +1190,30 @@ impl ReadingApp {
                                 IconName::Plus,
                                 Action::InstallCatalogBook(entry.id.into(), false),
                                 cx,
-                            )),
-                    ),
+                            ))
+                    }),
             );
         }
         v_flex()
             .gap_4()
             .child(
-                div()
-                    .text_size(px(12.5))
-                    .font_family(self.ui_font())
-                    .text_color(rgb(hex(&t.muted)))
-                    .child("微光公版馆全部内置精排公版经典与原创散文，完全离线可用，打开即可直接划线、听书与 AI 共读。"),
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_3()
+                    .child(cat_bar)
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&t.muted)))
+                            .child(format!(
+                                "显示 {} / {} 部内置典藏 · 完全离线精排，支持划线、听书与纸边注脚",
+                                entries.len(),
+                                total_catalog
+                            )),
+                    ),
             )
             .child(grid)
             .into_any_element()

@@ -1097,6 +1097,95 @@ impl ReadingApp {
                     "已切换为纯粹独处模式，关闭同频微光显示。".into()
                 });
             }
+            Action::InspectThemePackage(path) => {
+                let preview = glow_core::theme::inspect_theme_package(&path)?;
+                self.palette_open = false;
+                self.mixer_open = false;
+                self.focus_timer_picker_open = false;
+                self.quote_card = None;
+                self.completion_book_id = None;
+                self.pending_theme_preview = Some((path, preview));
+            }
+            Action::ConfirmImportThemePackage => {
+                let (path, _) = self
+                    .pending_theme_preview
+                    .take()
+                    .context("没有待导入的主题包")?;
+                let imported = self.store.import_theme(&path)?;
+                self.stop_audio_smoothly();
+                self.preview = None;
+                self.install_native_theme(cx);
+                self.configure(cx);
+                window.focus(&self.focus, cx);
+                self.notice = Some(format!("已导入并启用主题「{}」。", imported.name));
+            }
+            Action::CancelImportThemePackage => {
+                self.pending_theme_preview = None;
+                window.focus(&self.focus, cx);
+            }
+            Action::DeleteCustomTheme(id) => {
+                let deleted = self.store.delete_custom_theme(&id)?;
+                if deleted {
+                    if self.draft.as_ref().is_some_and(|d| d.id == id) {
+                        self.draft = None;
+                    }
+                    if self.preview.as_ref().is_some_and(|p| p.id == id) {
+                        self.preview = None;
+                    }
+                    self.stop_audio_smoothly();
+                    self.install_native_theme(cx);
+                    self.configure(cx);
+                    self.notice = Some("已删除该自定义主题，并妥善清理本地素材。".into());
+                }
+            }
+            Action::TtsProvider(provider) => {
+                let normalized = match provider.trim().to_ascii_lowercase().as_str() {
+                    "system" => "system",
+                    "openai_compatible" => "openai_compatible",
+                    _ => "auto",
+                };
+                self.store.state.tts.provider = normalized.into();
+                self.save();
+                self.notice = Some(format!(
+                    "听书引擎轨道已切换为：{}。",
+                    tts::provider_label(normalized)
+                ));
+            }
+            Action::SaveTtsSettings => {
+                let api_base_url = self.tts_api_base_input.read(cx).value().trim().to_owned();
+                let model = self.tts_model_input.read(cx).value().trim().to_owned();
+                if !api_base_url.is_empty() {
+                    anyhow::ensure!(
+                        (api_base_url.starts_with("http://")
+                            || api_base_url.starts_with("https://"))
+                            && !api_base_url.chars().any(char::is_whitespace),
+                        "听书语音服务 URL 必须以 http:// 或 https:// 开头"
+                    );
+                }
+                self.store.state.tts.api_base_url = api_base_url;
+                self.store.state.tts.model = if model.is_empty() {
+                    "tts-1".into()
+                } else {
+                    model
+                };
+                self.save();
+                self.notice = Some(format!(
+                    "听书语音配置已保存（轨道：{} · 模型：{}）。",
+                    tts::provider_label(&self.store.state.tts.provider),
+                    self.store.state.tts.model
+                ));
+            }
+            Action::TtsClearCache => {
+                let removed = tts::clear_cache(&self.store.root)?;
+                self.notice = Some(if removed == 0 {
+                    "当前暂无听书音频缓存。".into()
+                } else {
+                    format!("已清理 {removed} 段听书音频缓存文件。")
+                });
+            }
+            Action::CatalogCategory(cat) => {
+                self.catalog_category = cat;
+            }
             _ => {}
         }
         Ok(())
@@ -2109,6 +2198,98 @@ impl ReadingApp {
                 ),
         );
 
+        // Dual-track engine selector & local cache status
+        let cur_tts_provider = self.store.state.tts.provider.as_str();
+        let mut track_row = h_flex().gap_1p5().flex_wrap();
+        for (pid, label) in [
+            ("auto", "自动双轨"),
+            ("system", "纯离线系统"),
+            ("openai_compatible", "神经语音 API"),
+        ] {
+            let active = (pid == "auto"
+                && cur_tts_provider != "system"
+                && cur_tts_provider != "openai_compatible")
+                || cur_tts_provider == pid;
+            track_row = track_row.child(self.pill_button(
+                label,
+                None,
+                active,
+                Action::TtsProvider(pid.into()),
+                cx,
+            ));
+        }
+        let (local_badge, local_detail) = tts::detect_local_engine_hint();
+        let (cache_files, cache_bytes) = tts::cache_stats(&self.store.root);
+        let cache_kb = cache_bytes.div_ceil(1024);
+        panel = panel.child(
+            v_flex()
+                .gap_2()
+                .p_3()
+                .rounded_xl()
+                .bg(rgb(hex(&t.background)).opacity(0.52))
+                .border_1()
+                .border_color(self.border_subtle())
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .font_family(self.ui_font())
+                                .text_color(rgb(hex(&t.muted)))
+                                .child("双轨合规听书引擎"),
+                        )
+                        .child(
+                            div()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_full()
+                                .bg(rgb(hex(&t.accent)).opacity(0.14))
+                                .text_size(px(9.5))
+                                .font_family(self.ui_font())
+                                .text_color(rgb(hex(&t.accent)))
+                                .child(local_badge),
+                        ),
+                )
+                .child(track_row)
+                .child(
+                    div()
+                        .text_size(px(10.))
+                        .font_family(self.ui_font())
+                        .line_height(relative(1.45))
+                        .text_color(rgb(hex(&t.muted)))
+                        .child(local_detail),
+                )
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .flex_wrap()
+                        .gap_1p5()
+                        .pt_1()
+                        .border_t_1()
+                        .border_color(self.border_subtle())
+                        .child(
+                            div()
+                                .text_size(px(10.))
+                                .font_family(self.ui_font())
+                                .text_color(rgb(hex(&t.muted)))
+                                .child(if cache_files == 0 {
+                                    "本地语音缓存：0 段".to_owned()
+                                } else {
+                                    format!("本地语音缓存：{cache_files} 段（约 {cache_kb} KB）")
+                                }),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(self.button("清缓存", Action::TtsClearCache, cx))
+                                .child(self.button("配置服务", Action::Page(Page::Themes), cx)),
+                        ),
+                ),
+        );
+
         panel.into_any_element()
     }
 
@@ -2667,6 +2848,218 @@ impl ReadingApp {
                         )
                         .outline()
                         .disabled(self.ai_test_rx.is_some()),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    #[inline(never)]
+    pub(super) fn settings_tts_card(&self, cx: &Context<Self>) -> AnyElement {
+        let t = self.theme();
+        let is_dark = self.is_dark();
+        let cur_provider = self.store.state.tts.provider.as_str();
+        let (local_badge, local_detail) = tts::detect_local_engine_hint();
+        let (cache_files, cache_bytes) = tts::cache_stats(&self.store.root);
+        let cache_kb = cache_bytes.div_ceil(1024);
+        let runtime_cfg = tts::TtsRuntimeConfig::from_store(
+            &self.store.state.tts,
+            &self.store.state.ai,
+            &self.store.load_secrets(),
+            &self.store.root,
+        );
+        let api_ready = runtime_cfg.can_use_api();
+
+        let tracks: &[(&str, &str)] = &[
+            ("auto", "自动双轨（推荐）"),
+            ("system", "纯离线系统语音"),
+            ("openai_compatible", "云端 / 本地神经语音 API"),
+        ];
+        let mut track_pills = h_flex().gap_2().flex_wrap();
+        for &(pid, label) in tracks {
+            let selected =
+                (pid == "auto" && cur_provider != "system" && cur_provider != "openai_compatible")
+                    || cur_provider == pid;
+            let pid_owned = pid.to_owned();
+            track_pills = track_pills.child(
+                div()
+                    .id(SharedString::from(format!("settings-tts-track-{pid}")))
+                    .cursor_pointer()
+                    .px_3()
+                    .py_1p5()
+                    .rounded_full()
+                    .bg(if selected {
+                        rgb(hex(&t.accent)).opacity(0.20)
+                    } else {
+                        rgb(hex(&t.background)).opacity(if is_dark { 0.65 } else { 0.78 })
+                    })
+                    .border_1()
+                    .border_color(if selected {
+                        Hsla::from(rgb(hex(&t.accent)).opacity(0.70))
+                    } else {
+                        self.border_subtle()
+                    })
+                    .text_size(px(11.5))
+                    .font_family(self.ui_font())
+                    .text_color(if selected {
+                        rgb(hex(&t.accent))
+                    } else {
+                        rgb(hex(&t.text))
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            this.act(Action::TtsProvider(pid_owned.clone()), window, cx);
+                        }),
+                    )
+                    .child(label),
+            );
+        }
+
+        v_flex()
+            .id("settings-tts-card")
+            .p_5()
+            .gap_4()
+            .rounded_2xl()
+            .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.90 } else { 0.94 }))
+            .border_1()
+            .border_color(self.border_subtle())
+            .shadow_sm()
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_start()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(self.studio_badge("DUAL-TRACK TTS", "COMPLIANT AUDIOBOOK ENGINE", true))
+                            .child(
+                                div()
+                                    .text_size(px(19.5))
+                                    .font_family(self.display_font())
+                                    .child("双轨合规听书引擎（离线系统语音 + 神经语音 API）"),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .flex_wrap()
+                            .child(
+                                div()
+                                    .px_2p5()
+                                    .py_1()
+                                    .rounded_full()
+                                    .bg(rgb(hex(&t.accent)).opacity(0.12))
+                                    .text_size(px(10.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.accent)))
+                                    .child(format!("本机：{local_badge}")),
+                            )
+                            .child(
+                                div()
+                                    .px_2p5()
+                                    .py_1()
+                                    .rounded_full()
+                                    .bg(rgb(hex(&t.background)).opacity(0.75))
+                                    .border_1()
+                                    .border_color(self.border_subtle())
+                                    .text_size(px(10.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child(if api_ready {
+                                        "神经语音 API 已就绪"
+                                    } else {
+                                        "神经语音 API 未配置"
+                                    }),
+                            ),
+                    ),
+            )
+            .child(track_pills)
+            .child(
+                h_flex()
+                    .gap_4()
+                    .flex_wrap()
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w(px(260.))
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child("独立语音服务 URL（留空则复用上方 AI 端点；本地 Kokoro 如 http://127.0.0.1:8880/v1）"),
+                            )
+                            .child(Input::new(&self.tts_api_base_input)),
+                    )
+                    .child(
+                        v_flex()
+                            .w(px(240.))
+                            .max_w_full()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child("语音模型名（OpenAI tts-1 / Kokoro kokoro）"),
+                            )
+                            .child(Input::new(&self.tts_model_input)),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .font_family(self.ui_font())
+                    .line_height(relative(1.6))
+                    .text_color(rgb(hex(&t.muted)))
+                    .child(format!(
+                        "{local_detail}。自动双轨优先调用合规 `/audio/speech` 服务并按段写入本地 `tts_cache/` 复用，无网络或未配置时零门槛切换至本机离线语音。"
+                    )),
+            )
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_3()
+                    .child(
+                        h_flex()
+                            .gap_2p5()
+                            .items_center()
+                            .flex_wrap()
+                            .child(
+                                self.button_with_icon(
+                                    "保存听书配置",
+                                    IconName::Check,
+                                    Action::SaveTtsSettings,
+                                    cx,
+                                )
+                                .primary(),
+                            )
+                            .child(
+                                self.button_with_icon(
+                                    "清理听书音频缓存",
+                                    IconName::X,
+                                    Action::TtsClearCache,
+                                    cx,
+                                )
+                                .outline(),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&t.muted)))
+                            .child(if cache_files == 0 {
+                                "当前磁盘缓存：0 段（0 KB）".to_owned()
+                            } else {
+                                format!("当前磁盘缓存：{cache_files} 段（约 {cache_kb} KB）")
+                            }),
                     ),
             )
             .into_any_element()

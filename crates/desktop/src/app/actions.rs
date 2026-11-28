@@ -1175,10 +1175,7 @@ impl ReadingApp {
                     .add_filter("微光主题", &["glowtheme"])
                     .pick_file()
                 {
-                    self.store.import_theme(&path)?;
-                    self.stop_audio_smoothly();
-                    self.install_native_theme(cx);
-                    self.configure(cx);
+                    self.perform_feature(Action::InspectThemePackage(path), window, cx)?;
                 }
             }
             Action::ExportTheme => {

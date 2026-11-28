@@ -268,6 +268,15 @@ enum Action {
     ToggleJournalLock,
     ToggleDaylightAuto,
     ToggleAmbientPresence,
+    // Polish: Theme package inspection, custom theme deletion, TTS engine config & cache, catalog filter
+    InspectThemePackage(PathBuf),
+    ConfirmImportThemePackage,
+    CancelImportThemePackage,
+    DeleteCustomTheme(String),
+    TtsProvider(String),
+    SaveTtsSettings,
+    TtsClearCache,
+    CatalogCategory(String),
 }
 
 struct PassageGenerated {
@@ -322,6 +331,7 @@ pub struct ReadingApp {
     shelf_filter: ShelfFilter,
     shelf_tab: ShelfTab,
     shelf_mood_pick: String,
+    catalog_category: String,
     editing_book_id: Option<String>,
     book_meta_title_input: Entity<InputState>,
     book_meta_author_input: Entity<InputState>,
@@ -355,6 +365,7 @@ pub struct ReadingApp {
     focus: FocusHandle,
     draft: Option<ReadingTheme>,
     preview: Option<ReadingTheme>,
+    pending_theme_preview: Option<(PathBuf, glow_core::theme::ThemePackagePreview)>,
     fields: Vec<Entity<InputState>>,
     spoilers: HashSet<String>,
     audio: Option<(rodio::OutputStream, rodio::Sink, Option<SoundscapeHandle>)>,
@@ -379,6 +390,8 @@ pub struct ReadingApp {
     tts_status: tts::TtsStatus,
     tts_ducking_applied: bool,
     tts_last_synced_segment: Option<usize>,
+    tts_api_base_input: Entity<InputState>,
+    tts_model_input: Entity<InputState>,
     ai_base_url_input: Entity<InputState>,
     ai_model_input: Entity<InputState>,
     ai_key_input: Entity<InputState>,
@@ -497,10 +510,28 @@ impl ReadingApp {
         .detach();
         cx.observe(&focus_timer_input, |_, _, cx| cx.notify())
             .detach();
-        let fields = (0..13)
+        let fields: Vec<Entity<InputState>> = (0..13)
             .map(|_| cx.new(|cx| InputState::new(window, cx)))
             .collect();
+        for field in fields.iter().take(6) {
+            cx.observe(field, |_, _, cx| cx.notify()).detach();
+        }
         let secrets = store.load_secrets();
+        let tts_api_base_val = store.state.tts.api_base_url.clone();
+        let tts_model_val = store.state.tts.model.clone();
+        let tts_api_base_input = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).placeholder(
+                "可选独立语音服务地址（留空则复用 AI URL；如 http://127.0.0.1:8880/v1）",
+            );
+            s.set_value(tts_api_base_val, window, cx);
+            s
+        });
+        let tts_model_input = cx.new(|cx| {
+            let mut s = InputState::new(window, cx)
+                .placeholder("语音模型名（默认 tts-1，本地 Kokoro 可填 kokoro）");
+            s.set_value(tts_model_val, window, cx);
+            s
+        });
         let ai_base_url_val = store.state.ai.base_url.clone();
         let ai_model_val = store.state.ai.model.clone();
         let ai_key_val = secrets.ai_api_key.clone();
@@ -643,6 +674,7 @@ impl ReadingApp {
             shelf_filter: ShelfFilter::All,
             shelf_tab: ShelfTab::Library,
             shelf_mood_pick: "睡前".into(),
+            catalog_category: "全部".into(),
             editing_book_id: None,
             book_meta_title_input,
             book_meta_author_input,
@@ -676,6 +708,7 @@ impl ReadingApp {
             focus: cx.focus_handle(),
             draft: None,
             preview: None,
+            pending_theme_preview: None,
             fields,
             spoilers: HashSet::new(),
             audio: None,
@@ -699,6 +732,8 @@ impl ReadingApp {
             tts_status: tts::TtsStatus::default(),
             tts_ducking_applied: false,
             tts_last_synced_segment: None,
+            tts_api_base_input,
+            tts_model_input,
             ai_base_url_input,
             ai_model_input,
             ai_key_input,
@@ -1007,6 +1042,10 @@ impl ReadingApp {
             self.quote_card = None;
             window.focus(&self.focus, cx);
             cx.notify();
+        } else if self.pending_theme_preview.is_some() {
+            self.pending_theme_preview = None;
+            window.focus(&self.focus, cx);
+            cx.notify();
         } else if self.completion_book_id.is_some() {
             self.completion_book_id = None;
             self.completion_letter_rx = None;
@@ -1136,6 +1175,7 @@ impl Render for ReadingApp {
             && !self.busy
             && self.confirm.is_none()
             && self.quote_card.is_none()
+            && self.pending_theme_preview.is_none()
             && self.completion_book_id.is_none()
             && !self.focus_timer_picker_open
             && !self.mixer_open
@@ -1356,6 +1396,9 @@ impl Render for ReadingApp {
         }
         if let Some(book_id) = &self.completion_book_id {
             root = root.child(self.completion_ceremony_modal(book_id, cx));
+        }
+        if let Some((_, preview)) = &self.pending_theme_preview {
+            root = root.child(self.theme_preview_modal(preview, cx));
         }
         if self.focus_timer_picker_open {
             root = root.child(self.focus_timer_modal(snap.clone(), cx));

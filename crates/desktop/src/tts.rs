@@ -198,10 +198,87 @@ impl TtsRuntimeConfig {
             || host_no_port.starts_with("10.")
     }
 
-    fn can_use_api(&self) -> bool {
+    pub fn can_use_api(&self) -> bool {
         self.resolved_speech_endpoint().is_some()
             && (!self.api_key.is_empty() || self.is_local_endpoint())
     }
+}
+
+pub fn provider_label(provider: &str) -> &'static str {
+    match provider.trim().to_ascii_lowercase().as_str() {
+        "system" => "纯离线系统语音",
+        "openai_compatible" => "神经语音 API",
+        _ => "自动双轨",
+    }
+}
+
+pub fn detect_local_engine_hint() -> (&'static str, &'static str) {
+    #[cfg(target_os = "windows")]
+    {
+        (
+            "离线就绪",
+            "Windows SAPI 本机离线语音可用，断网也能安静听书",
+        )
+    }
+    #[cfg(target_os = "macos")]
+    {
+        (
+            "离线就绪",
+            "macOS 系统 say 本机离线语音可用，断网也能安静听书",
+        )
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        let has_espeak = std::env::var_os("PATH")
+            .map(|paths| {
+                std::env::split_paths(&paths)
+                    .any(|dir| dir.join("espeak-ng").is_file() || dir.join("espeak").is_file())
+            })
+            .unwrap_or(false);
+        if has_espeak {
+            ("离线就绪", "检测到本机 espeak-ng 离线语音引擎，断网可听书")
+        } else {
+            (
+                "需安装或配 API",
+                "Linux 可安装 espeak-ng，或在下方接入本地 Kokoro / 云端语音 API",
+            )
+        }
+    }
+}
+
+pub fn cache_stats(data_root: &Path) -> (usize, u64) {
+    let dir = data_root.join("tts_cache");
+    let Ok(entries) = fs::read_dir(dir) else {
+        return (0, 0);
+    };
+    let mut count = 0usize;
+    let mut bytes = 0u64;
+    for entry in entries.flatten() {
+        if let Ok(meta) = entry.metadata()
+            && meta.is_file()
+        {
+            count += 1;
+            bytes = bytes.saturating_add(meta.len());
+        }
+    }
+    (count, bytes)
+}
+
+pub fn clear_cache(data_root: &Path) -> Result<usize> {
+    let dir = data_root.join("tts_cache");
+    if !dir.exists() {
+        return Ok(0);
+    }
+    let mut removed = 0usize;
+    for entry in fs::read_dir(&dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() {
+            fs::remove_file(path)?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
 }
 
 #[derive(Clone, Debug)]
@@ -922,5 +999,25 @@ mod tests {
             SynthAudio::Mp3(bytes) => assert_eq!(bytes, fake_mp3),
             SynthAudio::Wav(_) => panic!("expected cached mp3"),
         }
+    }
+
+    #[test]
+    fn cache_stats_and_clear_cache_round_trip() {
+        assert_eq!(provider_label("auto"), "自动双轨");
+        assert_eq!(provider_label("system"), "纯离线系统语音");
+        assert_eq!(provider_label("openai_compatible"), "神经语音 API");
+        let (badge, detail) = detect_local_engine_hint();
+        assert!(!badge.is_empty() && !detail.is_empty());
+
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(cache_stats(dir.path()), (0, 0));
+        let cache_dir = dir.path().join("tts_cache");
+        fs::create_dir_all(&cache_dir).unwrap();
+        fs::write(cache_dir.join("seg1.mp3"), vec![1u8; 512]).unwrap();
+        fs::write(cache_dir.join("seg2.mp3"), vec![2u8; 1024]).unwrap();
+
+        assert_eq!(cache_stats(dir.path()), (2, 1536));
+        assert_eq!(clear_cache(dir.path()).unwrap(), 2);
+        assert_eq!(cache_stats(dir.path()), (0, 0));
     }
 }

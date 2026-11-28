@@ -1618,3 +1618,128 @@ fn phase1_footnote_cross_book_fts5_completion_ceremony_and_journal_lock_work(
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
 }
+
+#[gpui::test]
+fn phase1_polish_theme_preview_tts_controls_catalog_filter_and_journal_postcard_work(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("data")).unwrap();
+    store.state.privacy_seen = true;
+
+    // Export a valid .glowtheme package to test preview -> confirm -> delete lifecycle
+    let mut exported_theme = store.duplicate_theme(&ReadingTheme::default()).unwrap();
+    exported_theme.name = "松烟竹纸".into();
+    let pkg_path = dir.path().join("bamboo.glowtheme");
+    store.export_theme(&exported_theme, &pkg_path).unwrap();
+
+    // Pre-populate a fake cached TTS audio segment
+    let cache_dir = store.root.join("tts_cache");
+    fs::create_dir_all(&cache_dir).unwrap();
+    fs::write(cache_dir.join("sample.mp3"), vec![0xAAu8; 2048]).unwrap();
+
+    let (app, cx) = cx.add_window_view(|window, cx| test_app(store, window, cx));
+
+    // 1. Inspect .glowtheme package without mutating store, render preview modal, confirm import, then delete
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::Page(Page::Themes), window, cx);
+        app.act(Action::InspectThemePackage(pkg_path.clone()), window, cx);
+        assert!(app.pending_theme_preview.is_some());
+        assert!(app.store.state.custom_themes.is_empty());
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    let imported_id = app.update_in(cx, |app, window, cx| {
+        app.act(Action::ConfirmImportThemePackage, window, cx);
+        assert!(app.pending_theme_preview.is_none());
+        assert_eq!(app.store.state.custom_themes.len(), 1);
+        assert_eq!(app.store.state.theme.name, "松烟竹纸");
+        // Also open DIY console to verify live miniature paper & contrast preview renders
+        app.act(Action::EditTheme, window, cx);
+        assert!(app.draft.is_some());
+        app.store.state.custom_themes[0].id.clone()
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::CancelTheme, window, cx);
+        app.act(Action::DeleteCustomTheme(imported_id), window, cx);
+        assert!(app.store.state.custom_themes.is_empty());
+        assert_eq!(app.store.state.theme.id, ReadingTheme::default().id);
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // 2. Dual-track TTS configuration & audio cache clearing on Themes + Reader TTS drawer
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::TtsProvider("openai_compatible".into()), window, cx);
+        assert_eq!(app.store.state.tts.provider, "openai_compatible");
+        app.tts_api_base_input.update(cx, |s, cx| {
+            s.set_value("http://127.0.0.1:8880/v1", window, cx)
+        });
+        app.tts_model_input
+            .update(cx, |s, cx| s.set_value("kokoro", window, cx));
+        app.act(Action::SaveTtsSettings, window, cx);
+        assert_eq!(app.store.state.tts.api_base_url, "http://127.0.0.1:8880/v1");
+        assert_eq!(app.store.state.tts.model, "kokoro");
+
+        assert_eq!(tts::cache_stats(&app.store.root).0, 1);
+        app.act(Action::TtsClearCache, window, cx);
+        assert_eq!(tts::cache_stats(&app.store.root).0, 0);
+
+        app.act(Action::TtsProvider("auto".into()), window, cx);
+        assert_eq!(app.store.state.tts.provider, "auto");
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // 3. Expanded 10-book 微光公版馆 category filtering + installed-on-shelf detection
+    let story_book_id = app.update_in(cx, |app, window, cx| {
+        app.act(Action::Page(Page::Shelf), window, cx);
+        app.act(Action::ShelfTab(ShelfTab::Catalog), window, cx);
+        app.act(Action::CatalogCategory("睡前故事".into()), window, cx);
+        assert_eq!(app.catalog_category, "睡前故事");
+        app.act(
+            Action::InstallCatalogBook("starlight-post".into(), false),
+            window,
+            cx,
+        );
+        let installed = app
+            .store
+            .state
+            .books
+            .iter()
+            .find(|b| b.title == "星灯与慢邮局")
+            .expect("starlight-post should be installed")
+            .id
+            .clone();
+        // Seed a highlight so Journal renders the cross-time rediscovery postcard
+        app.store
+            .add_highlight_styled(
+                &installed,
+                "灯光不必照亮整片原野，只要足够照见眼前这一页。".into(),
+                "epubcfi(/6/2!/4/2,/1:0,/1:18)".into(),
+                Some("amber".into()),
+                None,
+            )
+            .unwrap();
+        installed
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // 4. Open reader TTS drawer and verify upgraded engine selector + cache block renders cleanly
+    app.update_in(cx, |app, _, cx| {
+        app.active_book = Some(story_book_id.clone());
+        app.page = Page::Reader;
+        app.opened = true;
+        app.drawer = "tts".into();
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // 5. Journal view renders finished books summary + Cross-Time Rediscovery Postcard
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::Page(Page::Journal), window, cx);
+        assert!(app.daily_rediscovery().is_some());
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+}

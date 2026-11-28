@@ -7,6 +7,7 @@ impl ReadingApp {
         t: &ReadingTheme,
         active_theme: &ReadingTheme,
         is_dark: bool,
+        is_custom: bool,
         cx: &Context<Self>,
     ) -> Div {
         let active = active_theme.id == t.id;
@@ -243,15 +244,33 @@ impl ReadingApp {
                             .child(mood_note),
                     ),
             )
-            .child(if active {
-                self.button_with_icon("正在使用", IconName::Check, Action::PickTheme(i), cx)
-                    .primary()
-                    .w_full()
-            } else {
-                self.button_with_icon("使用此主题", IconName::Sparkles, Action::PickTheme(i), cx)
-                    .outline()
-                    .w_full()
-            });
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(if active {
+                        self.button_with_icon("正在使用", IconName::Check, Action::PickTheme(i), cx)
+                            .primary()
+                            .flex_1()
+                    } else {
+                        self.button_with_icon(
+                            "使用此主题",
+                            IconName::Sparkles,
+                            Action::PickTheme(i),
+                            cx,
+                        )
+                        .outline()
+                        .flex_1()
+                    })
+                    .when(is_custom, |row| {
+                        row.child(self.button_with_icon(
+                            "删除",
+                            IconName::X,
+                            Action::DeleteCustomTheme(t.id.clone()),
+                            cx,
+                        ))
+                    }),
+            );
         if active {
             card.border_2()
                 .border_color(rgb(hex(&t.accent)))
@@ -303,10 +322,13 @@ impl ReadingApp {
         let mut custom_row = h_flex().gap_4().flex_wrap();
         let mut custom_count = 0usize;
         for (i, t) in all.iter().enumerate() {
-            let card = self.theme_card(i, t, active_theme, is_dark, cx);
-            if Self::is_scenic_space_id(&t.id) {
+            let is_scenic = Self::is_scenic_space_id(&t.id);
+            let is_classic = matches!(t.id.as_str(), "paper" | "night" | "prism");
+            let is_custom = !is_scenic && !is_classic;
+            let card = self.theme_card(i, t, active_theme, is_dark, is_custom, cx);
+            if is_scenic {
                 scenic_row = scenic_row.child(card);
-            } else if matches!(t.id.as_str(), "paper" | "night" | "prism") {
+            } else if is_classic {
                 classic_row = classic_row.child(card);
             } else {
                 custom_count += 1;
@@ -477,8 +499,33 @@ impl ReadingApp {
                     ),
             )
             .child(self.settings_ai_card(cx))
+            .child(self.settings_tts_card(cx))
             .child(self.settings_sync_card(cx));
         if let Some(draft) = &self.draft {
+            let pick_hex = |idx: usize, fallback: &str| -> String {
+                let raw = self.fields[idx].read(cx).value().trim().to_owned();
+                if glow_core::theme::color(&raw).is_some() {
+                    raw
+                } else {
+                    fallback.to_owned()
+                }
+            };
+            let live_name = {
+                let raw = self.fields[0].read(cx).value().trim().to_owned();
+                if raw.is_empty() {
+                    draft.name.clone()
+                } else {
+                    raw
+                }
+            };
+            let live_bg = pick_hex(1, &draft.background);
+            let live_paper = pick_hex(2, &draft.paper);
+            let live_text = pick_hex(3, &draft.text);
+            let live_muted = pick_hex(4, &draft.muted);
+            let live_accent = pick_hex(5, &draft.accent);
+            let live_contrast = glow_core::theme::contrast(&live_text, &live_paper);
+            let live_pass = live_contrast >= 4.5;
+
             let labels = [
                 "主题名称",
                 "界面底色 #RRGGBB",
@@ -519,14 +566,104 @@ impl ReadingApp {
                     .border_color(self.border_subtle())
                     .shadow_sm()
                     .child(
-                        v_flex()
-                            .gap_1p5()
-                            .child(self.studio_badge("DIY CONSOLE", "MAKE IT YOURS", true))
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .flex_wrap()
+                            .gap_3()
                             .child(
-                                div()
-                                    .text_size(px(21.))
-                                    .font_family(self.display_font())
-                                    .child("编辑这一个阅读空间"),
+                                v_flex()
+                                    .gap_1p5()
+                                    .child(self.studio_badge("DIY CONSOLE", "MAKE IT YOURS", true))
+                                    .child(
+                                        div()
+                                            .text_size(px(21.))
+                                            .font_family(self.display_font())
+                                            .child("编辑这一个阅读空间"),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_1p5()
+                                    .items_center()
+                                    .px_3()
+                                    .py_1p5()
+                                    .rounded_full()
+                                    .bg(if live_pass {
+                                        rgb(hex(&active_theme.accent)).opacity(0.14)
+                                    } else {
+                                        rgb(0xb34f36).opacity(0.16)
+                                    })
+                                    .text_size(px(11.))
+                                    .font_family(self.ui_font())
+                                    .text_color(if live_pass {
+                                        rgb(hex(&active_theme.accent))
+                                    } else {
+                                        rgb(0xb34f36)
+                                    })
+                                    .child(if live_contrast >= 7.0 {
+                                        format!("实时对比度 {:.1}:1 · AAA 护眼级", live_contrast)
+                                    } else if live_pass {
+                                        format!("实时对比度 {:.1}:1 · AA 达标", live_contrast)
+                                    } else {
+                                        format!("实时对比度 {:.1}:1 · 低于 4.5:1", live_contrast)
+                                    }),
+                            ),
+                    )
+                    // Real-time miniature reading preview
+                    .child(
+                        h_flex()
+                            .p_3p5()
+                            .gap_4()
+                            .items_center()
+                            .flex_wrap()
+                            .rounded_xl()
+                            .bg(rgb(hex(&live_bg)))
+                            .border_1()
+                            .border_color(rgb(hex(&live_text)).opacity(0.16))
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w(px(240.))
+                                    .p_3p5()
+                                    .gap_1p5()
+                                    .rounded_xl()
+                                    .bg(rgb(hex(&live_paper)))
+                                    .border_1()
+                                    .border_color(rgb(hex(&live_text)).opacity(0.10))
+                                    .child(
+                                        h_flex()
+                                            .justify_between()
+                                            .items_center()
+                                            .child(
+                                                div()
+                                                    .text_size(px(10.))
+                                                    .font_family(self.ui_font())
+                                                    .text_color(rgb(hex(&live_muted)))
+                                                    .child(format!("实时纸面预览 · {live_name}")),
+                                            )
+                                            .child(
+                                                div()
+                                                    .px_2()
+                                                    .py_0p5()
+                                                    .rounded_full()
+                                                    .bg(rgb(hex(&live_accent)))
+                                                    .text_size(px(9.5))
+                                                    .font_family(self.ui_font())
+                                                    .text_color(rgb(hex(&live_paper)))
+                                                    .child("微光书签"),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(14.5))
+                                            .font_family(self.display_font())
+                                            .line_height(relative(1.6))
+                                            .text_color(rgb(hex(&live_text)))
+                                            .child(
+                                                "灯光不必照亮整片原野，只要足够照见眼前这一页。",
+                                            ),
+                                    ),
                             ),
                     )
                     .child(fields)

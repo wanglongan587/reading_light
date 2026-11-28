@@ -1614,4 +1614,280 @@ impl ReadingApp {
             )
             .into_any_element()
     }
+
+    #[inline(never)]
+    pub(super) fn theme_preview_modal(
+        &self,
+        preview: &glow_core::theme::ThemePackagePreview,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let active = self.theme();
+        let pt = &preview.theme;
+        let size_kb = preview.archive_bytes.div_ceil(1024);
+        let contrast_grade = if preview.text_contrast >= 7.0 {
+            "WCAG AAA 护眼级"
+        } else {
+            "WCAG AA 达标"
+        };
+
+        let mut asset_badges = h_flex().gap_1p5().flex_wrap().items_center();
+        if preview.has_image {
+            asset_badges = asset_badges.child(
+                div()
+                    .px_2p5()
+                    .py_0p5()
+                    .rounded_full()
+                    .bg(rgb(hex(&active.accent)).opacity(0.14))
+                    .text_size(px(10.))
+                    .font_family(self.ui_font())
+                    .text_color(rgb(hex(&active.accent)))
+                    .child("含背景图片"),
+            );
+        }
+        if preview.has_font {
+            asset_badges = asset_badges.child(
+                div()
+                    .px_2p5()
+                    .py_0p5()
+                    .rounded_full()
+                    .bg(rgb(hex(&active.accent)).opacity(0.14))
+                    .text_size(px(10.))
+                    .font_family(self.ui_font())
+                    .text_color(rgb(hex(&active.accent)))
+                    .child("含定制字体"),
+            );
+        }
+        if preview.has_audio {
+            asset_badges = asset_badges.child(
+                div()
+                    .px_2p5()
+                    .py_0p5()
+                    .rounded_full()
+                    .bg(rgb(hex(&active.accent)).opacity(0.14))
+                    .text_size(px(10.))
+                    .font_family(self.ui_font())
+                    .text_color(rgb(hex(&active.accent)))
+                    .child("含环境音素材"),
+            );
+        }
+        if !preview.has_image && !preview.has_font && !preview.has_audio {
+            asset_badges = asset_badges.child(
+                div()
+                    .px_2p5()
+                    .py_0p5()
+                    .rounded_full()
+                    .bg(rgb(hex(&active.background)).opacity(0.75))
+                    .text_size(px(10.))
+                    .font_family(self.ui_font())
+                    .text_color(rgb(hex(&active.muted)))
+                    .child("纯配色与排版主题包"),
+            );
+        }
+
+        let mut swatch_row = h_flex().gap_2().flex_wrap().items_center();
+        for (label, value) in [
+            ("底色", &pt.background),
+            ("纸面", &pt.paper),
+            ("正文", &pt.text),
+            ("次要", &pt.muted),
+            ("强调", &pt.accent),
+        ] {
+            swatch_row = swatch_row.child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .px_2()
+                    .py_1()
+                    .rounded_lg()
+                    .bg(rgb(hex(&active.background)).opacity(0.66))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .child(
+                        div()
+                            .size(px(11.))
+                            .rounded_full()
+                            .bg(rgb(hex(value)))
+                            .border_1()
+                            .border_color(self.border_strong()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&active.muted)))
+                            .child(format!("{label} {value}")),
+                    ),
+            );
+        }
+
+        div()
+            .id("theme-preview-overlay")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .p_6()
+            .bg(rgb(0x060910).opacity(0.58))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.act(Action::CancelImportThemePackage, window, cx);
+                }),
+            )
+            .child(
+                v_flex()
+                    .id("theme-preview-dialog")
+                    .debug_selector(|| "theme-preview-dialog".into())
+                    .w(px(560.))
+                    .max_w_full()
+                    .p_6()
+                    .gap_4()
+                    .rounded_2xl()
+                    .bg(rgb(hex(&active.paper)).opacity(0.98))
+                    .border_1()
+                    .border_color(rgb(hex(&active.accent)).opacity(0.45))
+                    .shadow_lg()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(self.studio_badge("THEME INSPECT", "主题包导入预检", true))
+                            .child(self.button_with_icon(
+                                "取消",
+                                IconName::X,
+                                Action::CancelImportThemePackage,
+                                cx,
+                            )),
+                    )
+                    // Miniature live reading room mockup styled in the incoming theme's exact colors
+                    .child(
+                        v_flex()
+                            .p_4()
+                            .gap_3()
+                            .rounded_2xl()
+                            .bg(rgb(hex(&pt.background)))
+                            .border_1()
+                            .border_color(rgb(hex(&pt.text)).opacity(0.16))
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_size(px(10.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&pt.muted)))
+                                            .child(format!("预览空间 · {}", pt.name)),
+                                    )
+                                    .child(
+                                        div()
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_full()
+                                            .bg(rgb(hex(&pt.accent)))
+                                            .text_size(px(9.5))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&pt.paper)))
+                                            .child(format!("字号 {:.0}px", pt.font_size)),
+                                    ),
+                            )
+                            .child(
+                                v_flex()
+                                    .p_4()
+                                    .gap_2()
+                                    .rounded_xl()
+                                    .bg(rgb(hex(&pt.paper)))
+                                    .border_1()
+                                    .border_color(rgb(hex(&pt.text)).opacity(0.10))
+                                    .child(div().w(px(36.)).h(px(2.5)).rounded_full().bg(rgb(hex(&pt.accent))))
+                                    .child(
+                                        div()
+                                            .text_size(px(16.))
+                                            .font_family(self.display_font())
+                                            .line_height(relative(1.65))
+                                            .text_color(rgb(hex(&pt.text)))
+                                            .child("山风吹过微黄纸页，把白日的喧嚣轻轻搁在窗外。"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&pt.muted)))
+                                            .child(format!(
+                                                "字体：{}  ·  行距 {:.1}  ·  正文宽 {}px",
+                                                pt.font.split(',').next().unwrap_or("衬线体").trim(),
+                                                pt.line_height,
+                                                pt.width
+                                            )),
+                                    ),
+                            ),
+                    )
+                    .child(swatch_row)
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .flex_wrap()
+                            .gap_2()
+                            .p_3()
+                            .rounded_xl()
+                            .bg(rgb(hex(&active.background)).opacity(0.55))
+                            .border_1()
+                            .border_color(self.border_subtle())
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        Icon::new(IconName::ShieldCheck)
+                                            .size(px(14.))
+                                            .text_color(rgb(hex(&active.accent))),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.5))
+                                            .font_family(self.ui_font())
+                                            .text_color(rgb(hex(&active.text)))
+                                            .child(format!(
+                                                "正文对比度 {:.1}:1（{contrast_grade}） · 强调对比度 {:.1}:1",
+                                                preview.text_contrast, preview.accent_contrast
+                                            )),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&active.muted)))
+                                    .child(format!("包体约 {size_kb} KB")),
+                            ),
+                    )
+                    .child(asset_badges)
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&active.muted)))
+                            .child("已通过安全清单与对比度校验，导入后将保存至「我的私藏主题」，不会影响你的藏书和日记。"),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2p5()
+                            .items_center()
+                            .child(
+                                self.button_with_icon(
+                                    "确认导入并启用",
+                                    IconName::Check,
+                                    Action::ConfirmImportThemePackage,
+                                    cx,
+                                )
+                                .primary(),
+                            )
+                            .child(self.button("暂不导入", Action::CancelImportThemePackage, cx)),
+                    ),
+            )
+            .into_any_element()
+    }
 }
