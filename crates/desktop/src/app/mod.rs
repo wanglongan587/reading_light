@@ -284,6 +284,8 @@ enum Action {
     RssRemoveFeed(String),
     RssFetchFeed(String),
     RssImportItem(usize, bool),
+    RssToggleSelect(usize),
+    LoadDemoSlowReadFeed,
     CompileWeekendDigest,
     ExportObsidianVault,
     ExportNotionCsv,
@@ -362,6 +364,7 @@ pub struct ReadingApp {
     rss_url_input: Entity<InputState>,
     rss_active_title: String,
     rss_items: Vec<rss::RssItem>,
+    rss_selected: HashSet<usize>,
     rss_fetch_rx: Option<mpsc::Receiver<anyhow::Result<rss::RssFeed>>>,
     onboarding_step: u8,
     reunion_dismissed: bool,
@@ -735,6 +738,7 @@ impl ReadingApp {
             rss_url_input,
             rss_active_title: String::new(),
             rss_items: vec![],
+            rss_selected: HashSet::new(),
             rss_fetch_rx: None,
             onboarding_step: 0,
             reunion_dismissed: false,
@@ -970,6 +974,7 @@ impl ReadingApp {
             value["font_url"] = json!(format!("{}/theme/{}/{}", platform::origin(), t.id, font));
         }
         value["warm_filter"] = json!(self.effective_warm_filter());
+        value["locale"] = json!(self.locale().code());
         value
     }
     fn active_soundscape_preset(&self) -> SoundscapePreset {

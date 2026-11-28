@@ -50,14 +50,24 @@ impl ReadingApp {
                                     .text_size(px(11.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.accent)))
-                                    .child("选一个最接近的情绪波段"),
+                                    .child(self.tr(
+                                        "选一个最接近的情绪波段",
+                                        "Pick the mood closest to how you feel",
+                                    )),
                             )
                             .child(
                                 div()
                                     .text_size(px(10.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child(format!("当前：{}", self.mood)),
+                                    .child(if self.locale().is_english() {
+                                        format!(
+                                            "Now: {}",
+                                            i18n::mood_name(self.locale(), &self.mood)
+                                        )
+                                    } else {
+                                        format!("当前：{}", self.mood)
+                                    }),
                             ),
                     )
                     .child(moods),
@@ -74,17 +84,25 @@ impl ReadingApp {
                                     .text_size(px(11.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child("如果愿意，再写下一点（选填）"),
+                                    .child(self.tr(
+                                        "如果愿意，再写下一点（选填）",
+                                        "Write a few lines if you wish (optional)",
+                                    )),
                             )
                             .child(
                                 div()
                                     .text_size(px(11.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child(format!(
-                                        "{} / 1000 字",
-                                        self.mood_input.read(cx).value().trim().chars().count()
-                                    )),
+                                    .child({
+                                        let count =
+                                            self.mood_input.read(cx).value().trim().chars().count();
+                                        if self.locale().is_english() {
+                                            format!("{count} / 1000 chars")
+                                        } else {
+                                            format!("{count} / 1000 字")
+                                        }
+                                    }),
                             ),
                     )
                     .child(
@@ -96,14 +114,14 @@ impl ReadingApp {
             .child(
                 self.button_with_icon(
                     if self.mood_rx.is_some() {
-                        "正在读你的文字…"
+                        self.tr("正在读你的文字…", "Listening to your words…")
                     } else if self.mood_unsaved.as_ref().is_some_and(|pending| {
                         pending.input == self.mood_input.read(cx).value().trim()
                             && pending.mood == self.mood
                     }) {
-                        "重试保存回答"
+                        self.tr("重试保存回答", "Retry Saving Reply")
                     } else {
-                        "让文字陪我一会儿"
+                        self.tr("让文字陪我一会儿", "Sit With Words for a While")
                     },
                     IconName::MessageCircleHeart,
                     Action::SubmitMood,
@@ -113,7 +131,11 @@ impl ReadingApp {
                 .disabled(self.mood_rx.is_some()),
             );
         if self.mood_rx.is_some() {
-            left_console = left_console.child(self.button("停止等待", Action::CancelMood, cx));
+            left_console = left_console.child(self.button(
+                self.tr("停止等待", "Stop Waiting"),
+                Action::CancelMood,
+                cx,
+            ));
         }
         left_console = left_console.child(
             h_flex()
@@ -135,7 +157,10 @@ impl ReadingApp {
                         .text_color(rgb(hex(&t.muted)))
                         .flex_1()
                         .min_w(px(0.))
-                        .child("点击后将本次文字与所选心情发送给 OpenAI 生成回答，可能产生 API 费用。不会发送书库或历史日记；成功后保存在本机。"),
+                        .child(self.tr(
+                            "点击后将本次文字与所选心情发送给已配置的大模型生成回答（支持本地 Ollama 完全离线）；不会发送书库或历史日记，成功后保存在本机。",
+                            "Sends only this note and selected mood to your configured LLM (supports offline Ollama). Never uploads your library or past journal.",
+                        )),
                 ),
         );
 
@@ -182,9 +207,13 @@ impl ReadingApp {
                     h_flex()
                         .justify_between()
                         .items_center()
-                        .child(self.studio_badge("4-7-8", "棱镜呼吸光环 · 进行中", true))
+                        .child(self.studio_badge(
+                            "4-7-8",
+                            self.tr("棱镜呼吸光环 · 进行中", "PRISM BREATHING · IN PROGRESS"),
+                            true,
+                        ))
                         .child(self.button_with_icon(
-                            "结束呼吸",
+                            self.tr("结束呼吸", "End Breathing"),
                             IconName::X,
                             Action::ToggleBreathing,
                             cx,
@@ -249,7 +278,11 @@ impl ReadingApp {
                                                 .text_size(px(10.))
                                                 .font_family(self.ui_font())
                                                 .text_color(rgb(hex(&t.muted)))
-                                                .child(format!("还剩 {session_left} 秒")),
+                                                .child(if self.locale().is_english() {
+                                                    format!("{session_left}s left")
+                                                } else {
+                                                    format!("还剩 {session_left} 秒")
+                                                }),
                                         ),
                                 ),
                         ),
@@ -302,14 +335,17 @@ impl ReadingApp {
                                         .text_size(px(16.5))
                                         .font_family(self.display_font())
                                         .text_color(rgb(0xfffdf7))
-                                        .child("先不急着变好。"),
+                                        .child(self.tr("先不急着变好。", "No rush to feel better.")),
                                 )
                                 .child(
                                     div()
                                         .text_size(px(11.5))
                                         .font_family(self.ui_font())
                                         .text_color(rgb(0xd8e4dd))
-                                        .child("在这里坐一会儿，让一句话陪你呼吸。"),
+                                        .child(self.tr(
+                                            "在这里坐一会儿，让一句话陪你呼吸。",
+                                            "Sit here for a quiet minute and breathe with a gentle line.",
+                                        )),
                                 ),
                         )
                         .child(
@@ -323,7 +359,7 @@ impl ReadingApp {
                                 ))
                                 .child(
                                     self.button_with_icon(
-                                        "陪我呼吸 1 分钟",
+                                        self.tr("陪我呼吸 1 分钟", "Breathe 1 Min"),
                                         IconName::Wind,
                                         Action::ToggleBreathing,
                                         cx,
@@ -359,14 +395,20 @@ impl ReadingApp {
                                     .text_size(px(10.5))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.accent)))
-                                    .child("给你的回响 · LIVE RESONANCE"),
+                                    .child(self.tr(
+                                        "给你的回响 · LIVE RESONANCE",
+                                        "LIVE RESONANCE · FOR YOU",
+                                    )),
                             )
                             .child(
                                 div()
                                     .text_size(px(10.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child("已自动存入本地私人日记"),
+                                    .child(self.tr(
+                                        "已自动存入本地私人日记",
+                                        "Saved automatically to local journal",
+                                    )),
                             ),
                     )
                     .child(self.echo_card(echo, input, false, cx))
@@ -392,7 +434,10 @@ impl ReadingApp {
                                 div()
                                     .text_size(px(15.))
                                     .font_family(self.display_font())
-                                    .child("情绪波段待机中 · 等待你的声音"),
+                                    .child(self.tr(
+                                        "情绪波段待机中 · 等待你的声音",
+                                        "Quiet Resonance · Listening When You’re Ready",
+                                    )),
                             ),
                     )
                     .child(
@@ -401,7 +446,10 @@ impl ReadingApp {
                             .font_family(self.ui_font())
                             .line_height(relative(1.65))
                             .text_color(rgb(hex(&t.muted)))
-                            .child("在左侧选一种接近此刻的状态，或者写下几句想说的话。生成的微光陪伴会在这里展开，并为你留在本地日记里。"),
+                            .child(self.tr(
+                                "在左侧选一种接近此刻的状态，或者写下几句想说的话。生成的微光陪伴会在这里展开，并为你留在本地日记里。",
+                                "Choose a mood on the left or write a few words. Your calm reflection will unfold here and stay in your private local journal.",
+                            )),
                     )
                     .into_any_element()
             });
@@ -415,9 +463,12 @@ impl ReadingApp {
             .py_6()
             .gap_5()
             .child(self.heading(
-                "A PLACE TO REST · 情绪调频",
-                "此刻，你感觉怎么样？",
-                "不用把心情整理好再来。选一种接近的感觉就可以。",
+                self.tr("A PLACE TO REST · 情绪调频", "A PLACE TO REST · MOOD TUNER"),
+                self.tr("此刻，你感觉怎么样？", "How are you feeling right now?"),
+                self.tr(
+                    "不用把心情整理好再来。选一种接近的感觉就可以。",
+                    "No need to sort everything out first — pick whatever feels closest.",
+                ),
             ))
             .child(
                 h_flex()
@@ -481,13 +532,14 @@ impl ReadingApp {
             );
         }
 
+        let en = self.locale().is_english();
         let mut filter_bar = h_flex().gap_1p5().items_center().flex_wrap();
         for (label, filter) in [
-            ("全部", JournalFilter::All),
-            ("已收藏", JournalFilter::Favorite),
-            ("心情", JournalFilter::Mood),
-            ("阅读回响", JournalFilter::Selection),
-            ("完读票根", JournalFilter::Ticket),
+            (self.tr("全部", "All"), JournalFilter::All),
+            (self.tr("已收藏", "Starred"), JournalFilter::Favorite),
+            (self.tr("心情", "Mood"), JournalFilter::Mood),
+            (self.tr("阅读回响", "Echoes"), JournalFilter::Selection),
+            (self.tr("完读票根", "Tickets"), JournalFilter::Ticket),
         ] {
             filter_bar = filter_bar.child(self.pill_button(
                 label,
@@ -589,7 +641,11 @@ impl ReadingApp {
                                 div()
                                     .text_size(px(12.))
                                     .font_family(self.display_font())
-                                    .child(format!("{year} 年 {month} 月 · 微光日历")),
+                                    .child(if en {
+                                        format!("{year}-{month:02} · Glow Calendar")
+                                    } else {
+                                        format!("{year} 年 {month} 月 · 微光日历")
+                                    }),
                             )
                             .child(
                                 div()
@@ -600,12 +656,21 @@ impl ReadingApp {
                                     .text_size(px(10.5))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.accent)))
-                                    .child(format!(
-                                        "{} 个有微光的日子 · 共 {} 分钟 · 已完读 {} 本",
-                                        monthly.active_days,
-                                        monthly.total_minutes,
-                                        finished_books_count
-                                    )),
+                                    .child(if en {
+                                        format!(
+                                            "{} glowing days · {} min · {} finished",
+                                            monthly.active_days,
+                                            monthly.total_minutes,
+                                            finished_books_count
+                                        )
+                                    } else {
+                                        format!(
+                                            "{} 个有微光的日子 · 共 {} 分钟 · 已完读 {} 本",
+                                            monthly.active_days,
+                                            monthly.total_minutes,
+                                            finished_books_count
+                                        )
+                                    }),
                             ),
                     )
                     .child(
@@ -613,7 +678,10 @@ impl ReadingApp {
                             .text_size(px(10.))
                             .font_family(self.ui_font())
                             .text_color(rgb(hex(&t.muted)))
-                            .child("无连续打卡压力 · 留白的日子同样美好"),
+                            .child(self.tr(
+                                "无连续打卡压力 · 留白的日子同样美好",
+                                "Zero streak pressure · Quiet days belong here too",
+                            )),
                     ),
             )
             .child(day_cells);
@@ -622,7 +690,7 @@ impl ReadingApp {
         let mut quick_moods = h_flex().gap_1p5().flex_wrap().items_center();
         for m in echo::MOODS {
             quick_moods = quick_moods.child(self.pill_button(
-                m,
+                i18n::mood_name(self.locale(), m),
                 None,
                 self.mood == *m,
                 Action::Mood((*m).into()),
@@ -646,7 +714,7 @@ impl ReadingApp {
                         div()
                             .text_size(px(12.))
                             .font_family(self.display_font())
-                            .child("随手记下此刻心绪"),
+                            .child(self.tr("随手记下此刻心绪", "Capture a Quiet Thought")),
                     )
                     .child(quick_moods),
             )
@@ -668,9 +736,9 @@ impl ReadingApp {
                             .child(
                                 self.button_with_icon(
                                     if self.mood_rx.is_some() {
-                                        "正在写回响…"
+                                        self.tr("正在写回响…", "Writing echo…")
                                     } else {
-                                        "记入手账并收下微光"
+                                        self.tr("记入手账并收下微光", "Save & Receive Glow")
                                     },
                                     IconName::MessageCircleHeart,
                                     Action::SubmitMood,
@@ -680,7 +748,7 @@ impl ReadingApp {
                                 .disabled(self.mood_rx.is_some()),
                             )
                             .child(self.button_with_icon(
-                                "4-7-8 呼吸室",
+                                self.tr("4-7-8 呼吸室", "4-7-8 Breathing"),
                                 IconName::Wind,
                                 Action::Page(Page::Mood),
                                 cx,
@@ -691,7 +759,10 @@ impl ReadingApp {
                             .text_size(px(10.))
                             .font_family(self.ui_font())
                             .text_color(rgb(hex(&t.muted)))
-                            .child("保存在本地 SQLite，随时可开启私密遮罩"),
+                            .child(self.tr(
+                                "保存在本地 SQLite，随时可开启私密遮罩",
+                                "Stored locally in SQLite · Privacy Veil available anytime",
+                            )),
                     ),
             );
 
@@ -702,7 +773,7 @@ impl ReadingApp {
                 if let Some(loc) = target {
                     actions = actions.child(
                         self.button_with_icon(
-                            "回到书中这一段",
+                            self.tr("回到书中这一段", "Jump to Passage"),
                             IconName::ArrowUpRight,
                             Action::OpenAt(Box::new(loc)),
                             cx,
@@ -712,7 +783,7 @@ impl ReadingApp {
                 }
                 if total > 1 {
                     actions = actions.child(self.button_with_icon(
-                        "换一封",
+                        self.tr("换一封", "Another"),
                         IconName::RefreshCw,
                         Action::NextRediscovery,
                         cx,
@@ -748,9 +819,11 @@ impl ReadingApp {
                                             .text_size(px(10.5))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&t.accent)))
-                                            .child(format!(
-                                                "跨时空重逢 · 过去寄来的明信片（{source}）"
-                                            )),
+                                            .child(if en {
+                                                format!("Postcard from Your Past Self ({source})")
+                                            } else {
+                                                format!("跨时空重逢 · 过去寄来的明信片（{source}）")
+                                            }),
                                     ),
                             )
                             .child(
@@ -780,9 +853,12 @@ impl ReadingApp {
                     .flex_wrap()
                     .gap_4()
                     .child(self.heading(
-                        "LITTLE THINGS KEPT · 微光手账档案",
-                        "那些被文字接住的时刻",
-                        "书摘、心绪与完读票根全部保存在这台电脑上，支持随时检索、私密遮罩与导出 Markdown。",
+                        self.tr("LITTLE THINGS KEPT · 微光手账档案", "LITTLE THINGS KEPT · PERSONAL ARCHIVE"),
+                        self.tr("那些被文字接住的时刻", "Moments Held by Words"),
+                        self.tr(
+                            "书摘、心绪与完读票根全部保存在这台电脑上，支持随时检索、私密遮罩与导出 Markdown。",
+                            "Quotes, reflections, and completion tickets stay private on this device with local FTS5 search, Privacy Veil, and Obsidian/Notion export.",
+                        ),
                     ))
                     .child(
                         h_flex()
@@ -800,18 +876,26 @@ impl ReadingApp {
                                     .text_size(px(11.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child(format!(
-                                        "共 {} 篇  ·  收藏 {} 篇",
-                                        self.store.state.journal.len(),
-                                        fav_count
-                                    )),
+                                    .child(if en {
+                                        format!(
+                                            "{} entries  ·  {} starred",
+                                            self.store.state.journal.len(),
+                                            fav_count
+                                        )
+                                    } else {
+                                        format!(
+                                            "共 {} 篇  ·  收藏 {} 篇",
+                                            self.store.state.journal.len(),
+                                            fav_count
+                                        )
+                                    }),
                             )
                             .child(
                                 self.button_with_icon(
                                     if locked {
-                                        "解锁手账"
+                                        self.tr("解锁手账", "Unlock")
                                     } else {
-                                        "私密遮罩"
+                                        self.tr("私密遮罩", "Privacy Lock")
                                     },
                                     IconName::Focus,
                                     Action::ToggleJournalLock,
@@ -820,25 +904,25 @@ impl ReadingApp {
                                 .toggled(locked),
                             )
                             .child(self.button_with_icon(
-                                "导出 Markdown",
+                                self.tr("导出 Markdown", "Export MD"),
                                 IconName::Download,
                                 Action::ExportJournalMarkdown,
                                 cx,
                             ))
                             .child(self.button_with_icon(
-                                "Obsidian 笔记库",
+                                self.tr("Obsidian 笔记库", "Obsidian Vault"),
                                 IconName::ArrowUpRight,
                                 Action::ExportObsidianVault,
                                 cx,
                             ))
                             .child(self.button_with_icon(
-                                "Notion 书单 CSV",
+                                self.tr("Notion 书单 CSV", "Notion CSV"),
                                 IconName::FileText,
                                 Action::ExportNotionCsv,
                                 cx,
                             ))
                             .child(self.button_with_icon(
-                                "清空日记",
+                                self.tr("清空日记", "Clear"),
                                 IconName::X,
                                 Action::ClearJournal,
                                 cx,

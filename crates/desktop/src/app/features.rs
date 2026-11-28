@@ -314,8 +314,9 @@ impl ReadingApp {
                     let count = feed.items.len();
                     self.rss_active_title = feed.title;
                     self.rss_items = feed.items;
+                    self.rss_selected = (0..count.min(6)).collect();
                     self.notice = Some(format!(
-                        "已拉取慢读订阅「{}」，共 {} 篇文章（可单篇收入或合订周末慢读小报）。",
+                        "已拉取慢读订阅「{}」，共 {} 篇文章（可勾选篇目合订周末慢读小报）。",
                         self.rss_active_title, count
                     ));
                     cx.notify();
@@ -1361,6 +1362,25 @@ impl ReadingApp {
                     self.notice = Some(format!("已将《{}》收入你的慢读书架。", item.title));
                 }
             }
+            Action::RssToggleSelect(idx) => {
+                if !self.rss_selected.remove(&idx) && idx < self.rss_items.len() {
+                    self.rss_selected.insert(idx);
+                }
+            }
+            Action::LoadDemoSlowReadFeed => {
+                let demo = rss::demo_slow_read_feed();
+                let count = demo.items.len();
+                self.rss_active_title = demo.title;
+                self.rss_items = demo.items;
+                self.rss_selected = (0..count).collect();
+                self.notice = Some(
+                    self.tr(
+                        "已载入微光离线示范慢读流（3 篇），可直接勾选并合订周末慢读小报。",
+                        "Loaded offline Glow Slow-Read demo feed (3 essays) — ready to clip or compile into a Weekend Digest.",
+                    )
+                    .to_owned(),
+                );
+            }
             Action::CompileWeekendDigest => {
                 anyhow::ensure!(
                     !self.rss_items.is_empty(),
@@ -1372,13 +1392,22 @@ impl ReadingApp {
                 } else {
                     self.rss_active_title.clone()
                 };
-                let selected: Vec<(String, rss::RssItem)> = self
-                    .rss_items
-                    .iter()
-                    .take(6)
-                    .cloned()
-                    .map(|it| (source.clone(), it))
-                    .collect();
+                let selected: Vec<(String, rss::RssItem)> = if self.rss_selected.is_empty() {
+                    self.rss_items
+                        .iter()
+                        .take(6)
+                        .cloned()
+                        .map(|it| (source.clone(), it))
+                        .collect()
+                } else {
+                    self.rss_items
+                        .iter()
+                        .enumerate()
+                        .filter(|(idx, _)| self.rss_selected.contains(idx))
+                        .map(|(_, it)| (source.clone(), it.clone()))
+                        .collect()
+                };
+                anyhow::ensure!(!selected.is_empty(), "请至少勾选一篇文章再合订小报");
                 let issue_title = format!("微光周末慢读小报 · {today}");
                 let epub = rss::compile_weekend_digest(&issue_title, &today, &selected)?;
                 let book_id = self.store.import_epub_bytes_tagged(
@@ -1466,6 +1495,7 @@ impl ReadingApp {
             }
             Action::SetLocale(code) => {
                 let locale = self.store.set_locale(&code)?;
+                self.configure(cx);
                 self.notice = Some(match locale {
                     i18n::Locale::ZhCn => "界面语言已切换为简体中文。".into(),
                     i18n::Locale::EnUs => "Interface language switched to English.".into(),
@@ -1586,12 +1616,23 @@ impl ReadingApp {
 
         // Spoiler-free shield banner
         let shield_text = if let Some(c) = cache {
-            format!(
-                "严防剧透 · 仅读至「{}」（约 {}%），已隔离后续 {} 章",
-                c.cutoff_chapter, c.progress_percent, c.skipped_future_chapters
-            )
+            if self.locale().is_english() {
+                format!(
+                    "Spoiler-Free · Read up to “{}” (~{}%), {} future chapters shielded",
+                    c.cutoff_chapter, c.progress_percent, c.skipped_future_chapters
+                )
+            } else {
+                format!(
+                    "严防剧透 · 仅读至「{}」（约 {}%），已隔离后续 {} 章",
+                    c.cutoff_chapter, c.progress_percent, c.skipped_future_chapters
+                )
+            }
         } else {
-            "严防剧透 · 只分析你当前已读进度之前的章节".into()
+            self.tr(
+                "严防剧透 · 只分析你当前已读进度之前的章节",
+                "Spoiler-Free · Only analyzes chapters up to your current reading position",
+            )
+            .to_owned()
         };
         panel = panel.child(
             h_flex()
@@ -1653,7 +1694,7 @@ impl ReadingApp {
                                 this.act(Action::CompanionTab(0), window, cx);
                             }),
                         )
-                        .child("前情提要"),
+                        .child(self.tr("前情提要", "Story Recap")),
                 )
                 .child(
                     div()
@@ -1683,19 +1724,23 @@ impl ReadingApp {
                                 this.act(Action::CompanionTab(1), window, cx);
                             }),
                         )
-                        .child(format!(
-                            "人物图谱 ({})",
-                            cache.map(|c| c.characters.len()).unwrap_or(0)
-                        )),
+                        .child({
+                            let count = cache.map(|c| c.characters.len()).unwrap_or(0);
+                            if self.locale().is_english() {
+                                format!("Characters ({count})")
+                            } else {
+                                format!("人物图谱 ({count})")
+                            }
+                        }),
                 ),
         );
 
-        // Primary AI refresh + Xiaohongshu poster button
+        // Primary AI refresh + poster button
         let mut action_row = h_flex().gap_2().flex_wrap();
         if loading {
             action_row = action_row.child(
                 self.button_with_icon(
-                    "AI 正在梳理脉络… 点此取消",
+                    self.tr("AI 正在梳理脉络… 点此取消", "Analyzing… Click to Cancel"),
                     IconName::X,
                     Action::CancelCompanion,
                     cx,
@@ -1706,7 +1751,7 @@ impl ReadingApp {
             action_row = action_row
                 .child(
                     self.button_with_icon(
-                        "AI 深度解析（防剧透）",
+                        self.tr("AI 深度解析（防剧透）", "Analyze Spoiler-Free"),
                         IconName::WandSparkles,
                         Action::RefreshCompanion,
                         cx,
@@ -1716,7 +1761,7 @@ impl ReadingApp {
                 .when(cache.is_some(), |el| {
                     el.child(
                         self.button_with_icon(
-                            "出图海报",
+                            self.tr("出图海报", "Export Poster"),
                             IconName::ImageDown,
                             Action::OpenCompanionPoster,
                             cx,
@@ -2189,18 +2234,22 @@ impl ReadingApp {
         let cur_voice = tts::voice_by_id(&self.store.state.tts.voice);
 
         let status_label = if st.loading {
-            "正在合成语音…".to_owned()
+            self.tr("正在合成语音…", "Synthesizing audio…").to_owned()
         } else if st.active && !st.paused {
-            format!(
-                "正在朗读 · {}",
-                if st.engine_label.is_empty() {
-                    "微光语音引擎"
-                } else {
-                    st.engine_label.as_str()
-                }
-            )
+            let engine = if st.engine_label.is_empty() {
+                self.tr("微光语音引擎", "Glow Speech Engine")
+            } else {
+                st.engine_label.as_str()
+            };
+            if self.locale().is_english() {
+                format!("Reading · {engine}")
+            } else {
+                format!("正在朗读 · {engine}")
+            }
         } else if st.active && st.paused {
-            "已暂停听书".to_owned()
+            self.tr("已暂停听书", "Paused").to_owned()
+        } else if self.locale().is_english() {
+            format!("Ready · Voice “{}”", cur_voice.label)
         } else {
             format!("就绪 · 音色「{}」", cur_voice.label)
         };
@@ -2243,8 +2292,11 @@ impl ReadingApp {
                         .line_height(relative(1.7))
                         .text_color(rgb(hex(&t.text)))
                         .child(if st.current_text.is_empty() {
-                            "点击下方「开始听书」，将优先使用您配置的合规云端或本地神经语音服务（自动缓存分段音频），未配置时自动降级为本机离线系统语音。"
-                                .to_owned()
+                            self.tr(
+                                "点击下方「开始听书」，将优先使用您配置的合规云端或本地神经语音服务（自动缓存分段音频），未配置时自动降级为本机离线系统语音。",
+                                "Click “Start Listening” below. Glow uses your configured compliant cloud or local neural TTS (with per-segment disk cache), and seamlessly falls back to offline system speech.",
+                            )
+                            .to_owned()
                         } else {
                             st.current_text.clone()
                         }),
@@ -2267,11 +2319,19 @@ impl ReadingApp {
                                     .text_size(px(10.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.accent)))
-                                    .child(format!(
-                                        "第 {} / {} 段",
-                                        st.segment_index + 1,
-                                        st.total_segments
-                                    )),
+                                    .child(if self.locale().is_english() {
+                                        format!(
+                                            "Segment {} / {}",
+                                            st.segment_index + 1,
+                                            st.total_segments
+                                        )
+                                    } else {
+                                        format!(
+                                            "第 {} / {} 段",
+                                            st.segment_index + 1,
+                                            st.total_segments
+                                        )
+                                    }),
                             ),
                     )
                 }),
@@ -2284,17 +2344,22 @@ impl ReadingApp {
                 .items_center()
                 .justify_between()
                 .child(
-                    self.button_with_icon("上句", IconName::ChevronLeft, Action::TtsPrev, cx)
-                        .disabled(!st.active),
+                    self.button_with_icon(
+                        self.tr("上句", "Prev"),
+                        IconName::ChevronLeft,
+                        Action::TtsPrev,
+                        cx,
+                    )
+                    .disabled(!st.active),
                 )
                 .child(
                     self.button_with_icon(
                         if !st.active {
-                            "开始听书"
+                            self.tr("开始听书", "Start Listening")
                         } else if st.paused {
-                            "继续朗读"
+                            self.tr("继续朗读", "Resume")
                         } else {
-                            "暂停朗读"
+                            self.tr("暂停朗读", "Pause")
                         },
                         IconName::AudioLines,
                         Action::TtsPauseResume,
@@ -2304,11 +2369,21 @@ impl ReadingApp {
                     .flex_1(),
                 )
                 .child(
-                    self.button_with_icon("下句", IconName::ChevronRight, Action::TtsNext, cx)
-                        .disabled(!st.active),
+                    self.button_with_icon(
+                        self.tr("下句", "Next"),
+                        IconName::ChevronRight,
+                        Action::TtsNext,
+                        cx,
+                    )
+                    .disabled(!st.active),
                 )
                 .when(st.active, |el| {
-                    el.child(self.button_with_icon("停止", IconName::X, Action::TtsStop, cx))
+                    el.child(self.button_with_icon(
+                        self.tr("停止", "Stop"),
+                        IconName::X,
+                        Action::TtsStop,
+                        cx,
+                    ))
                 }),
         );
 
@@ -2370,7 +2445,10 @@ impl ReadingApp {
                         .text_size(px(11.))
                         .font_family(self.ui_font())
                         .text_color(rgb(hex(&t.muted)))
-                        .child("陪伴主播音色（兼容云端与离线）"),
+                        .child(self.tr(
+                            "陪伴主播音色（兼容云端与离线）",
+                            "Companion Voices (Cloud & Offline)",
+                        )),
                 )
                 .child(voices_grid),
         );
@@ -2421,7 +2499,7 @@ impl ReadingApp {
                         .text_size(px(11.))
                         .font_family(self.ui_font())
                         .text_color(rgb(hex(&t.muted)))
-                        .child("朗读语速"),
+                        .child(self.tr("朗读语速", "Playback Speed")),
                 )
                 .child(speed_row),
         );
@@ -2439,18 +2517,18 @@ impl ReadingApp {
                     h_flex()
                         .justify_between()
                         .items_center()
-                        .child(
-                            div()
-                                .text_size(px(11.5))
-                                .font_family(self.ui_font())
-                                .child("朗读时智能压低环境声景"),
-                        )
+                        .child(div().text_size(px(11.5)).font_family(self.ui_font()).child(
+                            self.tr(
+                                "朗读时智能压低环境声景",
+                                "Duck ambient soundscape while reading",
+                            ),
+                        ))
                         .child(
                             self.button(
                                 if self.store.state.tts.duck_soundscape {
-                                    "已开启"
+                                    self.tr("已开启", "On")
                                 } else {
-                                    "已关闭"
+                                    self.tr("已关闭", "Off")
                                 },
                                 Action::TtsToggleDuck,
                                 cx,
@@ -2462,18 +2540,18 @@ impl ReadingApp {
                     h_flex()
                         .justify_between()
                         .items_center()
-                        .child(
-                            div()
-                                .text_size(px(11.5))
-                                .font_family(self.ui_font())
-                                .child("静读计时结束自动停播（睡前定时）"),
-                        )
+                        .child(div().text_size(px(11.5)).font_family(self.ui_font()).child(
+                            self.tr(
+                                "静读计时结束自动停播（睡前定时）",
+                                "Fade out & stop when focus timer ends",
+                            ),
+                        ))
                         .child(
                             self.button(
                                 if self.store.state.tts.sleep_with_timer {
-                                    "已开启"
+                                    self.tr("已开启", "On")
                                 } else {
-                                    "已关闭"
+                                    self.tr("已关闭", "Off")
                                 },
                                 Action::TtsToggleSleepTimer,
                                 cx,
@@ -2486,17 +2564,17 @@ impl ReadingApp {
         // Dual-track engine selector & local cache status
         let cur_tts_provider = self.store.state.tts.provider.as_str();
         let mut track_row = h_flex().gap_1p5().flex_wrap();
-        for (pid, label) in [
-            ("auto", "自动双轨"),
-            ("system", "纯离线系统"),
-            ("openai_compatible", "神经语音 API"),
+        for (pid, label_zh, label_en) in [
+            ("auto", "自动双轨", "Auto Dual-Track"),
+            ("system", "纯离线系统", "Offline System"),
+            ("openai_compatible", "神经语音 API", "Neural API"),
         ] {
             let active = (pid == "auto"
                 && cur_tts_provider != "system"
                 && cur_tts_provider != "openai_compatible")
                 || cur_tts_provider == pid;
             track_row = track_row.child(self.pill_button(
-                label,
+                self.tr(label_zh, label_en),
                 None,
                 active,
                 Action::TtsProvider(pid.into()),
@@ -2523,7 +2601,7 @@ impl ReadingApp {
                                 .text_size(px(11.))
                                 .font_family(self.ui_font())
                                 .text_color(rgb(hex(&t.muted)))
-                                .child("双轨合规听书引擎"),
+                                .child(self.tr("双轨合规听书引擎", "Compliant Dual-Track Engine")),
                         )
                         .child(
                             div()
@@ -2561,7 +2639,10 @@ impl ReadingApp {
                                 .font_family(self.ui_font())
                                 .text_color(rgb(hex(&t.muted)))
                                 .child(if cache_files == 0 {
-                                    "本地语音缓存：0 段".to_owned()
+                                    self.tr("本地语音缓存：0 段", "Audio cache: 0 segments")
+                                        .to_owned()
+                                } else if self.locale().is_english() {
+                                    format!("Audio cache: {cache_files} segments (~{cache_kb} KB)")
                                 } else {
                                     format!("本地语音缓存：{cache_files} 段（约 {cache_kb} KB）")
                                 }),
@@ -2569,8 +2650,16 @@ impl ReadingApp {
                         .child(
                             h_flex()
                                 .gap_1()
-                                .child(self.button("清缓存", Action::TtsClearCache, cx))
-                                .child(self.button("配置服务", Action::Page(Page::Themes), cx)),
+                                .child(self.button(
+                                    self.tr("清缓存", "Clear Cache"),
+                                    Action::TtsClearCache,
+                                    cx,
+                                ))
+                                .child(self.button(
+                                    self.tr("配置服务", "Configure"),
+                                    Action::Page(Page::Themes),
+                                    cx,
+                                )),
                         ),
                 ),
         );
@@ -2798,11 +2887,14 @@ impl ReadingApp {
                                         div()
                                             .text_size(px(21.))
                                             .font_family(self.display_font())
-                                            .child("多轨治愈声景混音台"),
+                                            .child(self.tr(
+                                                "多轨治愈声景混音台",
+                                                "6-Track Ambient Soundscape Mixer",
+                                            )),
                                     ),
                             )
                             .child(self.button_with_icon(
-                                "关闭",
+                                self.tr("关闭", "Close"),
                                 IconName::X,
                                 Action::CloseMixer,
                                 cx,
@@ -2816,7 +2908,10 @@ impl ReadingApp {
                                     .text_size(px(11.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child("一键治愈配方（点击即时融合）"),
+                                    .child(self.tr(
+                                        "一键治愈配方（点击即时融合）",
+                                        "Curated Sound Recipes (click to blend)",
+                                    )),
                             )
                             .child(recipe_row),
                     )
@@ -2832,16 +2927,21 @@ impl ReadingApp {
                                             .text_size(px(11.))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&t.muted)))
-                                            .child(
+                                            .child(self.tr(
                                                 "独立 6 轨自由叠加（点击名称开关 · ± 微调比例）",
-                                            ),
+                                                "6 Independent Tracks (click title to toggle · ± to adjust)",
+                                            )),
                                     )
                                     .child(
                                         div()
                                             .text_size(px(10.5))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&t.accent)))
-                                            .child(format!("当前配方：{}", mix.summary_label())),
+                                            .child(if self.locale().is_english() {
+                                                format!("Current blend: {}", mix.summary_label())
+                                            } else {
+                                                format!("当前配方：{}", mix.summary_label())
+                                            }),
                                     ),
                             )
                             .child(tracks_col),
@@ -2862,7 +2962,11 @@ impl ReadingApp {
                                             .text_size(px(11.5))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&t.muted)))
-                                            .child(format!("总输出音量 {vol_pct}%")),
+                                            .child(if self.locale().is_english() {
+                                                format!("Master Volume {vol_pct}%")
+                                            } else {
+                                                format!("总输出音量 {vol_pct}%")
+                                            }),
                                     )
                                     .child(self.button("−", Action::AudioVolume(-1), cx))
                                     .child(self.button("+", Action::AudioVolume(1), cx)),
@@ -2870,9 +2974,9 @@ impl ReadingApp {
                             .child(
                                 self.button_with_icon(
                                     if self.audio.is_some() {
-                                        "停止声景播放"
+                                        self.tr("停止声景播放", "Stop Soundscape")
                                     } else {
-                                        "立即开启混音声景"
+                                        self.tr("立即开启混音声景", "Start Ambient Mix")
                                     },
                                     if self.audio.is_some() {
                                         IconName::VolumeX
@@ -2897,18 +3001,18 @@ impl ReadingApp {
         let cur_provider = self.store.state.ai.provider.as_str();
         let is_local = self.store.state.ai.is_local();
 
-        let presets: &[(&str, &str)] = &[
-            ("deepseek", "DeepSeek"),
-            ("qwen", "通义千问"),
-            ("siliconflow", "硅基流动"),
-            ("openai", "OpenAI"),
-            ("ollama", "Ollama 离线"),
-            ("lmstudio", "LM Studio 离线"),
-            ("llamacpp", "llama.cpp 离线"),
-            ("custom", "自定义大模型 URL"),
+        let presets: &[(&str, &str, &str)] = &[
+            ("deepseek", "DeepSeek", "DeepSeek"),
+            ("qwen", "通义千问", "Qwen"),
+            ("siliconflow", "硅基流动", "SiliconFlow"),
+            ("openai", "OpenAI", "OpenAI"),
+            ("ollama", "Ollama 离线", "Ollama Local"),
+            ("lmstudio", "LM Studio 离线", "LM Studio Local"),
+            ("llamacpp", "llama.cpp 离线", "llama.cpp Local"),
+            ("custom", "自定义大模型 URL", "Custom LLM URL"),
         ];
         let mut preset_pills = h_flex().gap_1p5().flex_wrap();
-        for &(pid, label) in presets {
+        for &(pid, label_zh, label_en) in presets {
             let selected = cur_provider == pid;
             let pid_owned = pid.to_owned();
             preset_pills = preset_pills.child(
@@ -2942,7 +3046,7 @@ impl ReadingApp {
                             this.act(Action::SelectAiPreset(pid_owned.clone()), window, cx);
                         }),
                     )
-                    .child(label),
+                    .child(self.tr(label_zh, label_en)),
             );
         }
 
@@ -2968,7 +3072,10 @@ impl ReadingApp {
                                 div()
                                     .text_size(px(19.5))
                                     .font_family(self.display_font())
-                                    .child("AI 共读引擎（本地离线大模型 / 任意大模型 URL）"),
+                                    .child(self.tr(
+                                        "AI 共读引擎（本地离线大模型 / 任意大模型 URL）",
+                                        "AI Reading Engine (Local Offline LLM / Custom URL)",
+                                    )),
                             ),
                     )
                     .child(
@@ -2998,7 +3105,10 @@ impl ReadingApp {
                                     .text_size(px(11.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child("大模型 URL（支持 Base URL 或完整接口路径）"),
+                                    .child(self.tr(
+                                        "大模型 URL（支持 Base URL 或完整接口路径）",
+                                        "Model Endpoint URL (Base URL or Full Path)",
+                                    )),
                             )
                             .child(Input::new(&self.ai_base_url_input)),
                     )
@@ -3012,7 +3122,7 @@ impl ReadingApp {
                                     .text_size(px(11.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child("模型名称（Model ID）"),
+                                    .child(self.tr("模型名称（Model ID）", "Model ID")),
                             )
                             .child(Input::new(&self.ai_model_input)),
                     )
@@ -3027,9 +3137,15 @@ impl ReadingApp {
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
                                     .child(if is_local || cur_provider == "custom" {
-                                        "API Key（离线/免鉴权 URL 可留空 · 仅存本机）"
+                                        self.tr(
+                                            "API Key（离线/免鉴权 URL 可留空 · 仅存本机）",
+                                            "API Key (Optional for local / unauthenticated endpoints)",
+                                        )
                                     } else {
-                                        "API Key（仅存本机 secrets.json，永不同步）"
+                                        self.tr(
+                                            "API Key（仅存本机 secrets.json，永不同步）",
+                                            "API Key (Stored locally in secrets.json only, never synced)",
+                                        )
                                     }),
                             )
                             .child(Input::new(&self.ai_key_input)),
@@ -3087,7 +3203,10 @@ impl ReadingApp {
                                 .text_size(px(10.5))
                                 .font_family(self.ui_font())
                                 .text_color(rgb(hex(&t.accent)))
-                                .child("已发现可用模型（点击即可一键选用）："),
+                                .child(self.tr(
+                                    "已发现可用模型（点击即可一键选用）：",
+                                    "Discovered Models (click to select):",
+                                )),
                         )
                         .child(chips),
                 )
@@ -3099,11 +3218,20 @@ impl ReadingApp {
                     .line_height(relative(1.6))
                     .text_color(rgb(hex(&t.muted)))
                     .child(if is_local {
-                        "离线大模型模式：支持本机或局域网 Ollama（11434）、LM Studio（1234）、llama.cpp（8080）与 vLLM。推理全程不出内网、断网可用、零 API 费用；点击下方「测试连接并拉取模型」可自动列出已安装模型。"
+                        self.tr(
+                            "离线大模型模式：支持本机或局域网 Ollama（11434）、LM Studio（1234）、llama.cpp（8080）与 vLLM。推理全程不出内网、断网可用、零 API 费用；点击下方「测试连接并拉取模型」可自动列出已安装模型。",
+                            "Offline LLM mode supports Ollama (11434), LM Studio (1234), llama.cpp (8080), and vLLM on localhost or LAN. Click “Test & Fetch Models” to discover installed models.",
+                        )
                     } else if cur_provider == "custom" {
-                        "自定义 URL 模式：兼容任意 OpenAI 协议地址，可直接粘贴根域名、/v1 地址（如 OpenRouter、One-API、New-API、Gemini 兼容端点）或完整 .../chat/completions、.../responses 路径；局域网/免鉴权中转允许留空 Key。"
+                        self.tr(
+                            "自定义 URL 模式：兼容任意 OpenAI 协议地址，可直接粘贴根域名、/v1 地址（如 OpenRouter、One-API、New-API、Gemini 兼容端点）或完整 .../chat/completions、.../responses 路径；局域网/免鉴权中转允许留空 Key。",
+                            "Custom URL mode works with any OpenAI-compatible endpoint (root, /v1, /chat/completions, or /responses). Leave API Key blank for local relays.",
+                        )
                     } else {
-                        "配置后将同时驱动「防剧透前情提要」「动态人物关系图谱」「段落共读」与「此刻心情」；保留原有 .env.local 自动兼容。"
+                        self.tr(
+                            "配置后将同时驱动「防剧透前情提要」「动态人物关系图谱」「段落共读」与「此刻心情」；保留原有 .env.local 自动兼容。",
+                            "Powers Spoiler-Free Recaps, Character Graph, Passage Echoes, and Mood Journal replies; remains compatible with .env.local.",
+                        )
                     }),
             )
             .child(
@@ -3113,7 +3241,7 @@ impl ReadingApp {
                     .flex_wrap()
                     .child(
                         self.button_with_icon(
-                            "保存 AI 配置",
+                            self.tr("保存 AI 配置", "Save AI Settings"),
                             IconName::Check,
                             Action::SaveAiSettings,
                             cx,
@@ -3123,9 +3251,9 @@ impl ReadingApp {
                     .child(
                         self.button_with_icon(
                             if self.ai_test_rx.is_some() {
-                                "正在检测并拉取模型…"
+                                self.tr("正在检测并拉取模型…", "Testing & Fetching Models…")
                             } else {
-                                "测试连接并拉取模型"
+                                self.tr("测试连接并拉取模型", "Test & Fetch Models")
                             },
                             IconName::RefreshCw,
                             Action::TestAiConnection,
@@ -3154,13 +3282,17 @@ impl ReadingApp {
         );
         let api_ready = runtime_cfg.can_use_api();
 
-        let tracks: &[(&str, &str)] = &[
-            ("auto", "自动双轨（推荐）"),
-            ("system", "纯离线系统语音"),
-            ("openai_compatible", "云端 / 本地神经语音 API"),
+        let tracks: &[(&str, &str, &str)] = &[
+            ("auto", "自动双轨（推荐）", "Auto Dual-Track (Recommended)"),
+            ("system", "纯离线系统语音", "Offline System Speech"),
+            (
+                "openai_compatible",
+                "云端 / 本地神经语音 API",
+                "Cloud / Local Neural TTS API",
+            ),
         ];
         let mut track_pills = h_flex().gap_2().flex_wrap();
-        for &(pid, label) in tracks {
+        for &(pid, label_zh, label_en) in tracks {
             let selected =
                 (pid == "auto" && cur_provider != "system" && cur_provider != "openai_compatible")
                     || cur_provider == pid;
@@ -3196,7 +3328,7 @@ impl ReadingApp {
                             this.act(Action::TtsProvider(pid_owned.clone()), window, cx);
                         }),
                     )
-                    .child(label),
+                    .child(self.tr(label_zh, label_en)),
             );
         }
 
@@ -3223,7 +3355,10 @@ impl ReadingApp {
                                 div()
                                     .text_size(px(19.5))
                                     .font_family(self.display_font())
-                                    .child("双轨合规听书引擎（离线系统语音 + 神经语音 API）"),
+                                    .child(self.tr(
+                                        "双轨合规听书引擎（离线系统语音 + 神经语音 API）",
+                                        "Compliant Dual-Track Audiobook Engine (System + Neural API)",
+                                    )),
                             ),
                     )
                     .child(
@@ -3240,7 +3375,11 @@ impl ReadingApp {
                                     .text_size(px(10.5))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.accent)))
-                                    .child(format!("本机：{local_badge}")),
+                                    .child(if self.locale().is_english() {
+                                        format!("Local: {local_badge}")
+                                    } else {
+                                        format!("本机：{local_badge}")
+                                    }),
                             )
                             .child(
                                 div()
@@ -3254,9 +3393,9 @@ impl ReadingApp {
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
                                     .child(if api_ready {
-                                        "神经语音 API 已就绪"
+                                        self.tr("神经语音 API 已就绪", "Neural TTS Ready")
                                     } else {
-                                        "神经语音 API 未配置"
+                                        self.tr("神经语音 API 未配置", "Neural TTS Not Set")
                                     }),
                             ),
                     ),
@@ -3276,7 +3415,10 @@ impl ReadingApp {
                                     .text_size(px(11.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child("独立语音服务 URL（留空则复用上方 AI 端点；本地 Kokoro 如 http://127.0.0.1:8880/v1）"),
+                                    .child(self.tr(
+                                        "独立语音服务 URL（留空则复用上方 AI 端点；本地 Kokoro 如 http://127.0.0.1:8880/v1）",
+                                        "Dedicated TTS URL (leave blank to reuse AI endpoint; e.g. Kokoro http://127.0.0.1:8880/v1)",
+                                    )),
                             )
                             .child(Input::new(&self.tts_api_base_input)),
                     )
@@ -3290,7 +3432,10 @@ impl ReadingApp {
                                     .text_size(px(11.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child("语音模型名（OpenAI tts-1 / Kokoro kokoro）"),
+                                    .child(self.tr(
+                                        "语音模型名（OpenAI tts-1 / Kokoro kokoro）",
+                                        "Speech Model (OpenAI tts-1 / Kokoro)",
+                                    )),
                             )
                             .child(Input::new(&self.tts_model_input)),
                     ),
@@ -3301,9 +3446,15 @@ impl ReadingApp {
                     .font_family(self.ui_font())
                     .line_height(relative(1.6))
                     .text_color(rgb(hex(&t.muted)))
-                    .child(format!(
-                        "{local_detail}。自动双轨优先调用合规 `/audio/speech` 服务并按段写入本地 `tts_cache/` 复用，无网络或未配置时零门槛切换至本机离线语音。"
-                    )),
+                    .child(if self.locale().is_english() {
+                        format!(
+                            "{local_detail}. Auto mode prefers compliant /audio/speech APIs with local tts_cache/ reuse, and falls back smoothly to offline system speech."
+                        )
+                    } else {
+                        format!(
+                            "{local_detail}。自动双轨优先调用合规 `/audio/speech` 服务并按段写入本地 `tts_cache/` 复用，无网络或未配置时零门槛切换至本机离线语音。"
+                        )
+                    }),
             )
             .child(
                 h_flex()
@@ -3318,7 +3469,7 @@ impl ReadingApp {
                             .flex_wrap()
                             .child(
                                 self.button_with_icon(
-                                    "保存听书配置",
+                                    self.tr("保存听书配置", "Save TTS Settings"),
                                     IconName::Check,
                                     Action::SaveTtsSettings,
                                     cx,
@@ -3327,7 +3478,7 @@ impl ReadingApp {
                             )
                             .child(
                                 self.button_with_icon(
-                                    "清理听书音频缓存",
+                                    self.tr("清理听书音频缓存", "Clear Audio Cache"),
                                     IconName::X,
                                     Action::TtsClearCache,
                                     cx,
@@ -3341,7 +3492,13 @@ impl ReadingApp {
                             .font_family(self.ui_font())
                             .text_color(rgb(hex(&t.muted)))
                             .child(if cache_files == 0 {
-                                "当前磁盘缓存：0 段（0 KB）".to_owned()
+                                self.tr(
+                                    "当前磁盘缓存：0 段（0 KB）",
+                                    "Disk cache: 0 segments (0 KB)",
+                                )
+                                .to_owned()
+                            } else if self.locale().is_english() {
+                                format!("Disk cache: {cache_files} segments (~{cache_kb} KB)")
                             } else {
                                 format!("当前磁盘缓存：{cache_files} 段（约 {cache_kb} KB）")
                             }),
@@ -3357,13 +3514,21 @@ impl ReadingApp {
         let sync = &self.store.state.sync;
         let mode = sync.mode.as_str();
 
-        let modes: &[(&str, &str)] = &[
-            ("off", "暂不开启"),
-            ("github", "GitHub 私有仓库（推荐）"),
-            ("folder", "同步盘目录（坚果云 / OneDrive）"),
+        let modes: &[(&str, &str, &str)] = &[
+            ("off", "暂不开启", "Off"),
+            (
+                "github",
+                "GitHub 私有仓库（推荐）",
+                "GitHub Private Repo (Recommended)",
+            ),
+            (
+                "folder",
+                "同步盘目录（坚果云 / OneDrive）",
+                "Cloud Drive Folder (iCloud / OneDrive)",
+            ),
         ];
         let mut mode_pills = h_flex().gap_2().flex_wrap();
-        for &(mid, label) in modes {
+        for &(mid, label_zh, label_en) in modes {
             let selected = mode == mid;
             let mid_owned = mid.to_owned();
             mode_pills = mode_pills.child(
@@ -3397,7 +3562,7 @@ impl ReadingApp {
                             this.act(Action::SelectSyncMode(mid_owned.clone()), window, cx);
                         }),
                     )
-                    .child(label),
+                    .child(self.tr(label_zh, label_en)),
             );
         }
 
@@ -3427,10 +3592,14 @@ impl ReadingApp {
                                 div()
                                     .text_size(px(19.5))
                                     .font_family(self.display_font())
-                                    .child("多端双向同步（零服务器 · 冲突无损合并）"),
+                                    .child(self.tr(
+                                        "多端双向同步（零服务器 · 冲突无损合并）",
+                                        "Multi-Device Sync (Serverless · Lossless Merge)",
+                                    )),
                             ),
                     )
                     .when_some(sync.last_sync_at.as_ref(), |el, ts| {
+                        let formatted = ts.chars().take(19).collect::<String>().replace('T', " ");
                         el.child(
                             div()
                                 .px_2p5()
@@ -3440,10 +3609,11 @@ impl ReadingApp {
                                 .text_size(px(10.))
                                 .font_family(self.ui_font())
                                 .text_color(rgb(0x28996b))
-                                .child(format!(
-                                    "最近同步：{}",
-                                    ts.chars().take(19).collect::<String>().replace('T', " ")
-                                )),
+                                .child(if self.locale().is_english() {
+                                    format!("Last sync: {formatted}")
+                                } else {
+                                    format!("最近同步：{formatted}")
+                                }),
                         )
                     }),
             )
@@ -3465,7 +3635,7 @@ impl ReadingApp {
                                         .text_size(px(11.))
                                         .font_family(self.ui_font())
                                         .text_color(rgb(hex(&t.muted)))
-                                        .child("GitHub 用户名（Owner）"),
+                                        .child(self.tr("GitHub 用户名（Owner）", "GitHub Owner")),
                                 )
                                 .child(Input::new(&self.sync_owner_input)),
                         )
@@ -3479,7 +3649,7 @@ impl ReadingApp {
                                         .text_size(px(11.))
                                         .font_family(self.ui_font())
                                         .text_color(rgb(hex(&t.muted)))
-                                        .child("私有仓库名（Repo）"),
+                                        .child(self.tr("私有仓库名（Repo）", "Private Repository")),
                                 )
                                 .child(Input::new(&self.sync_repo_input)),
                         )
@@ -3492,7 +3662,7 @@ impl ReadingApp {
                                         .text_size(px(11.))
                                         .font_family(self.ui_font())
                                         .text_color(rgb(hex(&t.muted)))
-                                        .child("分支（Branch）"),
+                                        .child(self.tr("分支（Branch）", "Branch")),
                                 )
                                 .child(Input::new(&self.sync_branch_input)),
                         ),
@@ -3511,7 +3681,10 @@ impl ReadingApp {
                                         .text_size(px(11.))
                                         .font_family(self.ui_font())
                                         .text_color(rgb(hex(&t.muted)))
-                                        .child("Personal Access Token（仅存本机，绝不提交到仓库）"),
+                                        .child(self.tr(
+                                            "Personal Access Token（仅存本机，绝不提交到仓库）",
+                                            "Personal Access Token (Local only, never uploaded)",
+                                        )),
                                 )
                                 .child(Input::new(&self.sync_token_input)),
                         )
@@ -3525,7 +3698,10 @@ impl ReadingApp {
                                         .text_size(px(11.))
                                         .font_family(self.ui_font())
                                         .text_color(rgb(hex(&t.muted)))
-                                        .child("GitHub API 地址（可填镜像代理）"),
+                                        .child(self.tr(
+                                            "GitHub API 地址（可填镜像代理）",
+                                            "GitHub API Base URL (optional proxy)",
+                                        )),
                                 )
                                 .child(Input::new(&self.sync_api_base_input)),
                         ),
@@ -3539,7 +3715,10 @@ impl ReadingApp {
                         .font_family(self.ui_font())
                         .line_height(relative(1.6))
                         .text_color(rgb(hex(&t.muted)))
-                        .child("安全建议：请在 GitHub 新建一个 Private 私有仓库（如 glow-reading-sync），创建 Fine-grained Token 且只勾选该仓库的 Contents: Read and write。同步基于无损三向合并，多台电脑同时划线、写手账、更新进度绝不互相覆盖；API Key 与 Token 严格留在各设备本地。"),
+                        .child(self.tr(
+                            "安全建议：请在 GitHub 新建一个 Private 私有仓库（如 glow-reading-sync），创建 Fine-grained Token 且只勾选该仓库的 Contents: Read and write。同步基于无损三向合并，多台电脑同时划线、写手账、更新进度绝不互相覆盖；API Key 与 Token 严格留在各设备本地。",
+                            "Tip: Create a private GitHub repo (e.g. glow-reading-sync) with a Fine-grained Token scoped only to Contents: Read and write. Lossless 3-way merge protects concurrent highlights, journal entries, and progress; secrets stay local.",
+                        )),
                 );
         } else if mode == "folder" {
             card = card.child(
@@ -3559,14 +3738,19 @@ impl ReadingApp {
                             .font_family(self.ui_font())
                             .text_color(rgb(hex(&t.text)))
                             .child(if sync.folder_path.is_empty() {
-                                "尚未选择目录（可指向坚果云、OneDrive、iCloud Drive 或 Syncthing 本地目录）"
-                                    .to_owned()
+                                self.tr(
+                                    "尚未选择目录（可指向坚果云、OneDrive、iCloud Drive 或 Syncthing 本地目录）",
+                                    "No folder chosen (select an iCloud Drive, OneDrive, Dropbox, or Syncthing folder)",
+                                )
+                                .to_owned()
+                            } else if self.locale().is_english() {
+                                format!("Sync folder: {}", sync.folder_path)
                             } else {
                                 format!("当前同步目录：{}", sync.folder_path)
                             }),
                     )
                     .child(self.button_with_icon(
-                        "选择目录",
+                        self.tr("选择目录", "Choose Folder"),
                         IconName::Download,
                         Action::PickSyncFolder,
                         cx,
@@ -3583,9 +3767,15 @@ impl ReadingApp {
                         .child(
                             self.button(
                                 if sync.sync_books {
-                                    "同步 ≤15MB 电子书原文：已开"
+                                    self.tr(
+                                        "同步 ≤15MB 电子书原文：已开",
+                                        "Sync ≤15MB Book Files: On",
+                                    )
                                 } else {
-                                    "同步 ≤15MB 电子书原文：仅同步进度与笔记"
+                                    self.tr(
+                                        "同步 ≤15MB 电子书原文：仅同步进度与笔记",
+                                        "Sync ≤15MB Book Files: Metadata & Notes Only",
+                                    )
                                 },
                                 Action::ToggleSyncBooks,
                                 cx,
@@ -3595,9 +3785,9 @@ impl ReadingApp {
                         .child(
                             self.button(
                                 if sync.auto_sync_on_exit {
-                                    "退出时自动同步：已开"
+                                    self.tr("退出时自动同步：已开", "Auto-Sync on Exit: On")
                                 } else {
-                                    "退出时自动同步：已关"
+                                    self.tr("退出时自动同步：已关", "Auto-Sync on Exit: Off")
                                 },
                                 Action::ToggleSyncOnExit,
                                 cx,
@@ -3611,7 +3801,11 @@ impl ReadingApp {
                             .text_size(px(11.))
                             .font_family(self.ui_font())
                             .text_color(rgb(hex(&t.muted)))
-                            .child(format!("上次同步记录：{sum}")),
+                            .child(if self.locale().is_english() {
+                                format!("Last sync summary: {sum}")
+                            } else {
+                                format!("上次同步记录：{sum}")
+                            }),
                     )
                 })
                 .child(
@@ -3621,9 +3815,9 @@ impl ReadingApp {
                         .child(
                             self.button_with_icon(
                                 if self.sync_rx.is_some() {
-                                    "正在双向同步…"
+                                    self.tr("正在双向同步…", "Syncing…")
                                 } else {
-                                    "立即双向同步"
+                                    self.tr("立即双向同步", "Sync Now")
                                 },
                                 IconName::RefreshCw,
                                 Action::RunSyncNow,
@@ -3635,9 +3829,9 @@ impl ReadingApp {
                         .child(
                             self.button_with_icon(
                                 if self.sync_test_rx.is_some() {
-                                    "正在验证…"
+                                    self.tr("正在验证…", "Verifying…")
                                 } else {
-                                    "测试连接"
+                                    self.tr("测试连接", "Test Connection")
                                 },
                                 IconName::ShieldCheck,
                                 Action::TestSyncConnection,
@@ -3647,7 +3841,7 @@ impl ReadingApp {
                             .disabled(self.sync_test_rx.is_some()),
                         )
                         .child(self.button_with_icon(
-                            "保存设置",
+                            self.tr("保存设置", "Save Sync Settings"),
                             IconName::Check,
                             Action::SaveSyncSettings,
                             cx,

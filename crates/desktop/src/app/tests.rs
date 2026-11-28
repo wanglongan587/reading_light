@@ -1830,11 +1830,117 @@ fn phase2_multiformat_slow_read_rss_digest_obsidian_export_and_bilingual_locale_
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
 
-    // 4. Switch bilingual locale to English and back to zh-CN cleanly
+    // 4. Offline demo slow-read feed + per-item Weekend Digest selective curation
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::Page(Page::Shelf), window, cx);
+        app.act(Action::ShelfTab(ShelfTab::SlowRead), window, cx);
+        app.act(Action::LoadDemoSlowReadFeed, window, cx);
+        assert_eq!(app.rss_items.len(), 3);
+        assert_eq!(app.rss_selected.len(), 3);
+
+        // Deselect item #2 and compile a selective 2-article Weekend Digest EPUB
+        app.act(Action::RssToggleSelect(2), window, cx);
+        assert_eq!(app.rss_selected.len(), 2);
+        assert!(!app.rss_selected.contains(&2));
+
+        let before = app.store.state.books.len();
+        app.act(Action::CompileWeekendDigest, window, cx);
+        assert_eq!(app.store.state.books.len(), before + 1);
+        let newest = app
+            .store
+            .state
+            .books
+            .last()
+            .expect("compiled weekend digest book");
+        assert!(newest.title.contains("慢读小报"));
+        let epub_bytes = fs::read(
+            app.store
+                .root
+                .join("books")
+                .join(&newest.id)
+                .join("book.epub"),
+        )
+        .unwrap();
+        let files = glow_core::library::unpack(&epub_bytes).unwrap();
+        let mut combined = String::new();
+        for (name, bytes) in files {
+            if name.ends_with(".xhtml") {
+                combined.push_str(&String::from_utf8_lossy(&bytes));
+            }
+        }
+        assert!(combined.contains(&app.rss_items[0].title));
+        assert!(combined.contains(&app.rss_items[1].title));
+        assert!(
+            !combined.contains(&app.rss_items[2].title),
+            "deselected RSS item must be excluded from selective Weekend Digest"
+        );
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // 5. Switch bilingual locale to English and verify full UI rendering across Themes, Shelf, Reader (drawers + WebView payload), and Journal
     app.update_in(cx, |app, window, cx| {
         app.act(Action::Page(Page::Themes), window, cx);
         app.act(Action::SetLocale("en-US".into()), window, cx);
         assert!(app.locale().is_english());
+        assert_eq!(app.theme_json()["locale"], "en-US");
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::Page(Page::Shelf), window, cx);
+        app.act(Action::ShelfTab(ShelfTab::Library), window, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::ShelfTab(ShelfTab::Catalog), window, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::ShelfTab(ShelfTab::SlowRead), window, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::ShelfTab(ShelfTab::Opds), window, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    app.update_in(cx, |app, _, cx| {
+        app.active_book = Some(pdf_id.clone());
+        app.page = Page::Reader;
+        app.opened = true;
+        app.drawer = "tts".into();
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    app.update_in(cx, |app, _, cx| {
+        app.drawer = "companion".into();
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    app.update_in(cx, |app, _, cx| {
+        app.drawer = "type".into();
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    app.update_in(cx, |app, _, cx| {
+        app.drawer = "footnote".into();
+        cx.notify();
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::Page(Page::Mood), window, cx);
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::Page(Page::Journal), window, cx);
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
 
@@ -1842,6 +1948,7 @@ fn phase2_multiformat_slow_read_rss_digest_obsidian_export_and_bilingual_locale_
         app.act(Action::Page(Page::Shelf), window, cx);
         app.act(Action::SetLocale("zh-CN".into()), window, cx);
         assert!(!app.locale().is_english());
+        assert_eq!(app.theme_json()["locale"], "zh-CN");
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
 }

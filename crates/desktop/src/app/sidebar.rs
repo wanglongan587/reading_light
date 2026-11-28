@@ -91,7 +91,7 @@ impl ReadingApp {
                                         div()
                                             .text_size(px(21.))
                                             .font_family(self.display_font())
-                                            .child("微光"),
+                                            .child(self.tr("微光", "Glow")),
                                     )
                                     .child(
                                         div()
@@ -133,7 +133,7 @@ impl ReadingApp {
                         .text_size(px(9.))
                         .font_family(self.ui_font())
                         .text_color(rgb(hex(&t.muted)).opacity(0.84))
-                        .child("核心三轴"),
+                        .child(self.tr("核心三轴", "NAVIGATION")),
                 )
                 .child(
                     div()
@@ -282,7 +282,7 @@ impl ReadingApp {
                                         .text_size(px(11.))
                                         .font_family(self.ui_font())
                                         .text_color(rgb(hex(&t.muted)))
-                                        .child("快捷指令"),
+                                        .child(self.tr("快捷指令", "Commands")),
                                 ),
                         )
                         .child(
@@ -328,9 +328,17 @@ impl ReadingApp {
                         .line_height(relative(1.45))
                         .text_color(rgb(hex(&t.muted)).opacity(0.86))
                         .child(if presence_on {
-                            format!("此刻约 {presence_count} 盏微光正安静阅读")
+                            if self.locale().is_english() {
+                                format!("~{presence_count} quiet lamps reading nearby")
+                            } else {
+                                format!("此刻约 {presence_count} 盏微光正安静阅读")
+                            }
                         } else {
-                            "纯粹独处中 · 一盏灯，一本书".to_owned()
+                            self.tr(
+                                "纯粹独处中 · 一盏灯，一本书",
+                                "Pure solitude · One lamp, one book",
+                            )
+                            .to_owned()
                         }),
                 ),
         )

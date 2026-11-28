@@ -296,21 +296,27 @@ impl ReadingApp {
                     .items_start()
                     .gap_6()
                     .child(self.heading(
-                        "MAKE YOURSELF AT HOME · 空间与声景调音台",
-                        "把这里，变成喜欢的样子。",
-                        "从原创手绘水彩般的温柔光影，到素纸晨光与星空棱镜；主题包不包含你的书和日记。",
+                        self.tr(
+                            "MAKE YOURSELF AT HOME · 空间与声景调音台",
+                            "MAKE YOURSELF AT HOME · SPACE & STUDIO SETTINGS",
+                        ),
+                        self.tr("把这里，变成喜欢的样子。", "Make This Reading Room Yours."),
+                        self.tr(
+                            "从原创手绘水彩般的温柔光影，到素纸晨光与星空棱镜；主题包不包含你的书和日记。",
+                            "Original hand-painted Glow Spaces, editorial paper, and dark sanctuaries. Theme packages never include your books or journal.",
+                        ),
                     ))
                     .child(
                         h_flex()
                             .gap_2()
                             .child(self.button_with_icon(
-                                "导入主题包",
+                                self.tr("导入主题包", "Import Theme"),
                                 IconName::Plus,
                                 Action::ImportTheme,
                                 cx,
                             ))
                             .child(self.button_with_icon(
-                                "导出当前主题",
+                                self.tr("导出当前主题", "Export Theme"),
                                 IconName::ArrowUpRight,
                                 Action::ExportTheme,
                                 cx,
@@ -353,14 +359,14 @@ impl ReadingApp {
                                             .text_size(px(10.))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&active_theme.accent)))
-                                            .child("GLOW SPACE GALLERY · 原创手绘微光空间"),
+                                            .child("GLOW SPACE GALLERY"),
                                     )
                                     .child(
                                         div()
                                             .text_size(px(18.5))
                                             .font_family(self.display_font())
                                             .text_color(rgb(hex(&active_theme.text)))
-                                            .child("微光空间画廊"),
+                                            .child(self.tr("微光空间画廊", "Glow Space Gallery")),
                                     ),
                             )
                             .child(
@@ -368,7 +374,10 @@ impl ReadingApp {
                                     .text_size(px(11.5))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&active_theme.muted)))
-                                    .child("晴空旧书房、夏风樟树下、浅海晚风号、山谷秘密花园、海港烘焙屋与雨夜灯笼巷 · 均满足高对比度护眼阅读"),
+                                    .child(self.tr(
+                                        "晴空旧书房、夏风樟树下、浅海晚风号、山谷秘密花园、海港烘焙屋与雨夜灯笼巷 · 均满足高对比度护眼阅读",
+                                        "Sky Study, Camphor Shade, Twilight Sea, Meadow Breeze, Harbor Bakery & Lantern Rain · All WCAG AAA calibrated",
+                                    )),
                             ),
                     )
                     .child(scenic_row),
@@ -385,14 +394,14 @@ impl ReadingApp {
                                     .text_size(px(10.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&active_theme.accent)))
-                                    .child("CLASSIC & AMBIENT · 经典与夜读"),
+                                    .child("CLASSIC & AMBIENT"),
                             )
                             .child(
                                 div()
                                     .text_size(px(17.5))
                                     .font_family(self.display_font())
                                     .text_color(rgb(hex(&active_theme.text)))
-                                    .child("经典与光影空间"),
+                                    .child(self.tr("经典与光影空间", "Classic & Night Spaces")),
                             ),
                     )
                     .child(classic_row),
@@ -410,14 +419,14 @@ impl ReadingApp {
                                     .text_size(px(10.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&active_theme.accent)))
-                                    .child("PERSONAL THEMES · 自定义"),
+                                    .child("PERSONAL THEMES"),
                             )
                             .child(
                                 div()
                                     .text_size(px(17.5))
                                     .font_family(self.display_font())
                                     .text_color(rgb(hex(&active_theme.text)))
-                                    .child("我的私藏主题"),
+                                    .child(self.tr("我的私藏主题", "My Custom Themes")),
                             ),
                     )
                     .child(custom_row),
@@ -442,7 +451,7 @@ impl ReadingApp {
                             .flex_wrap()
                             .child(
                                 self.button_with_icon(
-                                    "自定义 / 另存主题",
+                                    self.tr("自定义 / 另存主题", "Customize Theme"),
                                     IconName::Feather,
                                     Action::EditTheme,
                                     cx,
@@ -452,9 +461,9 @@ impl ReadingApp {
                             .child(
                                 self.button_with_icon(
                                     if active_theme.reduced_motion {
-                                        "流光交互：已静谧"
+                                        self.tr("流光交互：已静谧", "Motion: Calm")
                                     } else {
-                                        "流光交互：已开启"
+                                        self.tr("流光交互：已开启", "Motion: Ambient")
                                     },
                                     IconName::Sparkles,
                                     Action::ToggleFlow,
@@ -486,7 +495,10 @@ impl ReadingApp {
                                     .text_size(px(12.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&active_theme.muted)))
-                                    .child("支持鼠标流光、棱镜折射、自定义素材与中英双语界面"),
+                                    .child(self.tr(
+                                        "支持鼠标流光、棱镜折射、自定义素材与中英双语界面",
+                                        "Ambient prism refraction, custom assets, and live ZH / EN interface",
+                                    )),
                             ),
                     )
                     .child(
@@ -507,13 +519,17 @@ impl ReadingApp {
                                     .text_size(px(11.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&active_theme.accent)))
-                                    .child(format!(
-                                        "当前正文对比度 {:.1}:1 · 最低要求 4.5:1",
-                                        glow_core::theme::contrast(
+                                    .child({
+                                        let ratio = glow_core::theme::contrast(
                                             &active_theme.text,
-                                            &active_theme.paper
-                                        )
-                                    )),
+                                            &active_theme.paper,
+                                        );
+                                        if self.locale().is_english() {
+                                            format!("Text contrast {ratio:.1}:1 · Min 4.5:1")
+                                        } else {
+                                            format!("当前正文对比度 {ratio:.1}:1 · 最低要求 4.5:1")
+                                        }
+                                    }),
                             ),
                     ),
             )
@@ -545,22 +561,22 @@ impl ReadingApp {
             let live_contrast = glow_core::theme::contrast(&live_text, &live_paper);
             let live_pass = live_contrast >= 4.5;
 
-            let labels = [
-                "主题名称",
-                "界面底色 #RRGGBB",
-                "纸面颜色 #RRGGBB",
-                "正文颜色 #RRGGBB",
-                "次要文字 #RRGGBB",
-                "强调色 #RRGGBB",
-                "正文字体",
-                "字号 14—36",
-                "行距 1.3—2.6",
-                "正文宽度 400—1100",
-                "背景遮罩 0—1",
-                "环境音量 0—1",
+            let labels: &[(&str, &str)] = &[
+                ("主题名称", "Theme Name"),
+                ("界面底色 #RRGGBB", "Backdrop #RRGGBB"),
+                ("纸面颜色 #RRGGBB", "Paper #RRGGBB"),
+                ("正文颜色 #RRGGBB", "Ink #RRGGBB"),
+                ("次要文字 #RRGGBB", "Muted #RRGGBB"),
+                ("强调色 #RRGGBB", "Accent #RRGGBB"),
+                ("正文字体", "Body Font"),
+                ("字号 14—36", "Font Size 14—36"),
+                ("行距 1.3—2.6", "Line Height 1.3—2.6"),
+                ("正文宽度 400—1100", "Measure 400—1100"),
+                ("背景遮罩 0—1", "Backdrop Scrim 0—1"),
+                ("环境音量 0—1", "Ambient Volume 0—1"),
             ];
             let mut fields = h_flex().flex_wrap().gap_4();
-            for (i, label) in labels.iter().enumerate() {
+            for (i, &(label_zh, label_en)) in labels.iter().enumerate() {
                 fields = fields.child(
                     v_flex()
                         .w(px(212.))
@@ -570,7 +586,7 @@ impl ReadingApp {
                                 .text_size(px(11.))
                                 .font_family(self.ui_font())
                                 .text_color(rgb(hex(&active_theme.muted)))
-                                .child((*label).to_owned()),
+                                .child(self.tr(label_zh, label_en)),
                         )
                         .child(Input::new(&self.fields[i])),
                 );
@@ -598,7 +614,10 @@ impl ReadingApp {
                                         div()
                                             .text_size(px(21.))
                                             .font_family(self.display_font())
-                                            .child("编辑这一个阅读空间"),
+                                            .child(self.tr(
+                                                "编辑这一个阅读空间",
+                                                "Customize This Reading Space",
+                                            )),
                                     ),
                             )
                             .child(
@@ -620,12 +639,20 @@ impl ReadingApp {
                                     } else {
                                         rgb(0xb34f36)
                                     })
-                                    .child(if live_contrast >= 7.0 {
-                                        format!("实时对比度 {:.1}:1 · AAA 护眼级", live_contrast)
+                                    .child(if self.locale().is_english() {
+                                        if live_contrast >= 7.0 {
+                                            format!("Live contrast {live_contrast:.1}:1 · AAA Comfort")
+                                        } else if live_pass {
+                                            format!("Live contrast {live_contrast:.1}:1 · AA Pass")
+                                        } else {
+                                            format!("Live contrast {live_contrast:.1}:1 · Below 4.5:1")
+                                        }
+                                    } else if live_contrast >= 7.0 {
+                                        format!("实时对比度 {live_contrast:.1}:1 · AAA 护眼级")
                                     } else if live_pass {
-                                        format!("实时对比度 {:.1}:1 · AA 达标", live_contrast)
+                                        format!("实时对比度 {live_contrast:.1}:1 · AA 达标")
                                     } else {
-                                        format!("实时对比度 {:.1}:1 · 低于 4.5:1", live_contrast)
+                                        format!("实时对比度 {live_contrast:.1}:1 · 低于 4.5:1")
                                     }),
                             ),
                     )
@@ -659,7 +686,11 @@ impl ReadingApp {
                                                     .text_size(px(10.))
                                                     .font_family(self.ui_font())
                                                     .text_color(rgb(hex(&live_muted)))
-                                                    .child(format!("实时纸面预览 · {live_name}")),
+                                                    .child(if self.locale().is_english() {
+                                                        format!("Live paper preview · {live_name}")
+                                                    } else {
+                                                        format!("实时纸面预览 · {live_name}")
+                                                    }),
                                             )
                                             .child(
                                                 div()
@@ -670,7 +701,7 @@ impl ReadingApp {
                                                     .text_size(px(9.5))
                                                     .font_family(self.ui_font())
                                                     .text_color(rgb(hex(&live_paper)))
-                                                    .child("微光书签"),
+                                                    .child(self.tr("微光书签", "Glow Mark")),
                                             ),
                                     )
                                     .child(
@@ -679,9 +710,10 @@ impl ReadingApp {
                                             .font_family(self.display_font())
                                             .line_height(relative(1.6))
                                             .text_color(rgb(hex(&live_text)))
-                                            .child(
+                                            .child(self.tr(
                                                 "灯光不必照亮整片原野，只要足够照见眼前这一页。",
-                                            ),
+                                                "A lamp need not light the whole valley — only the page before you.",
+                                            )),
                                     ),
                             ),
                     )
@@ -691,28 +723,28 @@ impl ReadingApp {
                             .gap_2()
                             .flex_wrap()
                             .child(self.button_with_icon(
-                                "选择背景图片",
+                                self.tr("选择背景图片", "Choose Backdrop"),
                                 IconName::Image,
                                 Action::Asset("background".into()),
                                 cx,
                             ))
                             .child(self.button_with_icon(
-                                "选择字体文件",
+                                self.tr("选择字体文件", "Choose Font File"),
                                 IconName::AArrowDown,
                                 Action::Asset("font".into()),
                                 cx,
                             ))
                             .child(self.button_with_icon(
-                                "选择环境音",
+                                self.tr("选择环境音", "Choose Soundscape"),
                                 IconName::AudioLines,
                                 Action::Asset("audio".into()),
                                 cx,
                             ))
                             .child(self.button_with_icon(
                                 if draft.reduced_motion {
-                                    "减少动态：开"
+                                    self.tr("减少动态：开", "Reduced Motion: On")
                                 } else {
-                                    "减少动态：关"
+                                    self.tr("减少动态：关", "Reduced Motion: Off")
                                 },
                                 IconName::Sparkles,
                                 Action::ReducedMotion,
@@ -724,33 +756,50 @@ impl ReadingApp {
                             .text_size(px(11.))
                             .font_family(self.ui_font())
                             .text_color(rgb(hex(&active_theme.muted)))
-                            .child(format!(
-                                "背景：{}  /  字体：{}  /  声音：{}",
-                                draft.image.as_deref().unwrap_or("内置"),
-                                draft.font_asset.as_deref().unwrap_or("系统"),
-                                draft.audio.as_deref().unwrap_or("未选择")
-                            )),
+                            .child(if self.locale().is_english() {
+                                format!(
+                                    "Backdrop: {}  /  Font: {}  /  Audio: {}",
+                                    draft.image.as_deref().unwrap_or("Built-in"),
+                                    draft.font_asset.as_deref().unwrap_or("System"),
+                                    draft.audio.as_deref().unwrap_or("None")
+                                )
+                            } else {
+                                format!(
+                                    "背景：{}  /  字体：{}  /  声音：{}",
+                                    draft.image.as_deref().unwrap_or("内置"),
+                                    draft.font_asset.as_deref().unwrap_or("系统"),
+                                    draft.audio.as_deref().unwrap_or("未选择")
+                                )
+                            }),
                     )
                     .child(
                         h_flex()
                             .gap_2()
                             .child(self.button_with_icon(
-                                "预览",
+                                self.tr("预览", "Preview"),
                                 IconName::Eye,
                                 Action::PreviewTheme,
                                 cx,
                             ))
                             .child(
                                 self.button_with_icon(
-                                    "保存主题",
+                                    self.tr("保存主题", "Save Theme"),
                                     IconName::Check,
                                     Action::SaveTheme,
                                     cx,
                                 )
                                 .primary(),
                             )
-                            .child(self.button("恢复默认", Action::ResetTheme, cx))
-                            .child(self.button("取消", Action::CancelTheme, cx)),
+                            .child(self.button(
+                                self.tr("恢复默认", "Reset Defaults"),
+                                Action::ResetTheme,
+                                cx,
+                            ))
+                            .child(self.button(
+                                self.tr("取消", "Cancel"),
+                                Action::CancelTheme,
+                                cx,
+                            )),
                     ),
             );
         }

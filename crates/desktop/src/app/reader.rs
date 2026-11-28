@@ -222,7 +222,7 @@ impl ReadingApp {
             .border_color(self.border_subtle())
             .child(
                 self.button_with_icon(
-                    "AI 共读",
+                    self.tr("AI 共读", "Companion"),
                     IconName::WandSparkles,
                     Action::ToggleCompanion,
                     cx,
@@ -232,9 +232,9 @@ impl ReadingApp {
             .child(
                 self.button_with_icon(
                     if self.tts_status.active && !self.tts_status.paused {
-                        "听书中"
+                        self.tr("听书中", "Listening")
                     } else {
-                        "听书"
+                        self.tr("听书", "Listen")
                     },
                     IconName::AudioLines,
                     Action::ToggleTtsDrawer,
@@ -245,9 +245,9 @@ impl ReadingApp {
             .child(
                 self.button_with_icon(
                     if self.radio_status.playing && !self.radio_status.paused {
-                        "电台中"
+                        self.tr("电台中", "On Air")
                     } else {
-                        "电台"
+                        self.tr("电台", "Radio")
                     },
                     IconName::Moon,
                     Action::Page(Page::Radio),
@@ -256,26 +256,41 @@ impl ReadingApp {
                 .toggled(self.radio_status.playing && !self.radio_status.paused),
             )
             .child(
-                self.button_with_icon("目录", IconName::ListTree, Action::Toc, cx)
+                self.button_with_icon(self.tr("目录", "TOC"), IconName::ListTree, Action::Toc, cx)
                     .toggled(self.drawer == "toc"),
             )
             .child(
-                self.button_with_icon("搜索", IconName::Search, Action::Search, cx)
-                    .toggled(self.drawer == "search"),
+                self.button_with_icon(
+                    self.tr("搜索", "Search"),
+                    IconName::Search,
+                    Action::Search,
+                    cx,
+                )
+                .toggled(self.drawer == "search"),
             )
             .child(
-                self.button_with_icon("划线", IconName::Feather, Action::Highlights, cx)
-                    .toggled(self.drawer == "highlights"),
+                self.button_with_icon(
+                    self.tr("划线", "Highlights"),
+                    IconName::Feather,
+                    Action::Highlights,
+                    cx,
+                )
+                .toggled(self.drawer == "highlights"),
             )
             .child(
-                self.button_with_icon("书签", IconName::Bookmark, Action::Bookmarks, cx)
-                    .toggled(self.drawer == "bookmarks"),
+                self.button_with_icon(
+                    self.tr("书签", "Marks"),
+                    IconName::Bookmark,
+                    Action::Bookmarks,
+                    cx,
+                )
+                .toggled(self.drawer == "bookmarks"),
             )
             .child(self.button_with_icon(
                 if self.store.state.mode == "scrolled" {
-                    "滚动"
+                    self.tr("滚动", "Scroll")
                 } else {
-                    "翻页"
+                    self.tr("翻页", "Paged")
                 },
                 if self.store.state.mode == "scrolled" {
                     IconName::ScrollText
@@ -288,9 +303,9 @@ impl ReadingApp {
             .child(
                 self.button_with_icon(
                     if self.focus_mode {
-                        "退出专注"
+                        self.tr("退出专注", "Exit Zen")
                     } else {
-                        "专注"
+                        self.tr("专注", "Focus")
                     },
                     if self.focus_mode {
                         IconName::Minimize2
@@ -321,7 +336,7 @@ impl ReadingApp {
                     .child(prism::prism_beam_horizontal(snap, 1.5, 0.4, false)),
             )
             .child(self.button_with_icon(
-                "书架",
+                self.tr("书架", "Study"),
                 IconName::ChevronLeft,
                 Action::Page(Page::Shelf),
                 cx,
@@ -418,9 +433,14 @@ impl ReadingApp {
                     .p_0p5()
                     .rounded_lg()
                     .bg(rgb(hex(&t.background)).opacity(0.62))
-                    .child(self.button_with_icon("上一页", IconName::ChevronLeft, Action::Prev, cx))
                     .child(self.button_with_icon(
-                        "下一页",
+                        self.tr("上一页", "Prev"),
+                        IconName::ChevronLeft,
+                        Action::Prev,
+                        cx,
+                    ))
+                    .child(self.button_with_icon(
+                        self.tr("下一页", "Next"),
                         IconName::ChevronRight,
                         Action::Next,
                         cx,
@@ -461,63 +481,65 @@ impl ReadingApp {
                     ),
             );
         }
-        let hint = if let Some(message) = self.error.as_ref().or(self.notice.as_ref()) {
-            let color = if self.error.is_some() {
-                0xb34f36
+        let hint =
+            if let Some(message) = self.error.as_ref().or(self.notice.as_ref()) {
+                let color = if self.error.is_some() {
+                    0xb34f36
+                } else {
+                    hex(&t.accent)
+                };
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .px_3()
+                    .py_1()
+                    .rounded_full()
+                    .bg(rgb(color).opacity(0.10))
+                    .text_color(rgb(color))
+                    .child(
+                        Icon::new(if self.error.is_some() {
+                            IconName::CircleAlert
+                        } else {
+                            IconName::Sparkles
+                        })
+                        .size(px(13.)),
+                    )
+                    .child(
+                        div()
+                            .max_w(px(460.))
+                            .text_size(px(11.))
+                            .font_family(self.ui_font())
+                            .text_ellipsis()
+                            .child(message.clone()),
+                    )
+                    .into_any_element()
             } else {
-                hex(&t.accent)
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .px_2p5()
+                    .py_1()
+                    .rounded_full()
+                    .bg(rgb(hex(&t.accent)).opacity(0.08))
+                    .text_color(rgb(hex(&t.muted)))
+                    .child(
+                        Icon::new(IconName::Sparkles)
+                            .size(px(13.))
+                            .text_color(rgb(hex(&t.accent))),
+                    )
+                    .child(div().text_size(px(11.)).font_family(self.ui_font()).child(
+                        self.tr("选中文字，遇见回响", "Select text for an echo or footnote"),
+                    ))
+                    .into_any_element()
             };
-            h_flex()
-                .gap_2()
-                .items_center()
-                .px_3()
-                .py_1()
-                .rounded_full()
-                .bg(rgb(color).opacity(0.10))
-                .text_color(rgb(color))
-                .child(
-                    Icon::new(if self.error.is_some() {
-                        IconName::CircleAlert
-                    } else {
-                        IconName::Sparkles
-                    })
-                    .size(px(13.)),
-                )
-                .child(
-                    div()
-                        .max_w(px(460.))
-                        .text_size(px(11.))
-                        .font_family(self.ui_font())
-                        .text_ellipsis()
-                        .child(message.clone()),
-                )
-                .into_any_element()
-        } else {
-            h_flex()
-                .gap_1p5()
-                .items_center()
-                .px_2p5()
-                .py_1()
-                .rounded_full()
-                .bg(rgb(hex(&t.accent)).opacity(0.08))
-                .text_color(rgb(hex(&t.muted)))
-                .child(
-                    Icon::new(IconName::Sparkles)
-                        .size(px(13.))
-                        .text_color(rgb(hex(&t.accent))),
-                )
-                .child(
-                    div()
-                        .text_size(px(11.))
-                        .font_family(self.ui_font())
-                        .child("选中文字，遇见回响"),
-                )
-                .into_any_element()
-        };
         let timer_label = if let Some((_, rem)) = self.focus_timer_progress() {
-            format!("静读 {:02}:{:02}", rem / 60, rem % 60)
+            if self.locale().is_english() {
+                format!("Focus {:02}:{:02}", rem / 60, rem % 60)
+            } else {
+                format!("静读 {:02}:{:02}", rem / 60, rem % 60)
+            }
         } else {
-            "静读计时".to_owned()
+            self.tr("静读计时", "Focus Timer").to_owned()
         };
         bottom = bottom
             .child(hint)
@@ -527,13 +549,23 @@ impl ReadingApp {
                     .toggled(self.focus_timer_started.is_some() || self.focus_timer_picker_open),
             )
             .child(
-                self.button_with_icon("排版", IconName::AArrowDown, Action::Typography, cx)
-                    .toggled(self.drawer == "type"),
+                self.button_with_icon(
+                    self.tr("排版", "Type"),
+                    IconName::AArrowDown,
+                    Action::Typography,
+                    cx,
+                )
+                .toggled(self.drawer == "type"),
             )
-            .child(self.button_with_icon("留下书签", IconName::Bookmark, Action::Bookmark, cx));
+            .child(self.button_with_icon(
+                self.tr("留下书签", "Bookmark"),
+                IconName::Bookmark,
+                Action::Bookmark,
+                cx,
+            ));
         if let Some(active_id) = self.active_book.clone() {
             bottom = bottom.child(self.button_with_icon(
-                "完读仪式",
+                self.tr("完读仪式", "Finish Book"),
                 IconName::Sparkles,
                 Action::OpenCompletionModal(active_id),
                 cx,
@@ -676,26 +708,41 @@ impl ReadingApp {
     pub(super) fn reader_drawer(&self, cx: &Context<Self>) -> AnyElement {
         let t = self.theme();
         let title = match self.drawer.as_str() {
-            "companion" => "防剧透 AI 共读",
-            "tts" => "微光双轨听书",
-            "footnote" => "纸边注脚",
-            "toc" => "沿着目录走",
-            "search" => "在书里找一句话",
-            "highlights" => "划过的地方",
-            "type" => "把这一页调舒服",
-            "bookmarks" => "留过的记号",
-            _ => "文字的回响",
+            "companion" => self.tr("防剧透 AI 共读", "Spoiler-Free AI Companion"),
+            "tts" => self.tr("微光双轨听书", "Dual-Track Audiobook"),
+            "footnote" => self.tr("纸边注脚", "Paper-Margin Footnote"),
+            "toc" => self.tr("沿着目录走", "Table of Contents"),
+            "search" => self.tr("在书里找一句话", "Search in Book"),
+            "highlights" => self.tr("划过的地方", "Highlights"),
+            "type" => self.tr("把这一页调舒服", "Typography & Comfort"),
+            "bookmarks" => self.tr("留过的记号", "Bookmarks"),
+            _ => self.tr("文字的回响", "Text Echoes"),
         };
         let kicker = match self.drawer.as_str() {
-            "companion" => "SPOILER-FREE AI · 前情提要与人物图谱",
-            "tts" => "DUAL-TRACK AUDIOBOOK · 双轨朗读伴听",
-            "footnote" => "PAPER-MARGIN FOOTNOTE · 离线词典与防剧透释义",
-            "toc" => "IN THIS BOOK · 章节导航",
-            "search" => "FIND THE WORDS · 全书检索",
-            "highlights" => "LINES WORTH KEEPING · 划线",
-            "type" => "READ YOUR WAY · 排版调音台",
-            "bookmarks" => "LITTLE MARKS · 书签记号",
-            _ => "A SMALL ECHO · 文字共鸣",
+            "companion" => self.tr(
+                "SPOILER-FREE AI · 前情提要与人物图谱",
+                "SPOILER-FREE AI · RECAP & CHARACTER GRAPH",
+            ),
+            "tts" => self.tr(
+                "DUAL-TRACK AUDIOBOOK · 双轨朗读伴听",
+                "DUAL-TRACK AUDIOBOOK · CLOUD & OFFLINE",
+            ),
+            "footnote" => self.tr(
+                "PAPER-MARGIN FOOTNOTE · 离线词典与防剧透释义",
+                "PAPER-MARGIN FOOTNOTE · OFFLINE LEXICON",
+            ),
+            "toc" => self.tr("IN THIS BOOK · 章节导航", "IN THIS BOOK · CHAPTERS"),
+            "search" => self.tr(
+                "FIND THE WORDS · 全书检索",
+                "FIND THE WORDS · FULL-TEXT SEARCH",
+            ),
+            "highlights" => self.tr(
+                "LINES WORTH KEEPING · 划线",
+                "LINES WORTH KEEPING · HIGHLIGHTS",
+            ),
+            "type" => self.tr("READ YOUR WAY · 排版调音台", "READ YOUR WAY · TYPOGRAPHY"),
+            "bookmarks" => self.tr("LITTLE MARKS · 书签记号", "LITTLE MARKS · BOOKMARKS"),
+            _ => self.tr("A SMALL ECHO · 文字共鸣", "A SMALL ECHO · RESONANCE"),
         };
         let mut content = v_flex()
             .id("reader-drawer")
@@ -721,7 +768,12 @@ impl ReadingApp {
                                     .child(title),
                             ),
                     )
-                    .child(self.button_with_icon("收起", IconName::X, Action::CloseEcho, cx)),
+                    .child(self.button_with_icon(
+                        self.tr("收起", "Close"),
+                        IconName::X,
+                        Action::CloseEcho,
+                        cx,
+                    )),
             );
         match self.drawer.as_str() {
             "companion" => {
@@ -755,9 +807,15 @@ impl ReadingApp {
                                     .line_height(relative(1.6))
                                     .text_color(rgb(hex(&t.muted)))
                                     .child(if self.opened {
-                                        "这本书没有提供可读取的目录，可以继续滚动阅读。"
+                                        self.tr(
+                                            "这本书没有提供可读取的目录，可以继续滚动阅读。",
+                                            "This book does not contain a chapter outline. You can keep reading smoothly.",
+                                        )
                                     } else {
-                                        "目录正在整理，书页就绪后会自动出现在这里。"
+                                        self.tr(
+                                            "目录正在整理，书页就绪后会自动出现在这里。",
+                                            "Preparing table of contents… it will appear once the pages finish loading.",
+                                        )
                                     }),
                             ),
                     );
@@ -792,9 +850,9 @@ impl ReadingApp {
                         .child(
                             self.button_with_icon(
                                 if self.searching {
-                                    "正在翻找…"
+                                    self.tr("正在翻找…", "Searching…")
                                 } else {
-                                    "搜索全书"
+                                    self.tr("搜索全书", "Search Book")
                                 },
                                 IconName::Search,
                                 Action::SubmitSearch,
@@ -813,7 +871,10 @@ impl ReadingApp {
                             .text_size(px(13.))
                             .font_family(self.ui_font())
                             .text_color(rgb(hex(&t.muted)))
-                            .child("一页一页找过去，找到会停在这里。"),
+                            .child(self.tr(
+                                "一页一页找过去，找到会停在这里。",
+                                "Scanning pages quietly — matches will appear here.",
+                            )),
                     );
                 } else if self.search_results.is_empty() {
                     content = content.child(
@@ -825,35 +886,46 @@ impl ReadingApp {
                             .font_family(self.ui_font())
                             .line_height(relative(1.65))
                             .text_color(rgb(hex(&t.muted)))
-                            .child("可以搜人物、地点，或只记得的半句话。"),
+                            .child(self.tr(
+                                "可以搜人物、地点，或只记得的半句话。",
+                                "Search for a character, place, or a half-remembered line.",
+                            )),
                     );
                 } else {
-                    content = content.child(
-                        h_flex()
-                            .justify_between()
-                            .items_center()
-                            .child(
-                                div()
-                                    .px_2p5()
-                                    .py_0p5()
-                                    .rounded_full()
-                                    .bg(rgb(hex(&t.accent)).opacity(0.12))
-                                    .text_size(px(11.))
-                                    .font_family(self.ui_font())
-                                    .text_color(rgb(hex(&t.accent)))
-                                    .child(format!("找到 {} 处", self.search_results.len())),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(10.5))
-                                    .font_family(self.ui_font())
-                                    .text_color(rgb(hex(&t.muted)))
-                                    .child("点击直接跳转到对应段落"),
-                            ),
-                    );
+                    content =
+                        content.child(
+                            h_flex()
+                                .justify_between()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .px_2p5()
+                                        .py_0p5()
+                                        .rounded_full()
+                                        .bg(rgb(hex(&t.accent)).opacity(0.12))
+                                        .text_size(px(11.))
+                                        .font_family(self.ui_font())
+                                        .text_color(rgb(hex(&t.accent)))
+                                        .child(if self.locale().is_english() {
+                                            format!("{} matches", self.search_results.len())
+                                        } else {
+                                            format!("找到 {} 处", self.search_results.len())
+                                        }),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(10.5))
+                                        .font_family(self.ui_font())
+                                        .text_color(rgb(hex(&t.muted)))
+                                        .child(self.tr(
+                                            "点击直接跳转到对应段落",
+                                            "Click to jump to passage",
+                                        )),
+                                ),
+                        );
                     for hit in &self.search_results {
                         let chapter = if hit.chapter.is_empty() {
-                            "书中位置".to_owned()
+                            self.tr("书中位置", "Passage").to_owned()
                         } else {
                             hit.chapter.clone()
                         };
@@ -917,7 +989,10 @@ impl ReadingApp {
                                         .text_size(px(14.))
                                         .font_family(self.ui_font())
                                         .text_color(rgb(hex(&t.muted)))
-                                        .child("读到喜欢的地方，可以留一个记号。"),
+                                        .child(self.tr(
+                                            "读到喜欢的地方，可以留一个记号。",
+                                            "Leave a bookmark whenever a page makes you pause.",
+                                        )),
                                 ),
                         );
                     }
@@ -1243,7 +1318,12 @@ impl ReadingApp {
                                                     .text_size(px(11.5))
                                                     .font_family(self.ui_font())
                                                     .text_color(rgb(hex(&t.muted)))
-                                                    .child("正文字号 · FONT SIZE"),
+                                                    .child(
+                                                        self.tr(
+                                                            "正文字号 · FONT SIZE",
+                                                            "FONT SIZE",
+                                                        ),
+                                                    ),
                                             )
                                             .child(
                                                 div()
@@ -1289,7 +1369,10 @@ impl ReadingApp {
                                                     .text_size(px(11.5))
                                                     .font_family(self.ui_font())
                                                     .text_color(rgb(hex(&t.muted)))
-                                                    .child("行距呼吸感 · LINE HEIGHT"),
+                                                    .child(self.tr(
+                                                        "行距呼吸感 · LINE HEIGHT",
+                                                        "LINE HEIGHT",
+                                                    )),
                                             )
                                             .child(
                                                 div()
@@ -1301,8 +1384,16 @@ impl ReadingApp {
                                     .child(
                                         h_flex()
                                             .gap_1p5()
-                                            .child(self.button("紧", Action::TypeLeading(-1), cx))
-                                            .child(self.button("松", Action::TypeLeading(1), cx)),
+                                            .child(self.button(
+                                                self.tr("紧", "Tighter"),
+                                                Action::TypeLeading(-1),
+                                                cx,
+                                            ))
+                                            .child(self.button(
+                                                self.tr("松", "Airier"),
+                                                Action::TypeLeading(1),
+                                                cx,
+                                            )),
                                     ),
                             )
                             .child(
@@ -1335,7 +1426,9 @@ impl ReadingApp {
                                                     .text_size(px(11.5))
                                                     .font_family(self.ui_font())
                                                     .text_color(rgb(hex(&t.muted)))
-                                                    .child("版心宽度 · MEASURE"),
+                                                    .child(
+                                                        self.tr("版心宽度 · MEASURE", "MEASURE"),
+                                                    ),
                                             )
                                             .child(
                                                 div()
@@ -1347,8 +1440,16 @@ impl ReadingApp {
                                     .child(
                                         h_flex()
                                             .gap_1p5()
-                                            .child(self.button("窄", Action::TypeWidth(-1), cx))
-                                            .child(self.button("宽", Action::TypeWidth(1), cx)),
+                                            .child(self.button(
+                                                self.tr("窄", "Narrower"),
+                                                Action::TypeWidth(-1),
+                                                cx,
+                                            ))
+                                            .child(self.button(
+                                                self.tr("宽", "Wider"),
+                                                Action::TypeWidth(1),
+                                                cx,
+                                            )),
                                     ),
                             )
                             .child(
@@ -1383,21 +1484,24 @@ impl ReadingApp {
                                 div()
                                     .text_size(px(12.5))
                                     .font_family(self.ui_font())
-                                    .child("护眼暖光滤镜"),
+                                    .child(self.tr("护眼暖光滤镜", "Warm Eye-Care Filter")),
                             )
                             .child(
                                 div()
                                     .text_size(px(10.5))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child("柔和滤去屏幕冷蓝光，久读不累"),
+                                    .child(self.tr(
+                                        "柔和滤去屏幕冷蓝光，久读不累",
+                                        "Softens harsh blue light for comfortable night reading",
+                                    )),
                             ),
                     )
                     .child(self.pill_button(
                         if self.store.state.warm_filter {
-                            "暖光：开"
+                            self.tr("暖光：开", "Warm: On")
                         } else {
-                            "暖光：关"
+                            self.tr("暖光：关", "Warm: Off")
                         },
                         Some(IconName::Sun),
                         self.store.state.warm_filter,
@@ -1411,9 +1515,16 @@ impl ReadingApp {
                     .font_family(self.ui_font())
                     .line_height(relative(1.65))
                     .text_color(rgb(hex(&t.muted)))
-                    .child("调整会立即同步至当前书页，并对之后打开的书保留。"),
+                    .child(self.tr(
+                        "调整会立即同步至当前书页，并对之后打开的书保留。",
+                        "Changes apply immediately to this page and persist for future books.",
+                    )),
             )
-            .child(self.button("恢复主题默认", Action::ResetTypography, cx))
+            .child(self.button(
+                self.tr("恢复主题默认", "Reset to Theme Defaults"),
+                Action::ResetTypography,
+                cx,
+            ))
             .into_any_element()
     }
     #[inline(never)]
@@ -1434,7 +1545,7 @@ impl ReadingApp {
             });
             let book_attr = book_ref
                 .map(|b| format!("《{}》 · {}", b.title, b.author))
-                .unwrap_or_else(|| "微光阅读".into());
+                .unwrap_or_else(|| self.tr("微光阅读", "Glow Reading").to_owned());
             let card_draft = QuoteCardDraft {
                 text: self.echo_input.clone(),
                 attribution: book_attr,
@@ -1481,9 +1592,9 @@ impl ReadingApp {
                             .child(
                                 self.button_with_icon(
                                     if already_kept {
-                                        "已留下划线"
+                                        self.tr("已留下划线", "Highlighted")
                                     } else {
-                                        "留下划线"
+                                        self.tr("留下划线", "Highlight")
                                     },
                                     IconName::Feather,
                                     Action::Highlight,
@@ -1500,9 +1611,9 @@ impl ReadingApp {
                             .child(
                                 self.button_with_icon(
                                     if self.echo_saved {
-                                        "已存入日记"
+                                        self.tr("已存入日记", "Saved to Journal")
                                     } else {
-                                        "存入日记"
+                                        self.tr("存入日记", "Save to Journal")
                                     },
                                     IconName::NotebookPen,
                                     Action::SaveEchoToJournal,
@@ -1511,19 +1622,19 @@ impl ReadingApp {
                                 .disabled(self.echo_saved),
                             )
                             .child(self.button_with_icon(
-                                "书摘卡",
+                                self.tr("书摘卡", "Quote Card"),
                                 IconName::ImageDown,
                                 Action::OpenQuoteCard(Box::new(card_draft)),
                                 cx,
                             ))
                             .child(self.button_with_icon(
-                                "纸边注脚",
+                                self.tr("纸边注脚", "Footnote"),
                                 IconName::BookOpen,
                                 Action::OpenFootnote(self.echo_input.clone()),
                                 cx,
                             ))
                             .child(self.button_with_icon(
-                                "所有划线",
+                                self.tr("所有划线", "All Highlights"),
                                 IconName::Bookmark,
                                 Action::Highlights,
                                 cx,
@@ -1548,24 +1659,37 @@ impl ReadingApp {
                                     .text_size(px(10.5))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.accent)))
-                                    .child(format!(
-                                        "跨书记忆重逢 · 本地召回 {} 条",
-                                        self.echo_memories.len()
-                                    )),
+                                    .child(if self.locale().is_english() {
+                                        format!(
+                                            "Cross-Book Memory Recall · {} echoes",
+                                            self.echo_memories.len()
+                                        )
+                                    } else {
+                                        format!(
+                                            "跨书记忆重逢 · 本地召回 {} 条",
+                                            self.echo_memories.len()
+                                        )
+                                    }),
                             )
                             .child(
                                 div()
                                     .text_size(px(9.5))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child("SQLite FTS5 离线检索"),
+                                    .child(self.tr("SQLite FTS5 离线检索", "Offline SQLite FTS5")),
                             ),
                     );
                 for hit in &self.echo_memories {
                     let date = hit.created_at.get(..10).unwrap_or(&hit.created_at);
                     let snippet: String = hit.excerpt.chars().take(74).collect();
                     let label = if hit.kind == "journal" {
-                        format!("手账 · {date}")
+                        if self.locale().is_english() {
+                            format!("Journal · {date}")
+                        } else {
+                            format!("手账 · {date}")
+                        }
+                    } else if self.locale().is_english() {
+                        format!("{} · {date}", hit.book_title)
                     } else {
                         format!("《{}》 · {date}", hit.book_title)
                     };
@@ -1590,7 +1714,11 @@ impl ReadingApp {
                                     .font_family(self.display_font())
                                     .line_height(relative(1.5))
                                     .text_color(rgb(hex(&t.text)).opacity(0.90))
-                                    .child(format!("「{snippet}」")),
+                                    .child(if self.locale().is_english() {
+                                        format!("“{snippet}”")
+                                    } else {
+                                        format!("「{snippet}」")
+                                    }),
                             )
                             .when_some(
                                 hit.note.as_deref().filter(|n| !n.trim().is_empty()),
@@ -1600,7 +1728,11 @@ impl ReadingApp {
                                             .text_size(px(10.5))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&t.muted)))
-                                            .child(format!("当时批注：{note}")),
+                                            .child(if self.locale().is_english() {
+                                                format!("Your note: {note}")
+                                            } else {
+                                                format!("当时批注：{note}")
+                                            }),
                                     )
                                 },
                             ),
@@ -1625,11 +1757,17 @@ impl ReadingApp {
                                 .child(
                                     self.button_with_icon(
                                         if self.echo_ai_rx.is_some() {
-                                            "正在细读这段文字…"
+                                            self.tr("正在细读这段文字…", "Reading passage closely…")
                                         } else if !self.echo_memories.is_empty() {
-                                            "结合过往记忆 · AI 深度共读"
+                                            self.tr(
+                                                "结合过往记忆 · AI 深度共读",
+                                                "Deep AI Reflection with Past Echoes",
+                                            )
                                         } else {
-                                            "问问微光（AI 深度共读）"
+                                            self.tr(
+                                                "问问微光（AI 深度共读）",
+                                                "Ask Glow (AI Deep Reading)",
+                                            )
                                         },
                                         IconName::WandSparkles,
                                         Action::AskAiPassage,
@@ -1639,7 +1777,11 @@ impl ReadingApp {
                                     .disabled(self.echo_ai_rx.is_some()),
                                 )
                                 .when(self.echo_ai_rx.is_some(), |this| {
-                                    this.child(self.button("停止", Action::CancelAiPassage, cx))
+                                    this.child(self.button(
+                                        self.tr("停止", "Stop"),
+                                        Action::CancelAiPassage,
+                                        cx,
+                                    ))
                                 }),
                         )
                         .child(
@@ -1649,9 +1791,15 @@ impl ReadingApp {
                                 .line_height(relative(1.5))
                                 .text_color(rgb(hex(&t.muted)))
                                 .child(if self.echo_memories.is_empty() {
-                                    "手动触发：仅发送本段选文与书名给已配置的 AI 模型，不上传整本书或日记。"
+                                    self.tr(
+                                        "手动触发：仅发送本段选文与书名给已配置的 AI 模型，不上传整本书或日记。",
+                                        "Manual trigger: sends only this excerpt and title to your configured AI model — never the whole book or journal.",
+                                    )
                                 } else {
-                                    "手动触发：仅发送本段选文与上方召回的少量关联片段，绝不上传整个书库。"
+                                    self.tr(
+                                        "手动触发：仅发送本段选文与上方召回的少量关联片段，绝不上传整个书库。",
+                                        "Manual trigger: sends only this excerpt and the recalled snippets above — never your full library.",
+                                    )
                                 }),
                         ),
                 )
@@ -1676,7 +1824,10 @@ impl ReadingApp {
                         .text_size(px(10.))
                         .font_family(self.ui_font())
                         .text_color(rgb(hex(&t.accent)))
-                        .child("选中的词句 · MARGIN TERM"),
+                        .child(self.tr(
+                            "选中的词句 · MARGIN TERM",
+                            "SELECTED TERM · MARGIN FOOTNOTE",
+                        )),
                 )
                 .child(
                     div()
@@ -1684,7 +1835,7 @@ impl ReadingApp {
                         .font_family(self.display_font())
                         .line_height(relative(1.45))
                         .child(if self.footnote_term.is_empty() {
-                            "尚未选中词句".to_owned()
+                            self.tr("尚未选中词句", "No term selected").to_owned()
                         } else {
                             self.footnote_term.clone()
                         }),
@@ -1747,7 +1898,10 @@ impl ReadingApp {
                     .font_family(self.ui_font())
                     .line_height(relative(1.65))
                     .text_color(rgb(hex(&t.muted)))
-                    .child("离线文学词典暂未收录该词条，可点击下方按钮请求 AI 给出克制的防剧透纸边释义。"),
+                    .child(self.tr(
+                        "离线文学词典暂未收录该词条，可点击下方按钮请求 AI 给出克制的防剧透纸边释义。",
+                        "Not found in the offline literary glossary. Click below for a calm, spoiler-free AI margin note.",
+                    )),
             );
         }
         if let Some(reply) = &self.footnote_ai_reply {
@@ -1761,9 +1915,9 @@ impl ReadingApp {
                 .child(
                     self.button_with_icon(
                         if self.footnote_ai_rx.is_some() {
-                            "正在生成注脚…"
+                            self.tr("正在生成注脚…", "Generating Footnote…")
                         } else {
-                            "AI 防剧透释义"
+                            self.tr("AI 防剧透释义", "Spoiler-Free AI Note")
                         },
                         IconName::WandSparkles,
                         Action::AskAiFootnote,
@@ -1772,7 +1926,12 @@ impl ReadingApp {
                     .primary()
                     .disabled(self.footnote_ai_rx.is_some() || self.footnote_term.is_empty()),
                 )
-                .child(self.button_with_icon("关闭注脚", IconName::X, Action::CloseFootnote, cx)),
+                .child(self.button_with_icon(
+                    self.tr("关闭注脚", "Close Footnote"),
+                    IconName::X,
+                    Action::CloseFootnote,
+                    cx,
+                )),
         )
         .into_any_element()
     }

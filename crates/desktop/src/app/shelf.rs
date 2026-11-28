@@ -320,9 +320,9 @@ impl ReadingApp {
                         .child(
                             self.button_with_icon(
                                 if b.location.is_some() {
-                                    "继续阅读"
+                                    self.tr("继续阅读", "Continue")
                                 } else {
-                                    "打开这本书"
+                                    self.tr("打开这本书", "Open Book")
                                 },
                                 IconName::BookOpen,
                                 Action::Open(b.id.clone()),
@@ -331,7 +331,7 @@ impl ReadingApp {
                             .primary(),
                         )
                         .child(self.button_with_icon(
-                            "移出",
+                            self.tr("移出", "Remove"),
                             IconName::X,
                             Action::Remove(b.id.clone()),
                             cx,
@@ -346,12 +346,20 @@ impl ReadingApp {
                         .border_t_1()
                         .border_color(self.border_subtle())
                         .child(self.button(
-                            glow_core::Book::status_label(status),
+                            i18n::book_status(self.locale(), status),
                             Action::CycleBookStatus(b.id.clone()),
                             cx,
                         ))
-                        .child(self.button("编辑", Action::EditBookMeta(b.id.clone()), cx))
-                        .child(self.button("完读", Action::OpenCompletionModal(b.id.clone()), cx)),
+                        .child(self.button(
+                            self.tr("编辑", "Edit"),
+                            Action::EditBookMeta(b.id.clone()),
+                            cx,
+                        ))
+                        .child(self.button(
+                            self.tr("完读", "Finish"),
+                            Action::OpenCompletionModal(b.id.clone()),
+                            cx,
+                        )),
                 )
                 .when(!b.tags.is_empty(), |card_el| {
                     let mut tag_row = h_flex().gap_1().flex_wrap();
@@ -750,11 +758,11 @@ impl ReadingApp {
             );
         let mut filter_pills = h_flex().gap_1p5().items_center().flex_wrap();
         for (label, filter) in [
-            ("全部", ShelfFilter::All),
-            ("在读", ShelfFilter::Reading),
-            ("想读", ShelfFilter::Unread),
-            ("已完读", ShelfFilter::Finished),
-            ("搁置", ShelfFilter::Paused),
+            (self.tr("全部", "All"), ShelfFilter::All),
+            (self.tr("在读", "Reading"), ShelfFilter::Reading),
+            (self.tr("想读", "Want"), ShelfFilter::Unread),
+            (self.tr("已完读", "Finished"), ShelfFilter::Finished),
+            (self.tr("搁置", "Paused"), ShelfFilter::Paused),
         ] {
             let active = self.shelf_filter == filter;
             filter_pills = filter_pills.child(self.pill_button(
@@ -805,7 +813,7 @@ impl ReadingApp {
         let mut mood_chips = h_flex().gap_1p5().items_center().flex_wrap();
         for mood in ["睡前", "疲惫", "独处", "迷茫", "希望"] {
             mood_chips = mood_chips.child(self.pill_button(
-                mood,
+                i18n::mood_name(self.locale(), mood),
                 None,
                 self.shelf_mood_pick == mood,
                 Action::ShelfMoodPick(mood.into()),
@@ -946,7 +954,11 @@ impl ReadingApp {
                                                 .text_size(px(10.5))
                                                 .font_family(self.ui_font())
                                                 .text_color(rgb(hex(&t.muted)))
-                                                .child(format!("今日静读 {today_mins} 分钟")),
+                                                .child(if self.locale().is_english() {
+                                                    format!("Today {today_mins} min")
+                                                } else {
+                                                    format!("今日静读 {today_mins} 分钟")
+                                                }),
                                         )
                                     }),
                             )
@@ -959,7 +971,7 @@ impl ReadingApp {
                                             div()
                                                 .text_size(px(20.))
                                                 .font_family(self.display_font())
-                                                .child("我的藏书"),
+                                                .child(self.tr("我的藏书", "My Library")),
                                         )
                                         .child(
                                             div()
@@ -972,11 +984,19 @@ impl ReadingApp {
                                                 .text_size(px(11.))
                                                 .font_family(self.ui_font())
                                                 .text_color(rgb(hex(&t.accent)))
-                                                .child(format!(
-                                                    "{} / {} 本",
-                                                    filtered_books.len(),
-                                                    self.store.state.books.len()
-                                                )),
+                                                .child(if self.locale().is_english() {
+                                                    format!(
+                                                        "{} / {} books",
+                                                        filtered_books.len(),
+                                                        self.store.state.books.len()
+                                                    )
+                                                } else {
+                                                    format!(
+                                                        "{} / {} 本",
+                                                        filtered_books.len(),
+                                                        self.store.state.books.len()
+                                                    )
+                                                }),
                                         ),
                                 )
                             }),
@@ -1013,7 +1033,10 @@ impl ReadingApp {
                         div()
                             .text_size(px(13.))
                             .font_family(self.display_font())
-                            .child("编辑书目信息、自定义封面与笔记导出"),
+                            .child(self.tr(
+                                "编辑书目信息、自定义封面与笔记导出",
+                                "Edit Book Metadata, Custom Cover & Notes Export",
+                            )),
                     )
                     .child(
                         h_flex()
@@ -1042,20 +1065,31 @@ impl ReadingApp {
                         h_flex()
                             .gap_2()
                             .flex_wrap()
-                            .child(self.button("保存修改", Action::SaveBookMeta, cx).primary())
+                            .child(
+                                self.button(
+                                    self.tr("保存修改", "Save Changes"),
+                                    Action::SaveBookMeta,
+                                    cx,
+                                )
+                                .primary(),
+                            )
                             .child(self.button_with_icon(
-                                "更换封面",
+                                self.tr("更换封面", "Change Cover"),
                                 IconName::Image,
                                 Action::ReplaceBookCover(edit_id.clone()),
                                 cx,
                             ))
                             .child(self.button_with_icon(
-                                "导出本书笔记",
+                                self.tr("导出本书笔记", "Export Notes (.md)"),
                                 IconName::Download,
                                 Action::ExportBookMarkdown(edit_id),
                                 cx,
                             ))
-                            .child(self.button("取消", Action::CancelBookMeta, cx)),
+                            .child(self.button(
+                                self.tr("取消", "Cancel"),
+                                Action::CancelBookMeta,
+                                cx,
+                            )),
                     ),
             );
         }
@@ -1080,8 +1114,9 @@ impl ReadingApp {
     fn shelf_slow_read_view(&self, cx: &Context<Self>) -> AnyElement {
         let t = self.theme();
         let is_dark = self.is_dark();
+        let en = self.locale().is_english();
 
-        // Card 1: Web Article Readability Clipper
+        // Card 1: Web Article Readability Clipper + Local Multi-Format Document Import
         let clipper_card = v_flex()
             .id("slow-read-clipper-card")
             .p_5()
@@ -1092,22 +1127,45 @@ impl ReadingApp {
             .border_color(self.border_subtle())
             .shadow_sm()
             .child(
-                v_flex()
-                    .gap_1()
-                    .child(self.studio_badge("WEB CLIPPER", "网页长文提纯剪藏", true))
+                h_flex()
+                    .justify_between()
+                    .items_start()
+                    .flex_wrap()
+                    .gap_3()
                     .child(
-                        div()
-                            .text_size(px(18.))
-                            .font_family(self.display_font())
-                            .child("把网页好文，收进安静书房"),
+                        v_flex()
+                            .gap_1()
+                            .child(self.studio_badge(
+                                "WEB CLIPPER",
+                                self.tr("网页长文提纯剪藏", "Distraction-Free Web Clipper"),
+                                true,
+                            ))
+                            .child(
+                                div()
+                                    .text_size(px(18.))
+                                    .font_family(self.display_font())
+                                    .child(self.tr(
+                                        "把网页好文，收进安静书房",
+                                        "Bring Thoughtful Web Essays Into Your Quiet Study",
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child(self.tr(
+                                        "自动剥离广告、侧边栏与弹窗，转为离线精排书页，支持划线、纸边词典、听书与跨书记忆。",
+                                        "Strips ads, sidebars, and popups into a calm offline book with highlights, dictionary footnotes, and TTS.",
+                                    )),
+                            ),
                     )
-                    .child(
-                        div()
-                            .text_size(px(11.5))
-                            .font_family(self.ui_font())
-                            .text_color(rgb(hex(&t.muted)))
-                            .child("自动剥离广告、侧边栏与弹窗，转为离线精排书页，支持划线、纸边词典、听书与跨书记忆。"),
-                    ),
+                    .child(self.button_with_icon(
+                        self.tr("导入本地 PDF / MD / DOCX", "Import Local PDF / MD / DOCX"),
+                        IconName::Plus,
+                        Action::Import,
+                        cx,
+                    )),
             )
             .child(
                 h_flex()
@@ -1123,9 +1181,9 @@ impl ReadingApp {
                     .child(
                         self.button_with_icon(
                             if self.clip_rx.is_some() {
-                                "正在提纯正文…"
+                                self.tr("正在提纯正文…", "Clipping…")
                             } else {
-                                "剪藏并翻开"
+                                self.tr("剪藏并翻开", "Clip & Read")
                             },
                             IconName::BookOpen,
                             Action::ClipWebUrl(true),
@@ -1136,7 +1194,7 @@ impl ReadingApp {
                     )
                     .child(
                         self.button_with_icon(
-                            "仅收入书架",
+                            self.tr("仅收入书架", "Save to Shelf"),
                             IconName::Plus,
                             Action::ClipWebUrl(false),
                             cx,
@@ -1145,7 +1203,7 @@ impl ReadingApp {
                     ),
             );
 
-        // Card 2: RSS / Atom Slow-Read Subscriptions + Weekend Digest Compiler
+        // Card 2: RSS / Atom Slow-Read Subscriptions + Selective Weekend Digest Compiler
         let mut feed_pills = h_flex().gap_2().flex_wrap().items_center();
         for feed in &self.store.state.rss_feeds {
             let url = feed.url.clone();
@@ -1170,8 +1228,18 @@ impl ReadingApp {
             );
         }
 
+        let selected_count = if self.rss_selected.is_empty() {
+            self.rss_items.len().min(6)
+        } else {
+            self.rss_selected
+                .iter()
+                .filter(|&&i| i < self.rss_items.len())
+                .count()
+        };
+
         let mut rss_list = v_flex().gap_2p5();
         for (idx, item) in self.rss_items.iter().enumerate() {
+            let checked = self.rss_selected.contains(&idx);
             rss_list = rss_list.child(
                 h_flex()
                     .justify_between()
@@ -1182,7 +1250,11 @@ impl ReadingApp {
                     .rounded_xl()
                     .bg(rgb(hex(&t.background)).opacity(if is_dark { 0.60 } else { 0.72 }))
                     .border_1()
-                    .border_color(self.border_subtle())
+                    .border_color(if checked {
+                        Hsla::from(rgb(hex(&t.accent)).opacity(0.45))
+                    } else {
+                        self.border_subtle()
+                    })
                     .child(
                         v_flex()
                             .flex_1()
@@ -1219,19 +1291,42 @@ impl ReadingApp {
                         h_flex()
                             .gap_2()
                             .items_center()
+                            .flex_wrap()
+                            .child(
+                                self.button(
+                                    if checked {
+                                        self.tr("✓ 已选小报", "✓ In Digest")
+                                    } else {
+                                        self.tr("选入小报", "Pick for Digest")
+                                    },
+                                    Action::RssToggleSelect(idx),
+                                    cx,
+                                )
+                                .toggled(checked),
+                            )
                             .child(
                                 self.button_with_icon(
-                                    "收入并翻开",
+                                    self.tr("收入并翻开", "Add & Read"),
                                     IconName::BookOpen,
                                     Action::RssImportItem(idx, true),
                                     cx,
                                 )
                                 .primary(),
                             )
-                            .child(self.button("仅收书架", Action::RssImportItem(idx, false), cx)),
+                            .child(self.button(
+                                self.tr("仅收书架", "Save"),
+                                Action::RssImportItem(idx, false),
+                                cx,
+                            )),
                     ),
             );
         }
+
+        let digest_label = if en {
+            format!("Compile Weekend Digest ({selected_count})")
+        } else {
+            format!("合订本周慢读小报（{selected_count} 篇）")
+        };
 
         let rss_card = v_flex()
             .id("slow-read-rss-card")
@@ -1251,25 +1346,44 @@ impl ReadingApp {
                     .child(
                         v_flex()
                             .gap_1()
-                            .child(self.studio_badge("SLOW-READ RSS", "RSS / ATOM 慢读订阅与周末小报", true))
+                            .child(self.studio_badge(
+                                "SLOW-READ RSS",
+                                self.tr("RSS / ATOM 慢读订阅与周末小报", "RSS / Atom & Weekend Digest"),
+                                true,
+                            ))
                             .child(
                                 div()
                                     .text_size(px(18.))
                                     .font_family(self.display_font())
-                                    .child("订阅慢写作者，每周合订一期「周末慢读小报」"),
+                                    .child(self.tr(
+                                        "订阅慢写作者，每周合订一期「周末慢读小报」",
+                                        "Subscribe to Slow Writers & Bind a Weekend Digest",
+                                    )),
                             ),
                     )
-                    .when(!self.rss_items.is_empty(), |row| {
-                        row.child(
-                            self.button_with_icon(
-                                "合订本周慢读小报",
-                                IconName::Sparkles,
-                                Action::CompileWeekendDigest,
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .flex_wrap()
+                            .child(self.button_with_icon(
+                                self.tr("试阅离线示范慢读流", "Load Offline Demo Feed"),
+                                IconName::Feather,
+                                Action::LoadDemoSlowReadFeed,
                                 cx,
-                            )
-                            .primary(),
-                        )
-                    }),
+                            ))
+                            .when(!self.rss_items.is_empty(), |row| {
+                                row.child(
+                                    self.button_with_icon(
+                                        &digest_label,
+                                        IconName::Sparkles,
+                                        Action::CompileWeekendDigest,
+                                        cx,
+                                    )
+                                    .primary(),
+                                )
+                            }),
+                    ),
             )
             .child(
                 h_flex()
@@ -1288,20 +1402,28 @@ impl ReadingApp {
                             .child(Input::new(&self.rss_url_input).w_full()),
                     )
                     .child(
-                        self.button_with_icon("添加订阅源", IconName::Plus, Action::RssAddFeed, cx)
-                            .primary(),
+                        self.button_with_icon(
+                            self.tr("添加订阅源", "Add Feed"),
+                            IconName::Plus,
+                            Action::RssAddFeed,
+                            cx,
+                        )
+                        .primary(),
                     ),
             )
             .when(!self.store.state.rss_feeds.is_empty(), |card| {
                 card.child(feed_pills)
             })
-            .when(self.store.state.rss_feeds.is_empty(), |card| {
+            .when(self.store.state.rss_feeds.is_empty() && self.rss_items.is_empty(), |card| {
                 card.child(
                     div()
                         .text_size(px(11.5))
                         .font_family(self.ui_font())
                         .text_color(rgb(hex(&t.muted)))
-                        .child("支持任意标准 RSS 2.0 与 Atom 1.0 订阅链接（如独立博客、Newsletter、技术专栏）。添加后点击订阅名拉取最新篇目。"),
+                        .child(self.tr(
+                            "支持任意标准 RSS 2.0 与 Atom 1.0 订阅链接（如独立博客、Newsletter、技术专栏）；也可点击右上角「试阅离线示范慢读流」立即体验小报合订。",
+                            "Supports any standard RSS 2.0 or Atom 1.0 feed. Click 'Load Offline Demo Feed' above to try binding a Weekend Digest immediately.",
+                        )),
                 )
             })
             .when(!self.rss_items.is_empty(), |card| {
@@ -1316,11 +1438,21 @@ impl ReadingApp {
                                 .text_size(px(12.))
                                 .font_family(self.ui_font())
                                 .text_color(rgb(hex(&t.accent)))
-                                .child(format!(
-                                    "当前订阅：{}（共 {} 篇）",
-                                    self.rss_active_title,
-                                    self.rss_items.len()
-                                )),
+                                .child(if en {
+                                    format!(
+                                        "Active Feed: {} ({} articles · {} selected for digest)",
+                                        self.rss_active_title,
+                                        self.rss_items.len(),
+                                        selected_count
+                                    )
+                                } else {
+                                    format!(
+                                        "当前订阅：{}（共 {} 篇 · 已选 {} 篇合订小报）",
+                                        self.rss_active_title,
+                                        self.rss_items.len(),
+                                        selected_count
+                                    )
+                                }),
                         )
                         .child(rss_list),
                 )
@@ -1346,7 +1478,7 @@ impl ReadingApp {
             "10分钟内",
         ] {
             cat_bar = cat_bar.child(self.pill_button(
-                cat,
+                i18n::catalog_category(self.locale(), cat),
                 None,
                 self.catalog_category == cat,
                 Action::CatalogCategory(cat.into()),
@@ -1420,27 +1552,39 @@ impl ReadingApp {
                                             .text_size(px(9.5))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&t.accent)))
-                                            .child("已在书架 ✓")
+                                            .child(self.tr("已在书架 ✓", "On Shelf ✓"))
                                     } else {
                                         div()
                                             .text_size(px(10.))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&t.muted)))
-                                            .child(format!("约 {} 分钟", entry.minutes))
+                                            .child(if self.locale().is_english() {
+                                                format!("~{} min", entry.minutes)
+                                            } else {
+                                                format!("约 {} 分钟", entry.minutes)
+                                            })
                                     }),
                             )
                             .child(
                                 div()
                                     .text_size(px(18.))
                                     .font_family(self.display_font())
-                                    .child(format!("《{}》", entry.title)),
+                                    .child(if self.locale().is_english() {
+                                        entry.title.to_owned()
+                                    } else {
+                                        format!("《{}》", entry.title)
+                                    }),
                             )
                             .child(
                                 div()
                                     .text_size(px(11.5))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&t.muted)))
-                                    .child(format!("{} · 约 {} 分钟", entry.author, entry.minutes)),
+                                    .child(if self.locale().is_english() {
+                                        format!("{} · ~{} min", entry.author, entry.minutes)
+                                    } else {
+                                        format!("{} · 约 {} 分钟", entry.author, entry.minutes)
+                                    }),
                             )
                             .child(
                                 div()
@@ -1455,7 +1599,7 @@ impl ReadingApp {
                     .child(if let Some(book_id) = existing_book_id {
                         h_flex().gap_2().pt_2().items_center().child(
                             self.button_with_icon(
-                                "继续阅读",
+                                self.tr("继续阅读", "Continue Reading"),
                                 IconName::BookOpen,
                                 Action::Open(book_id),
                                 cx,
@@ -1469,7 +1613,7 @@ impl ReadingApp {
                             .pt_2()
                             .child(
                                 self.button_with_icon(
-                                    "收入并翻开",
+                                    self.tr("收入并翻开", "Add & Open"),
                                     IconName::BookOpen,
                                     Action::InstallCatalogBook(entry.id.into(), true),
                                     cx,
@@ -1477,7 +1621,7 @@ impl ReadingApp {
                                 .primary(),
                             )
                             .child(self.button_with_icon(
-                                "仅收入书架",
+                                self.tr("仅收入书架", "Add to Shelf"),
                                 IconName::Plus,
                                 Action::InstallCatalogBook(entry.id.into(), false),
                                 cx,
@@ -1499,11 +1643,19 @@ impl ReadingApp {
                             .text_size(px(11.5))
                             .font_family(self.ui_font())
                             .text_color(rgb(hex(&t.muted)))
-                            .child(format!(
-                                "显示 {} / {} 部内置典藏 · 完全离线精排，支持划线、听书与纸边注脚",
-                                entries.len(),
-                                total_catalog
-                            )),
+                            .child(if self.locale().is_english() {
+                                format!(
+                                    "Showing {} / {} built-in offline classics · highlights, TTS & footnotes ready",
+                                    entries.len(),
+                                    total_catalog
+                                )
+                            } else {
+                                format!(
+                                    "显示 {} / {} 部内置典藏 · 完全离线精排，支持划线、听书与纸边注脚",
+                                    entries.len(),
+                                    total_catalog
+                                )
+                            }),
                     ),
             )
             .child(grid)
@@ -1535,7 +1687,7 @@ impl ReadingApp {
                     .border_color(self.border_subtle())
                     .child(self.button(&saved.name, Action::OpdsFetchFeed(saved.url.clone()), cx))
                     .child(self.button_with_icon(
-                        "移除",
+                        self.tr("移除", "Remove"),
                         IconName::X,
                         Action::OpdsRemoveFeed(saved.id.clone()),
                         cx,
@@ -1557,14 +1709,20 @@ impl ReadingApp {
                         div()
                             .text_size(px(15.))
                             .font_family(self.display_font())
-                            .child("连接 OPDS 1.2 开放书源（Calibre / Komga / Kavita / 公版库）"),
+                            .child(self.tr(
+                                "连接 OPDS 1.2 开放书源（Calibre / Komga / Kavita / 公版库）",
+                                "Connect OPDS 1.2 Open Catalogs (Calibre / Komga / Kavita / Public Libraries)",
+                            )),
                     )
                     .child(
                         div()
                             .text_size(px(11.5))
                             .font_family(self.ui_font())
                             .text_color(rgb(hex(&t.muted)))
-                            .child("输入你的私人书库或开放公版 OPDS 地址，即可直接浏览目录并一键下载 EPUB 至本地书架。"),
+                            .child(self.tr(
+                                "输入你的私人书库或开放公版 OPDS 地址，即可直接浏览目录并一键下载 EPUB 至本地书架。",
+                                "Enter a private server or public OPDS URL to browse catalogs and download EPUBs directly to your local shelf.",
+                            )),
                     )
                     .child(feeds_bar)
                     .child(
@@ -1585,7 +1743,7 @@ impl ReadingApp {
                             )
                             .child(
                                 self.button_with_icon(
-                                    "添加书源",
+                                    self.tr("添加书源", "Add Catalog"),
                                     IconName::Plus,
                                     Action::OpdsAddFeed,
                                     cx,
@@ -1635,9 +1793,9 @@ impl ReadingApp {
                         .child(
                             self.button_with_icon(
                                 if is_book {
-                                    "下载收入书架"
+                                    self.tr("下载收入书架", "Download to Shelf")
                                 } else {
-                                    "进入分类"
+                                    self.tr("进入分类", "Browse")
                                 },
                                 if is_book {
                                     IconName::Download
@@ -1661,11 +1819,19 @@ impl ReadingApp {
                         div()
                             .text_size(px(13.))
                             .font_family(self.display_font())
-                            .child(format!(
-                                "当前目录：{}（{} 条）",
-                                self.opds_active_title,
-                                self.opds_entries.len()
-                            )),
+                            .child(if self.locale().is_english() {
+                                format!(
+                                    "Catalog: {} ({} items)",
+                                    self.opds_active_title,
+                                    self.opds_entries.len()
+                                )
+                            } else {
+                                format!(
+                                    "当前目录：{}（{} 条）",
+                                    self.opds_active_title,
+                                    self.opds_entries.len()
+                                )
+                            }),
                     )
                     .child(list),
             );

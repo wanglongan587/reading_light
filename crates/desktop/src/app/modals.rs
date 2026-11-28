@@ -5,14 +5,14 @@ impl ReadingApp {
     pub(super) fn render_welcome(&self, t: &ReadingTheme, cx: &Context<Self>) -> AnyElement {
         let step = self.onboarding_step.min(2);
         let mut steps_bar = h_flex().gap_2().items_center();
-        for (idx, label) in [
-            (0u8, "1 · 选书房"),
-            (1u8, "2 · 挑一本书"),
-            (2u8, "3 · 安心启程"),
+        for (idx, label_zh, label_en) in [
+            (0u8, "1 · 选书房", "1 · Space"),
+            (1u8, "2 · 挑一本书", "2 · Pick a Book"),
+            (2u8, "3 · 安心启程", "3 · Local-First"),
         ] {
             let active = step == idx;
             steps_bar = steps_bar.child(self.pill_button(
-                label,
+                self.tr(label_zh, label_en),
                 None,
                 active,
                 Action::OnboardingStep(idx),
@@ -24,9 +24,15 @@ impl ReadingApp {
             0 => v_flex()
                 .gap_4()
                 .child(self.heading(
-                    "STEP 1 OF 3 · 30 秒布置你的微光书房",
-                    "挑一间今晚想待着的书房。",
-                    "每一套都是原创微光空间，带专属配色与纸张氛围，随时可一键切换。",
+                    self.tr(
+                        "STEP 1 OF 3 · 30 秒布置你的微光书房",
+                        "STEP 1 OF 3 · SET UP YOUR READING ROOM IN 30 SECONDS",
+                    ),
+                    self.tr("挑一间今晚想待着的书房。", "Choose a room for tonight’s reading."),
+                    self.tr(
+                        "每一套都是原创微光空间，带专属配色与纸张氛围，随时可一键切换。",
+                        "Each original Glow Space pairs custom paper tones and atmosphere — switch anytime.",
+                    ),
                 ))
                 .child(
                     h_flex()
@@ -34,35 +40,35 @@ impl ReadingApp {
                         .items_center()
                         .flex_wrap()
                         .child(self.pill_button(
-                            "晴空旧书房 · 蓝天流云",
+                            self.tr("晴空旧书房 · 蓝天流云", "Sunlit Study · Clouds"),
                             Some(IconName::Cloud),
                             t.id == "forest",
                             Action::PickTheme(0),
                             cx,
                         ))
                         .child(self.pill_button(
-                            "夏风樟树下 · 林荫",
+                            self.tr("夏风樟树下 · 林荫", "Camphor Shade · Breeze"),
                             Some(IconName::Leaf),
                             t.id == "totoro",
                             Action::PickTheme(4),
                             cx,
                         ))
                         .child(self.pill_button(
-                            "浅海晚风号 · 黄昏",
+                            self.tr("浅海晚风号 · 黄昏", "Evening Tide · Dusk"),
                             Some(IconName::Sparkles),
                             t.id == "spirited",
                             Action::PickTheme(5),
                             cx,
                         ))
                         .child(self.pill_button(
-                            "雨夜灯笼巷 · 暖灯",
+                            self.tr("雨夜灯笼巷 · 暖灯", "Lantern Alley · Rain"),
                             Some(IconName::Flame),
                             t.id == "lantern",
                             Action::PickTheme(8),
                             cx,
                         ))
                         .child(self.pill_button(
-                            "星空棱镜 · 暗夜流光",
+                            self.tr("星空棱镜 · 暗夜流光", "Starlight Prism · Night"),
                             Some(IconName::Sparkles),
                             t.id == "prism",
                             Action::PickTheme(3),
@@ -76,7 +82,7 @@ impl ReadingApp {
                         .flex_wrap()
                         .child(
                             self.button_with_icon(
-                                "下一步：挑一本书",
+                                self.tr("下一步：挑一本书", "Next: Pick a Book"),
                                 IconName::ChevronRight,
                                 Action::OnboardingStep(1),
                                 cx,
@@ -84,7 +90,7 @@ impl ReadingApp {
                             .primary(),
                         )
                         .child(self.button_with_icon(
-                            "知道了，先坐一会儿",
+                            self.tr("知道了，先坐一会儿", "Skip for Now"),
                             IconName::BookOpen,
                             Action::Privacy,
                             cx,
@@ -125,14 +131,22 @@ impl ReadingApp {
                                         div()
                                             .text_size(px(14.5))
                                             .font_family(self.display_font())
-                                            .child(format!("《{}》", book.title)),
+                                            .child(if self.locale().is_english() {
+                                                book.title.to_owned()
+                                            } else {
+                                                format!("《{}》", book.title)
+                                            }),
                                     )
                                     .child(
                                         div()
                                             .text_size(px(10.))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&t.accent)))
-                                            .child(format!("约 {} 分钟", book.minutes)),
+                                            .child(if self.locale().is_english() {
+                                                format!("~{} min", book.minutes)
+                                            } else {
+                                                format!("约 {} 分钟", book.minutes)
+                                            }),
                                     ),
                             )
                             .child(
@@ -155,9 +169,12 @@ impl ReadingApp {
                 v_flex()
                     .gap_4()
                     .child(self.heading(
-                        "STEP 2 OF 3 · 微光公版馆",
-                        "点一本立即翻开，不必空着书架。",
-                        "全部内置离线公版/原创作品，点击即可直接进入书页开始慢读。",
+                        self.tr("STEP 2 OF 3 · 微光公版馆", "STEP 2 OF 3 · GLOW PUBLIC CLASSICS"),
+                        self.tr("点一本立即翻开，不必空着书架。", "Open a classic right away — no empty shelf."),
+                        self.tr(
+                            "全部内置离线公版/原创作品，点击即可直接进入书页开始慢读。",
+                            "Built-in offline classics and original essays. Click any book to start reading.",
+                        ),
                     ))
                     .child(picks)
                     .child(
@@ -165,17 +182,25 @@ impl ReadingApp {
                             .gap_3()
                             .items_center()
                             .flex_wrap()
-                            .child(self.button("上一步", Action::OnboardingStep(0), cx))
+                            .child(self.button(
+                                self.tr("上一步", "Back"),
+                                Action::OnboardingStep(0),
+                                cx,
+                            ))
                             .child(
                                 self.button_with_icon(
-                                    "下一步：隐私承诺",
+                                    self.tr("下一步：隐私承诺", "Next: Privacy Promise"),
                                     IconName::ChevronRight,
                                     Action::OnboardingStep(2),
                                     cx,
                                 )
                                 .primary(),
                             )
-                            .child(self.button("稍后自己导入", Action::Privacy, cx)),
+                            .child(self.button(
+                                self.tr("稍后自己导入", "Import My Own Later"),
+                                Action::Privacy,
+                                cx,
+                            )),
                     )
                     .into_any_element()
             }
@@ -183,8 +208,11 @@ impl ReadingApp {
                 .gap_4()
                 .child(self.heading(
                     "STEP 3 OF 3 · LOCAL-FIRST",
-                    "你的书与心事，只留在你手里。",
-                    "书库、划线、手账与全文检索全部以 SQLite 本地离线存储；无广告、无强制登录、无打卡焦虑。",
+                    self.tr("你的书与心事，只留在你手里。", "Your books and thoughts stay strictly yours."),
+                    self.tr(
+                        "书库、划线、手账与全文检索全部以 SQLite 本地离线存储；无广告、无强制登录、无打卡焦虑。",
+                        "Library, highlights, journal, and FTS5 search live locally in SQLite — no ads, no forced accounts, no streaks.",
+                    ),
                 ))
                 .child(
                     div()
@@ -197,16 +225,23 @@ impl ReadingApp {
                         .font_family(self.ui_font())
                         .line_height(relative(1.7))
                         .text_color(rgb(hex(&t.muted)))
-                        .child("仅当你主动触发 AI 共读、纸边释义或完读信润色时，才将当次最小片段发送给你配置的模型（支持本地 Ollama 完全离线）；平时零联网上传。"),
+                        .child(self.tr(
+                            "仅当你主动触发 AI 共读、纸边释义或完读信润色时，才将当次最小片段发送给你配置的模型（支持本地 Ollama 完全离线）；平时零联网上传。",
+                            "Only when you explicitly invoke AI reflection, footnotes, or completion letters is the minimal excerpt sent to your chosen model (supports 100% offline Ollama).",
+                        )),
                 )
                 .child(
                     h_flex()
                         .gap_3()
                         .items_center()
-                        .child(self.button("上一步", Action::OnboardingStep(1), cx))
+                        .child(self.button(
+                            self.tr("上一步", "Back"),
+                            Action::OnboardingStep(1),
+                            cx,
+                        ))
                         .child(
                             self.button_with_icon(
-                                "进入我的微光书房",
+                                self.tr("进入我的微光书房", "Enter My Reading Room"),
                                 IconName::BookOpen,
                                 Action::Privacy,
                                 cx,
@@ -284,15 +319,19 @@ impl ReadingApp {
                     .border_color(self.border_strong())
                     .shadow_lg()
                     .child(self.specular_line())
-                    .child(self.studio_badge("CONFIRM", "请再确认一次", true))
+                    .child(self.studio_badge(
+                        "CONFIRM",
+                        self.tr("请再确认一次", "PLEASE CONFIRM"),
+                        true,
+                    ))
                     .child(
                         div()
                             .text_size(px(26.))
                             .font_family(self.display_font())
                             .child(if confirm == "journal" {
-                                "清空全部私人日记？"
+                                self.tr("清空全部私人日记？", "Clear all journal entries?")
                             } else {
-                                "把这本书移出书架？"
+                                self.tr("把这本书移出书架？", "Remove this book from shelf?")
                             }),
                     )
                     .child(
@@ -302,18 +341,24 @@ impl ReadingApp {
                             .line_height(relative(1.7))
                             .text_color(rgb(hex(&t.muted)))
                             .child(if confirm == "journal" {
-                                "清空后无法在应用内恢复。书籍和阅读进度不会删除。"
+                                self.tr(
+                                    "清空后无法在应用内恢复。书籍和阅读进度不会删除。",
+                                    "Cleared entries cannot be restored inside the app. Your books and reading progress stay safe.",
+                                )
                             } else {
-                                "用户原文件不会删除，已经留下的日记仍会保留。"
+                                self.tr(
+                                    "用户原文件不会删除，已经留下的日记仍会保留。",
+                                    "Your original file on disk will not be deleted, and journal notes remain intact.",
+                                )
                             }),
                     )
                     .child(
                         h_flex()
                             .gap_3()
-                            .child(self.button("保留", Action::Cancel, cx))
+                            .child(self.button(self.tr("保留", "Keep"), Action::Cancel, cx))
                             .child(
                                 self.button(
-                                    "确认",
+                                    self.tr("确认", "Confirm"),
                                     if confirm == "journal" {
                                         Action::ConfirmClear
                                     } else {
@@ -1483,11 +1528,11 @@ impl ReadingApp {
                             .items_center()
                             .child(self.studio_badge(
                                 &format!("TICKET NO.{ticket_no:04}"),
-                                "合上书页 · 完读纪念仪式",
+                                self.tr("合上书页 · 完读纪念仪式", "CLOSE THE COVER · COMPLETION RITUAL"),
                                 true,
                             ))
                             .child(self.button_with_icon(
-                                "收起",
+                                self.tr("收起", "Close"),
                                 IconName::X,
                                 Action::CloseCompletionModal,
                                 cx,
@@ -1514,14 +1559,26 @@ impl ReadingApp {
                                                 div()
                                                     .text_size(px(23.))
                                                     .font_family(self.display_font())
-                                                    .child(format!("《{title}》")),
+                                                    .child(if self.locale().is_english() {
+                                                        title.to_owned()
+                                                    } else {
+                                                        format!("《{title}》")
+                                                    }),
                                             )
                                             .child(
                                                 div()
                                                     .text_size(px(11.5))
                                                     .font_family(self.ui_font())
                                                     .text_color(rgb(hex(&t.muted)))
-                                                    .child(if minutes > 0 {
+                                                    .child(if self.locale().is_english() {
+                                                        if minutes > 0 {
+                                                            format!(
+                                                                "{author}  ·  Finished {date}  ·  {minutes} min read"
+                                                            )
+                                                        } else {
+                                                            format!("{author}  ·  Finished {date}")
+                                                        }
+                                                    } else if minutes > 0 {
                                                         format!(
                                                             "{author}  ·  完读于 {date}  ·  共静读 {minutes} 分钟"
                                                         )
@@ -1541,7 +1598,7 @@ impl ReadingApp {
                                             .text_size(px(12.))
                                             .font_family(self.display_font())
                                             .text_color(rgb(0xfff8f2))
-                                            .child("完读"),
+                                            .child(self.tr("完读", "DONE")),
                                     ),
                             )
                             .when_some(best_quote, |this, q| {
@@ -1555,7 +1612,11 @@ impl ReadingApp {
                                         .text_size(px(13.))
                                         .font_family(self.display_font())
                                         .line_height(relative(1.55))
-                                        .child(format!("「{q}」")),
+                                        .child(if self.locale().is_english() {
+                                            format!("“{q}”")
+                                        } else {
+                                            format!("「{q}」")
+                                        }),
                                 )
                             })
                             .child(
@@ -1581,9 +1642,9 @@ impl ReadingApp {
                             .child(
                                 self.button_with_icon(
                                     if already_archived {
-                                        "更新手账中的完读票根"
+                                        self.tr("更新手账中的完读票根", "Update Archived Ticket")
                                     } else {
-                                        "珍藏票根至手账"
+                                        self.tr("珍藏票根至手账", "Archive Ticket to Journal")
                                     },
                                     IconName::Bookmark,
                                     Action::ConfirmCompleteBook,
@@ -1592,7 +1653,7 @@ impl ReadingApp {
                                 .primary(),
                             )
                             .child(self.button_with_icon(
-                                "保存高清票根 PNG",
+                                self.tr("保存高清票根 PNG", "Save Ticket PNG"),
                                 IconName::ImageDown,
                                 Action::SaveCompletionTicketPng,
                                 cx,
@@ -1600,9 +1661,9 @@ impl ReadingApp {
                             .child(
                                 self.button_with_icon(
                                     if self.completion_letter_rx.is_some() {
-                                        "正在写完读信…"
+                                        self.tr("正在写完读信…", "Writing Letter…")
                                     } else {
-                                        "AI 润色完读信"
+                                        self.tr("AI 润色完读信", "Polish with AI")
                                     },
                                     IconName::WandSparkles,
                                     Action::GenerateAiCompletionLetter,
@@ -1625,9 +1686,9 @@ impl ReadingApp {
         let pt = &preview.theme;
         let size_kb = preview.archive_bytes.div_ceil(1024);
         let contrast_grade = if preview.text_contrast >= 7.0 {
-            "WCAG AAA 护眼级"
+            self.tr("WCAG AAA 护眼级", "WCAG AAA Comfort")
         } else {
-            "WCAG AA 达标"
+            self.tr("WCAG AA 达标", "WCAG AA Compliant")
         };
 
         let mut asset_badges = h_flex().gap_1p5().flex_wrap().items_center();
@@ -1641,7 +1702,7 @@ impl ReadingApp {
                     .text_size(px(10.))
                     .font_family(self.ui_font())
                     .text_color(rgb(hex(&active.accent)))
-                    .child("含背景图片"),
+                    .child(self.tr("含背景图片", "Includes Backdrop")),
             );
         }
         if preview.has_font {
@@ -1654,7 +1715,7 @@ impl ReadingApp {
                     .text_size(px(10.))
                     .font_family(self.ui_font())
                     .text_color(rgb(hex(&active.accent)))
-                    .child("含定制字体"),
+                    .child(self.tr("含定制字体", "Includes Custom Font")),
             );
         }
         if preview.has_audio {
@@ -1667,7 +1728,7 @@ impl ReadingApp {
                     .text_size(px(10.))
                     .font_family(self.ui_font())
                     .text_color(rgb(hex(&active.accent)))
-                    .child("含环境音素材"),
+                    .child(self.tr("含环境音素材", "Includes Soundscape")),
             );
         }
         if !preview.has_image && !preview.has_font && !preview.has_audio {
@@ -1680,18 +1741,19 @@ impl ReadingApp {
                     .text_size(px(10.))
                     .font_family(self.ui_font())
                     .text_color(rgb(hex(&active.muted)))
-                    .child("纯配色与排版主题包"),
+                    .child(self.tr("纯配色与排版主题包", "Palette & Typography Only")),
             );
         }
 
         let mut swatch_row = h_flex().gap_2().flex_wrap().items_center();
-        for (label, value) in [
-            ("底色", &pt.background),
-            ("纸面", &pt.paper),
-            ("正文", &pt.text),
-            ("次要", &pt.muted),
-            ("强调", &pt.accent),
+        for (label_zh, label_en, value) in [
+            ("底色", "BG", &pt.background),
+            ("纸面", "Paper", &pt.paper),
+            ("正文", "Ink", &pt.text),
+            ("次要", "Muted", &pt.muted),
+            ("强调", "Accent", &pt.accent),
         ] {
+            let label = self.tr(label_zh, label_en);
             swatch_row = swatch_row.child(
                 h_flex()
                     .gap_1p5()
@@ -1753,9 +1815,13 @@ impl ReadingApp {
                         h_flex()
                             .justify_between()
                             .items_center()
-                            .child(self.studio_badge("THEME INSPECT", "主题包导入预检", true))
+                            .child(self.studio_badge(
+                                "THEME INSPECT",
+                                self.tr("主题包导入预检", "THEME PACKAGE PREVIEW"),
+                                true,
+                            ))
                             .child(self.button_with_icon(
-                                "取消",
+                                self.tr("取消", "Cancel"),
                                 IconName::X,
                                 Action::CancelImportThemePackage,
                                 cx,
@@ -1779,7 +1845,11 @@ impl ReadingApp {
                                             .text_size(px(10.))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&pt.muted)))
-                                            .child(format!("预览空间 · {}", pt.name)),
+                                            .child(if self.locale().is_english() {
+                                                format!("Preview Space · {}", pt.name)
+                                            } else {
+                                                format!("预览空间 · {}", pt.name)
+                                            }),
                                     )
                                     .child(
                                         div()
@@ -1790,7 +1860,11 @@ impl ReadingApp {
                                             .text_size(px(9.5))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&pt.paper)))
-                                            .child(format!("字号 {:.0}px", pt.font_size)),
+                                            .child(if self.locale().is_english() {
+                                                format!("Size {:.0}px", pt.font_size)
+                                            } else {
+                                                format!("字号 {:.0}px", pt.font_size)
+                                            }),
                                     ),
                             )
                             .child(
@@ -1808,19 +1882,31 @@ impl ReadingApp {
                                             .font_family(self.display_font())
                                             .line_height(relative(1.65))
                                             .text_color(rgb(hex(&pt.text)))
-                                            .child("山风吹过微黄纸页，把白日的喧嚣轻轻搁在窗外。"),
+                                            .child(self.tr(
+                                                "山风吹过微黄纸页，把白日的喧嚣轻轻搁在窗外。",
+                                                "Evening breeze across warm paper, leaving the noise of the day outside.",
+                                            )),
                                     )
                                     .child(
                                         div()
                                             .text_size(px(11.))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&pt.muted)))
-                                            .child(format!(
-                                                "字体：{}  ·  行距 {:.1}  ·  正文宽 {}px",
-                                                pt.font.split(',').next().unwrap_or("衬线体").trim(),
-                                                pt.line_height,
-                                                pt.width
-                                            )),
+                                            .child(if self.locale().is_english() {
+                                                format!(
+                                                    "Font: {}  ·  Line {:.1}  ·  Width {}px",
+                                                    pt.font.split(',').next().unwrap_or("Serif").trim(),
+                                                    pt.line_height,
+                                                    pt.width
+                                                )
+                                            } else {
+                                                format!(
+                                                    "字体：{}  ·  行距 {:.1}  ·  正文宽 {}px",
+                                                    pt.font.split(',').next().unwrap_or("衬线体").trim(),
+                                                    pt.line_height,
+                                                    pt.width
+                                                )
+                                            }),
                                     ),
                             ),
                     )
@@ -1850,10 +1936,17 @@ impl ReadingApp {
                                             .text_size(px(11.5))
                                             .font_family(self.ui_font())
                                             .text_color(rgb(hex(&active.text)))
-                                            .child(format!(
-                                                "正文对比度 {:.1}:1（{contrast_grade}） · 强调对比度 {:.1}:1",
-                                                preview.text_contrast, preview.accent_contrast
-                                            )),
+                                            .child(if self.locale().is_english() {
+                                                format!(
+                                                    "Text contrast {:.1}:1 ({contrast_grade}) · Accent {:.1}:1",
+                                                    preview.text_contrast, preview.accent_contrast
+                                                )
+                                            } else {
+                                                format!(
+                                                    "正文对比度 {:.1}:1（{contrast_grade}） · 强调对比度 {:.1}:1",
+                                                    preview.text_contrast, preview.accent_contrast
+                                                )
+                                            }),
                                     ),
                             )
                             .child(
@@ -1861,7 +1954,11 @@ impl ReadingApp {
                                     .text_size(px(10.5))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&active.muted)))
-                                    .child(format!("包体约 {size_kb} KB")),
+                                    .child(if self.locale().is_english() {
+                                        format!("Package ~{size_kb} KB")
+                                    } else {
+                                        format!("包体约 {size_kb} KB")
+                                    }),
                             ),
                     )
                     .child(asset_badges)
@@ -1870,7 +1967,10 @@ impl ReadingApp {
                             .text_size(px(11.))
                             .font_family(self.ui_font())
                             .text_color(rgb(hex(&active.muted)))
-                            .child("已通过安全清单与对比度校验，导入后将保存至「我的私藏主题」，不会影响你的藏书和日记。"),
+                            .child(self.tr(
+                                "已通过安全清单与对比度校验，导入后将保存至「我的私藏主题」，不会影响你的藏书和日记。",
+                                "Passed manifest safety & contrast checks. Importing adds it to Personal Themes without altering your books or journal.",
+                            )),
                     )
                     .child(
                         h_flex()
@@ -1878,14 +1978,18 @@ impl ReadingApp {
                             .items_center()
                             .child(
                                 self.button_with_icon(
-                                    "确认导入并启用",
+                                    self.tr("确认导入并启用", "Import & Apply"),
                                     IconName::Check,
                                     Action::ConfirmImportThemePackage,
                                     cx,
                                 )
                                 .primary(),
                             )
-                            .child(self.button("暂不导入", Action::CancelImportThemePackage, cx)),
+                            .child(self.button(
+                                self.tr("暂不导入", "Cancel"),
+                                Action::CancelImportThemePackage,
+                                cx,
+                            )),
                     ),
             )
             .into_any_element()
