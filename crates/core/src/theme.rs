@@ -116,6 +116,64 @@ pub fn validate(theme: &Theme) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+pub struct ThemePackagePreview {
+    pub theme: Theme,
+    pub text_contrast: f32,
+    pub accent_contrast: f32,
+    pub has_image: bool,
+    pub has_font: bool,
+    pub has_audio: bool,
+    pub archive_bytes: u64,
+}
+
+/// Validates and inspects a `.glowtheme` archive without mutating `Store` or writing to disk.
+pub fn inspect_theme_package(path: &Path) -> Result<ThemePackagePreview> {
+    let archive_bytes = fs::metadata(path)?.len();
+    ensure!(archive_bytes <= crate::library::MAX_ARCHIVE, "主题包过大");
+    let files = unpack(&fs::read(path)?)?;
+    let mut theme: Theme =
+        serde_json::from_slice(files.get("theme.json").context("主题包缺少 theme.json")?)?;
+    validate(&theme)?;
+    for name in [&theme.image, &theme.font_asset, &theme.audio]
+        .into_iter()
+        .flatten()
+    {
+        ensure!(files.contains_key(name), "主题包缺少引用的素材");
+    }
+    if let Some(name) = &theme.image {
+        ensure!(valid_image(&files[name]), "主题背景图片已损坏或格式不符");
+    }
+    if let Some(name) = &theme.font_asset {
+        theme.font = font_family(&files[name])?;
+    }
+    if let Some(name) = &theme.audio {
+        ensure!(valid_audio(&files[name]), "主题环境音已损坏或格式不符");
+    }
+    for name in files.keys() {
+        if name != "theme.json" {
+            ensure!(
+                [&theme.image, &theme.font_asset, &theme.audio]
+                    .into_iter()
+                    .flatten()
+                    .any(|n| n == name),
+                "主题包包含未声明文件"
+            );
+        }
+    }
+    let text_contrast = contrast(&theme.text, &theme.paper);
+    let accent_contrast = contrast(&theme.accent, &theme.paper);
+    Ok(ThemePackagePreview {
+        has_image: theme.image.is_some(),
+        has_font: theme.font_asset.is_some(),
+        has_audio: theme.audio.is_some(),
+        text_contrast,
+        accent_contrast,
+        archive_bytes,
+        theme,
+    })
+}
+
 impl Store {
     pub fn save_theme(&mut self, theme: Theme) -> Result<()> {
         validate(&theme)?;
@@ -124,41 +182,34 @@ impl Store {
         self.state.theme = theme;
         self.save()
     }
-    pub fn import_theme(&mut self, path: &Path) -> Result<Theme> {
-        ensure!(
-            fs::metadata(path)?.len() <= crate::library::MAX_ARCHIVE,
-            "主题包过大"
-        );
-        let files = unpack(&fs::read(path)?)?;
-        let mut theme: Theme =
-            serde_json::from_slice(files.get("theme.json").context("主题包缺少 theme.json")?)?;
-        validate(&theme)?;
-        for name in [&theme.image, &theme.font_asset, &theme.audio]
-            .into_iter()
-            .flatten()
-        {
-            ensure!(files.contains_key(name), "主题包缺少引用的素材");
+    pub fn delete_custom_theme(&mut self, id: &str) -> Result<bool> {
+        let existed = self.state.custom_themes.iter().any(|t| t.id == id);
+        if !existed {
+            return Ok(false);
         }
-        if let Some(name) = &theme.image {
-            ensure!(valid_image(&files[name]), "主题背景图片已损坏或格式不符");
+        let prev_custom = self.state.custom_themes.clone();
+        let prev_active = self.state.theme.clone();
+        self.state.custom_themes.retain(|t| t.id != id);
+        if self.state.theme.id == id {
+            self.state.theme = Theme::default();
         }
-        if let Some(name) = &theme.font_asset {
-            theme.font = font_family(&files[name])?;
+        if let Err(err) = self.save() {
+            self.state.custom_themes = prev_custom;
+            self.state.theme = prev_active;
+            return Err(err);
         }
-        if let Some(name) = &theme.audio {
-            ensure!(valid_audio(&files[name]), "主题环境音已损坏或格式不符");
-        }
-        for name in files.keys() {
-            if name != "theme.json" {
-                ensure!(
-                    [&theme.image, &theme.font_asset, &theme.audio]
-                        .into_iter()
-                        .flatten()
-                        .any(|n| n == name),
-                    "主题包包含未声明文件"
-                );
+        if crate::library::safe_path(id) {
+            let dir = self.root.join("themes").join(id);
+            if dir.exists() {
+                let _ = fs::remove_dir_all(dir);
             }
         }
+        Ok(true)
+    }
+    pub fn import_theme(&mut self, path: &Path) -> Result<Theme> {
+        let preview = inspect_theme_package(path)?;
+        let files = unpack(&fs::read(path)?)?;
+        let mut theme = preview.theme;
         theme.id = format!("custom-{}", uuid::Uuid::new_v4());
         let dir = self.root.join("themes").join(&theme.id);
         for (name, bytes) in &files {
@@ -323,5 +374,45 @@ mod tests {
                 .copy_theme_asset(&mut theme, "font", &broken_font)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn inspects_theme_package_without_mutating_store_and_deletes_custom_theme() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path().join("data")).unwrap();
+        let mut draft = store.duplicate_theme(&Theme::default()).unwrap();
+        draft.name = "暮雪茶寮".into();
+        let image = dir.path().join("scene.png");
+        fs::write(&image, include_bytes!("../../../assets/scene.png")).unwrap();
+        store
+            .copy_theme_asset(&mut draft, "background", &image)
+            .unwrap();
+        let package = dir.path().join("tea.glowtheme");
+        store.export_theme(&draft, &package).unwrap();
+
+        let preview = inspect_theme_package(&package).unwrap();
+        assert_eq!(preview.theme.name, "暮雪茶寮");
+        assert!(preview.text_contrast >= 7.0);
+        assert!(preview.accent_contrast >= 4.5);
+        assert!(preview.has_image);
+        assert!(!preview.has_font);
+        assert!(!preview.has_audio);
+        assert!(preview.archive_bytes > 100);
+        assert!(
+            store.state.custom_themes.is_empty(),
+            "inspect_theme_package must not mutate store state"
+        );
+
+        let imported = store.import_theme(&package).unwrap();
+        assert_eq!(store.state.custom_themes.len(), 1);
+        assert_eq!(store.state.theme.id, imported.id);
+        let asset_dir = store.root.join("themes").join(&imported.id);
+        assert!(asset_dir.exists());
+
+        assert!(store.delete_custom_theme(&imported.id).unwrap());
+        assert!(store.state.custom_themes.is_empty());
+        assert_eq!(store.state.theme.id, Theme::default().id);
+        assert!(!asset_dir.exists());
+        assert!(!store.delete_custom_theme("non-existent-id").unwrap());
     }
 }

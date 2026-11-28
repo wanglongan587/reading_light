@@ -8,6 +8,7 @@ pub struct CatalogBook {
     pub id: &'static str,
     pub title: &'static str,
     pub author: &'static str,
+    pub category: &'static str,
     pub era: &'static str,
     pub minutes: u32,
     pub moods: &'static [&'static str],
@@ -135,11 +136,82 @@ Thank the flame for its light, but do not forget the lampholder standing in the 
 感谢火焰给你光明，但是不要忘了那执灯的人，他是坚忍地站在黑暗当中的。
 "#;
 
+const STARLIGHT_POST_TEXT: &str = r#"# 第一夜 · 山腰上的慢邮局
+从镇口往北走，越过三座长满青苔的石拱桥，就到了只在傍晚六点以后亮灯的慢邮局。邮局没有加急件，也没有催促人的叫号屏幕，木门上只挂着一枚小小的黄铜风铃。
+
+邮差阿禾喜欢在开门前先擦亮柜台上的玻璃台灯。灯光是浅浅的琥珀色，照在旧牛皮纸信封上，像把傍晚最后一缕斜阳叠进了抽屉里。
+
+“今天也辛苦啦。”每当有人推门进来，阿禾总是先递上一小杯温热的陈皮水，再不紧不慢地问对方想把这封信寄给哪一天的自己。
+
+# 第二夜 · 迟到也无妨的回信
+有一位总在深夜加班的绘本画师，连续三个月把没画完的草稿折成小船，投进慢邮局的蓝色邮筒里。他在信封角落写着：“如果明天我还是画不好，就替我把这些纸船收起来吧。”
+
+秋分那天，阿禾把一叠压平整的草稿装进新的信袋，贴上一枚印着萤火虫的邮票，轻轻放回了画师家门口的信箱。信里没有一句大道理，只夹着一片银杏叶和一行细小的钢笔字：
+
+“风停的时候，纸船也会稳稳停在水面上。你已经走了很远的路，今晚先安心睡一觉。”
+
+# 第三夜 · 留给明天的一盏灯
+冬天落第一场小雪时，慢邮局的屋檐垂下了一排晶莹的冰凌。阿禾把柜台里的每盏小台灯都调暗了一格，让屋子安静得能听见雪花落在松针上的微响。
+
+他合上今日的登记簿，在最后一页记下：今天共有七个人停下来喘了口气，三个人原谅了自己没做完的计划，还有一个人决定把手机放到客厅，安安静静读完十页书再睡。
+
+推开窗，远处的山谷像一册合拢的旧画集。灯光不必照亮整片原野，只要足够照见眼前这一页，就已经很好了。
+"#;
+
+const RAINY_TEA_NOTES_TEXT: &str = r#"# 一 · 听雨之前，先烧一壶水
+傍晚下起细雨时，房间里最先安静下来的往往不是街声，而是水壶刚坐上炉子时那阵低沉的嗡鸣。气泡从壶底一颗颗浮起来，像把白天散落各处的念头重新聚拢。
+
+泡一盏温润的焙火乌龙，不必讲究繁复的器皿。一只顺手的粗陶杯，一撮带着淡淡焦糖香的茶叶，沸水倾注下去的刹那，氤氲的热气便在书桌前搭起了一小片隔开喧嚣的屋檐。
+
+# 二 · 书页里的慢拍子
+白天总被各种进度条和提醒声切得很碎，好像慢半拍就会错过什么。可真正坐下来听雨、捧一杯热茶翻开书时，才会发觉世界并没有因为自己停下二十分钟而变得慌乱。
+
+茶汤第一泡清亮，第二泡醇厚，第三泡渐渐柔和下来。读一本书也是如此：不必急着把每一句都背下来，允许某些段落轻轻滑过心尖，留下一点清欢与余韵就已足够。
+
+# 三 · 檐下余温
+雨声在十点以后变得疏落，茶壶里的水也渐渐凉成温润的体温。合上书，夹进一张随手折好的牛皮纸书签，桌面留白处映着台灯暖黄的光晕。
+
+这一夜什么宏大的决定都没有做，却奇异地觉得心里稳当了许多。原来照顾好自己，常常只是烧一壶热水、读几页安静的字。
+"#;
+
+const QUIET_HARBOR_LETTERS_TEXT: &str = r#"# 第一封 · 写给觉得自己落后的夜晚
+亲爱的朋友：
+如果你今天又因为清单上没划掉的几项而感到愧疚，请先在这行字后面停一停，把肩膀轻轻放下来。
+
+生活不是百米冲刺，更像沿着一条曲折的林间溪流散步。有人在前面的弯道看风景，有人蹲在石阶旁数青苔，并没有哪一步算是白走。今晚不谈追赶，只谈歇脚。
+
+# 第二封 · 写给找不到答案的午后
+迷茫的时候，人总想立刻翻到最后一页看结局。可树苗在土里扎根的那几个月，地面上也是看不见任何变化的。
+
+如果眼前一时起雾，不必硬要看清三公里以外的路标。只把目光收回到脚下这一步，读完手边这一小节，吃一顿热乎的晚饭，把房间收拾出一个干净的角落——微小的秩序会悄悄托住你的心。
+
+# 第三封 · 写给正在慢慢恢复力气的你
+复原从来不是一条笔直向上的折线。有时明明已经轻松了三天，第四天忽然又涌起一阵无来由的疲倦，那并不代表你退回了原地，只是身体在提醒你：刚才走得稍微有点快了。
+
+允许自己有情绪的潮汐，也允许自己在需要的时候退回安静的港湾。等你准备好了，风会自然而然推着船帆重新启程。
+"#;
+
+const LANTERN_BILINGUAL_TEXT: &str = r#"# Chapter One · The Small Lamp (一盏小灯)
+A small lamp on the desk does not compete with the noon sun. It asks only to keep one quiet circle warm when the evening settles over the rooftops.
+书桌上的小台灯从不与正午的烈日争辉。当夜色落满屋檐，它只安静地守住眼前这一小圈温柔的光亮。
+
+To read slowly is to refuse the rumor that every hour must be hurried. Between two sentences, there is room enough to breathe.
+慢读，是温和地拒绝“每一小时都必须奔忙”的传言。在两句文字的停顿之间，本就留着足够呼吸的空隙。
+
+# Chapter Two · Gentle Companionship (轻声相伴)
+Good books wait without impatience. You may close the cover for three weeks, wander through noisy seasons, and return on a rainy Tuesday to find the same page still holding your place.
+好书从不催促。你可以合上书页三周，穿过喧闹的季节，在一个下雨的周二夜晚重新回来，那一页依然安静地替你留着位置。
+
+Carry one clear sentence into sleep, the way a traveler carries a warm pebble in a coat pocket. Tomorrow will unfold in its own time.
+带一句清澈的句子入睡，就像旅人在大衣口袋里揣着一枚温热的鹅卵石。明天会按照它自己的节奏缓缓展开。
+"#;
+
 pub const CATALOG_BOOKS: &[CatalogBook] = &[
     CatalogBook {
         id: "forest-slow",
         title: "在林间，慢慢来",
         author: "微光阅读 · 原创散文",
+        category: "原创散文",
         era: "原创常驻",
         minutes: 8,
         moods: &["疲惫", "睡前", "独处"],
@@ -148,9 +220,46 @@ pub const CATALOG_BOOKS: &[CatalogBook] = &[
         content: SAMPLE_FOREST,
     },
     CatalogBook {
+        id: "starlight-post",
+        title: "星灯与慢邮局",
+        author: "微光阅读 · 睡前故事",
+        category: "睡前故事",
+        era: "原创治愈",
+        minutes: 7,
+        moods: &["睡前", "疲惫", "希望"],
+        tagline: "山腰上只在傍晚亮灯的慢邮局，收容没写完的心事与不必着急的明天。",
+        accent_hex: "#4B6A9B",
+        content: STARLIGHT_POST_TEXT,
+    },
+    CatalogBook {
+        id: "rainy-tea-notes",
+        title: "雨夜煮茶手记",
+        author: "微光阅读 · 生活随笔",
+        category: "原创散文",
+        era: "原创治愈",
+        minutes: 6,
+        moods: &["疲惫", "独处", "睡前"],
+        tagline: "烧一壶水、泡一盏焙火乌龙，在细雨声里把紧绷的节奏松开半拍。",
+        accent_hex: "#6B7C59",
+        content: RAINY_TEA_NOTES_TEXT,
+    },
+    CatalogBook {
+        id: "quiet-harbor-letters",
+        title: "写给慢下来的十封信",
+        author: "微光阅读 · 书信札记",
+        category: "原创散文",
+        era: "原创治愈",
+        minutes: 9,
+        moods: &["迷茫", "希望", "独处"],
+        tagline: "当清单太长、步伐太急时，打开一封不讲大道理的安静长信。",
+        accent_hex: "#9E6A44",
+        content: QUIET_HARBOR_LETTERS_TEXT,
+    },
+    CatalogBook {
         id: "taohuayuan",
         title: "归园田居与桃花源",
         author: "陶渊明",
+        category: "古典诗文",
         era: "东晋 · 公版经典",
         minutes: 10,
         moods: &["疲惫", "迷茫", "独处"],
@@ -162,6 +271,7 @@ pub const CATALOG_BOOKS: &[CatalogBook] = &[
         id: "chibi-sushi",
         title: "赤壁夜游集",
         author: "苏轼",
+        category: "古典诗文",
         era: "北宋 · 公版经典",
         minutes: 12,
         moods: &["迷茫", "独处", "睡前"],
@@ -173,6 +283,7 @@ pub const CATALOG_BOOKS: &[CatalogBook] = &[
         id: "wangwei-autumn",
         title: "辋川山居诗笺",
         author: "王维",
+        category: "古典诗文",
         era: "盛唐 · 公版经典",
         minutes: 6,
         moods: &["睡前", "独处", "疲惫"],
@@ -184,6 +295,7 @@ pub const CATALOG_BOOKS: &[CatalogBook] = &[
         id: "walden-solitude",
         title: "瓦尔登湖 · 独处选篇",
         author: "Henry David Thoreau",
+        category: "双语原典",
         era: "1854 · 英文公版",
         minutes: 14,
         moods: &["独处", "迷茫"],
@@ -195,12 +307,25 @@ pub const CATALOG_BOOKS: &[CatalogBook] = &[
         id: "stray-birds",
         title: "飞鸟集 · 静夜选札",
         author: "Rabindranath Tagore",
+        category: "双语原典",
         era: "1916 · 双语公版",
         minutes: 7,
         moods: &["睡前", "疲惫", "希望"],
         tagline: "中英对照的短诗微光，一页只需两分钟，温柔接住睡前思绪。",
         accent_hex: "#AE572A",
         content: STRAY_BIRDS_TEXT,
+    },
+    CatalogBook {
+        id: "lantern-bilingual-notes",
+        title: "微光双语慢读札记 · Quiet Hours",
+        author: "微光阅读 · 双语随笔",
+        category: "双语原典",
+        era: "原创双语",
+        minutes: 8,
+        moods: &["独处", "睡前", "希望"],
+        tagline: "中英对照的夜晚短札，适合一边听雨一边轻声慢读。",
+        accent_hex: "#3E6D8C",
+        content: LANTERN_BILINGUAL_TEXT,
     },
 ];
 
@@ -210,6 +335,20 @@ pub fn all_books() -> &'static [CatalogBook] {
 
 pub fn find(id: &str) -> Option<&'static CatalogBook> {
     CATALOG_BOOKS.iter().find(|b| b.id == id)
+}
+
+pub fn filter_by_category(category: &str) -> Vec<&'static CatalogBook> {
+    let trimmed = category.trim();
+    if trimmed.is_empty() || trimmed == "全部" {
+        return CATALOG_BOOKS.iter().collect();
+    }
+    if trimmed == "10分钟内" {
+        return CATALOG_BOOKS.iter().filter(|b| b.minutes <= 10).collect();
+    }
+    CATALOG_BOOKS
+        .iter()
+        .filter(|b| b.category == trimmed)
+        .collect()
 }
 
 pub fn recommend_for_mood(mood: &str) -> Vec<&'static CatalogBook> {
@@ -250,9 +389,19 @@ mod tests {
 
     #[test]
     fn catalog_mood_recommendations_and_install_produce_valid_epubs() {
-        assert!(all_books().len() >= 6);
+        assert!(all_books().len() >= 10);
         let bedtime = recommend_for_mood("睡前");
-        assert!(bedtime.len() >= 3);
+        assert!(bedtime.len() >= 5);
+        assert!(
+            filter_by_category("睡前故事")
+                .iter()
+                .any(|b| b.id == "starlight-post")
+        );
+        assert!(
+            filter_by_category("10分钟内")
+                .iter()
+                .all(|b| b.minutes <= 10)
+        );
         let dir = tempfile::tempdir().unwrap();
         let mut store = Store::open(dir.path().to_path_buf()).unwrap();
         let id = store.install_catalog_book("chibi-sushi").unwrap();
@@ -271,5 +420,19 @@ mod tests {
         let id2 = store.install_catalog_book("chibi-sushi").unwrap();
         assert_eq!(id, id2);
         assert_eq!(store.state.books.len(), 1);
+
+        // Newly added original book installs cleanly too
+        let story_id = store.install_catalog_book("starlight-post").unwrap();
+        let story = store.state.books.iter().find(|b| b.id == story_id).unwrap();
+        assert_eq!(story.title, "星灯与慢邮局");
+        assert!(story.tags.iter().any(|t| t == "微光公版馆"));
+        assert!(
+            store
+                .root
+                .join("books")
+                .join(&story_id)
+                .join("book.epub")
+                .exists()
+        );
     }
 }
