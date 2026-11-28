@@ -826,6 +826,18 @@ impl ReadingApp {
                                 cx,
                             ))
                             .child(self.button_with_icon(
+                                "Obsidian 笔记库",
+                                IconName::ArrowUpRight,
+                                Action::ExportObsidianVault,
+                                cx,
+                            ))
+                            .child(self.button_with_icon(
+                                "Notion 书单 CSV",
+                                IconName::FileText,
+                                Action::ExportNotionCsv,
+                                cx,
+                            ))
+                            .child(self.button_with_icon(
                                 "清空日记",
                                 IconName::X,
                                 Action::ClearJournal,

@@ -1743,3 +1743,105 @@ fn phase1_polish_theme_preview_tts_controls_catalog_filter_and_journal_postcard_
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
 }
+
+#[gpui::test]
+fn phase2_multiformat_slow_read_rss_digest_obsidian_export_and_bilingual_locale_work(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("data")).unwrap();
+    store.state.privacy_seen = true;
+
+    // 1. Import Markdown & PDF files via Phase 2 multi-format reflow engine
+    let md_path = dir.path().join("night-essay.md");
+    fs::write(&md_path, "# 雨夜札记\n把灯光调暖，允许自己什么都不赶。").unwrap();
+    let md_id = store.import_book(&md_path, None).unwrap();
+
+    let pdf_path = dir.path().join("calm-guide.pdf");
+    let pdf_bytes = b"%PDF-1.4\n1 0 obj\n<< /Title (Calm Study Guide) >>\nendobj\n2 0 obj\n<< /Length 58 >>\nstream\nBT\n(A quiet reading room welcomes tired minds.) Tj\nET\nendstream\nendobj\n%%EOF\n";
+    fs::write(&pdf_path, pdf_bytes).unwrap();
+    let pdf_id = store.import_book(&pdf_path, None).unwrap();
+
+    let (app, cx) = cx.add_window_view(|window, cx| test_app(store, window, cx));
+
+    // Open book metadata editor to render cover replacement + single-book Markdown export buttons
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::EditBookMeta(pdf_id.clone()), window, cx);
+        assert_eq!(app.editing_book_id.as_deref(), Some(pdf_id.as_str()));
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // 2. Switch to Slow-Read Inbox tab: add RSS subscription, seed parsed feed items, import item & compile Weekend Digest
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::CancelBookMeta, window, cx);
+        app.act(Action::ShelfTab(ShelfTab::SlowRead), window, cx);
+        app.rss_name_input
+            .update(cx, |s, cx| s.set_value("微光慢读周刊", window, cx));
+        app.rss_url_input
+            .update(cx, |s, cx| s.set_value("https://quiet.example.com/rss.xml", window, cx));
+        app.act(Action::RssAddFeed, window, cx);
+        assert_eq!(app.store.state.rss_feeds.len(), 1);
+
+        let sample_rss = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0"><channel><title>微光慢读周刊</title>
+          <item><title>茶烟与晚风</title><link>https://quiet.example.com/1</link><description>烧一壶水，慢慢翻开今晚的书。</description></item>
+          <item><title>纸页里的停顿</title><link>https://quiet.example.com/2</link><description>留白让呼吸重新舒展开来。</description></item>
+        </channel></rss>"#;
+        let parsed = rss::parse_feed(sample_rss, "https://quiet.example.com/rss.xml").unwrap();
+        app.rss_active_title = parsed.title;
+        app.rss_items = parsed.items;
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::RssImportItem(0, false), window, cx);
+        assert!(
+            app.store
+                .state
+                .books
+                .iter()
+                .any(|b| b.title == "茶烟与晚风")
+        );
+        app.act(Action::CompileWeekendDigest, window, cx);
+        assert!(
+            app.store
+                .state
+                .books
+                .iter()
+                .any(|b| b.tags.iter().any(|t| t == "周末慢读小报")),
+            "Weekend digest EPUB should be compiled and added to shelf"
+        );
+        let feed_id = app.store.state.rss_feeds[0].id.clone();
+        app.act(Action::RssRemoveFeed(feed_id), window, cx);
+        assert!(app.store.state.rss_feeds.is_empty());
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // 3. Render Journal with Obsidian & Notion export toolbar and verify live state export
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::Page(Page::Journal), window, cx);
+        let export_dir = dir.path().join("vault");
+        let report = exporter::export_obsidian_vault(&app.store.state, &export_dir).unwrap();
+        assert!(report.books_exported >= 4);
+        let csv = exporter::render_notion_csv(&app.store.state.books).unwrap();
+        assert!(csv.contains("Calm Study Guide"));
+        assert!(app.store.state.books.iter().any(|b| b.id == md_id));
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // 4. Switch bilingual locale to English and back to zh-CN cleanly
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::Page(Page::Themes), window, cx);
+        app.act(Action::SetLocale("en-US".into()), window, cx);
+        assert!(app.locale().is_english());
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    app.update_in(cx, |app, window, cx| {
+        app.act(Action::Page(Page::Shelf), window, cx);
+        app.act(Action::SetLocale("zh-CN".into()), window, cx);
+        assert!(!app.locale().is_english());
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+}

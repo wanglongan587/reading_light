@@ -7,7 +7,7 @@ impl ReadingApp {
         self.tts_player.get_or_insert_with(tts::TtsPlayer::new)
     }
 
-    pub(super) fn tick_features(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn tick_features(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // 1. Poll Spoiler-Free AI Companion generation
         if let Some(res) = self.companion_rx.as_ref().map(|rx| rx.try_recv()) {
             match res {
@@ -250,6 +250,83 @@ impl ReadingApp {
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.opds_import_rx = None;
+                    cx.notify();
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+
+        // 10. Poll Web Article Clipper fetch & distillation
+        if let Some(res) = self.clip_rx.as_ref().map(|rx| rx.try_recv()) {
+            match res {
+                Ok(Ok((epub_bytes, open_after))) => {
+                    self.clip_rx = None;
+                    match self.store.import_epub_bytes_tagged(
+                        epub_bytes,
+                        "web",
+                        &["慢读箱", "网页剪藏"],
+                    ) {
+                        Ok(book_id) => {
+                            let title = self
+                                .store
+                                .state
+                                .books
+                                .iter()
+                                .find(|b| b.id == book_id)
+                                .map(|b| b.title.clone())
+                                .unwrap_or_else(|| "网页长文".into());
+                            self.clip_url_input
+                                .update(cx, |s, cx| s.set_value("", window, cx));
+                            if open_after {
+                                if let Err(err) = self.open(&book_id, window, cx) {
+                                    self.error = Some(format!("打开剪藏文章失败：{err}"));
+                                } else {
+                                    self.notice =
+                                        Some(format!("已将网页长文《{title}》剪藏并铺开书页。"));
+                                }
+                            } else {
+                                self.notice =
+                                    Some(format!("已将网页长文《{title}》收进你的书房。"));
+                            }
+                        }
+                        Err(err) => self.error = Some(format!("剪藏文章导入失败：{err}")),
+                    }
+                    cx.notify();
+                }
+                Ok(Err(err)) => {
+                    self.clip_rx = None;
+                    self.error = Some(format!("网页剪藏失败：{err}"));
+                    cx.notify();
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.clip_rx = None;
+                    cx.notify();
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+
+        // 11. Poll RSS / Atom Slow-Read feed fetch
+        if let Some(res) = self.rss_fetch_rx.as_ref().map(|rx| rx.try_recv()) {
+            match res {
+                Ok(Ok(feed)) => {
+                    self.rss_fetch_rx = None;
+                    let count = feed.items.len();
+                    self.rss_active_title = feed.title;
+                    self.rss_items = feed.items;
+                    self.notice = Some(format!(
+                        "已拉取慢读订阅「{}」，共 {} 篇文章（可单篇收入或合订周末慢读小报）。",
+                        self.rss_active_title, count
+                    ));
+                    cx.notify();
+                }
+                Ok(Err(err)) => {
+                    self.rss_fetch_rx = None;
+                    self.error = Some(format!("拉取 RSS 订阅失败：{err}"));
+                    cx.notify();
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.rss_fetch_rx = None;
                     cx.notify();
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
@@ -1185,6 +1262,214 @@ impl ReadingApp {
             }
             Action::CatalogCategory(cat) => {
                 self.catalog_category = cat;
+            }
+            Action::ClipWebUrl(open_after) => {
+                if self.clip_rx.is_some() {
+                    return Ok(());
+                }
+                let url = self.clip_url_input.read(cx).value().trim().to_owned();
+                anyhow::ensure!(
+                    glow_core::model::valid_radio_stream_url(&url),
+                    "请输入以 http:// 或 https:// 开头的文章链接"
+                );
+                let (tx, rx) = mpsc::channel();
+                self.clip_rx = Some(rx);
+                self.notice = Some(format!("正在提纯网页长文 {url} …"));
+                std::thread::spawn(move || {
+                    let outcome = (|| -> anyhow::Result<(Vec<u8>, bool)> {
+                        let client = reqwest::blocking::Client::builder()
+                            .connect_timeout(Duration::from_secs(10))
+                            .timeout(Duration::from_secs(25))
+                            .user_agent("GlowReading/1.5 (SlowRead Clipper)")
+                            .build()?;
+                        let resp = client.get(&url).send()?;
+                        anyhow::ensure!(
+                            resp.status().is_success(),
+                            "网页返回状态码 HTTP {}",
+                            resp.status().as_u16()
+                        );
+                        let html = resp.text()?;
+                        let article = clipper::extract_readable_article(&html, Some(&url))?;
+                        let epub = clipper::article_to_epub(&article)?;
+                        Ok((epub, open_after))
+                    })();
+                    let _ = tx.send(outcome);
+                });
+            }
+            Action::RssAddFeed => {
+                let name = self.rss_name_input.read(cx).value().trim().to_owned();
+                let url = self.rss_url_input.read(cx).value().trim().to_owned();
+                let feed = self.store.add_rss_feed(name, url)?;
+                self.rss_name_input
+                    .update(cx, |s, cx| s.set_value("", window, cx));
+                self.rss_url_input
+                    .update(cx, |s, cx| s.set_value("", window, cx));
+                self.notice = Some(format!("已添加慢读订阅「{}」。", feed.name));
+            }
+            Action::RssRemoveFeed(id) => {
+                self.store.remove_rss_feed(&id)?;
+                self.notice = Some("已移除该慢读订阅源。".into());
+            }
+            Action::RssFetchFeed(url) => {
+                if self.rss_fetch_rx.is_some() {
+                    return Ok(());
+                }
+                anyhow::ensure!(
+                    glow_core::model::valid_radio_stream_url(&url),
+                    "RSS 订阅地址无效"
+                );
+                let (tx, rx) = mpsc::channel();
+                self.rss_fetch_rx = Some(rx);
+                self.notice = Some(format!("正在拉取慢读订阅 {url} …"));
+                std::thread::spawn(move || {
+                    let outcome = (|| -> anyhow::Result<rss::RssFeed> {
+                        let client = reqwest::blocking::Client::builder()
+                            .connect_timeout(Duration::from_secs(10))
+                            .timeout(Duration::from_secs(20))
+                            .user_agent("GlowReading/1.5 (SlowRead RSS)")
+                            .build()?;
+                        let resp = client.get(&url).send()?;
+                        anyhow::ensure!(
+                            resp.status().is_success(),
+                            "订阅源返回 HTTP {}",
+                            resp.status().as_u16()
+                        );
+                        let xml = resp.text()?;
+                        rss::parse_feed(&xml, &url)
+                    })();
+                    let _ = tx.send(outcome);
+                });
+            }
+            Action::RssImportItem(idx, open_after) => {
+                let item = self
+                    .rss_items
+                    .get(idx)
+                    .cloned()
+                    .context("未找到该慢读文章")?;
+                let feed_title = if self.rss_active_title.is_empty() {
+                    "慢读订阅".to_owned()
+                } else {
+                    self.rss_active_title.clone()
+                };
+                let epub = rss::item_to_epub(&item, &feed_title)?;
+                let book_id =
+                    self.store
+                        .import_epub_bytes_tagged(epub, "rss", &["慢读箱", "RSS"])?;
+                if open_after {
+                    self.open(&book_id, window, cx)?;
+                } else {
+                    self.notice = Some(format!("已将《{}》收入你的慢读书架。", item.title));
+                }
+            }
+            Action::CompileWeekendDigest => {
+                anyhow::ensure!(
+                    !self.rss_items.is_empty(),
+                    "请先拉取一个 RSS 订阅源，再合订周末慢读小报"
+                );
+                let today = today_ymd();
+                let source = if self.rss_active_title.is_empty() {
+                    "微光慢读".to_owned()
+                } else {
+                    self.rss_active_title.clone()
+                };
+                let selected: Vec<(String, rss::RssItem)> = self
+                    .rss_items
+                    .iter()
+                    .take(6)
+                    .cloned()
+                    .map(|it| (source.clone(), it))
+                    .collect();
+                let issue_title = format!("微光周末慢读小报 · {today}");
+                let epub = rss::compile_weekend_digest(&issue_title, &today, &selected)?;
+                let book_id = self.store.import_epub_bytes_tagged(
+                    epub,
+                    "digest",
+                    &["慢读箱", "周末慢读小报"],
+                )?;
+                self.shelf_tab = ShelfTab::Library;
+                self.notice = Some(format!(
+                    "已合订《{issue_title}》（共 {} 篇），随时可泡杯热茶慢读。",
+                    selected.len()
+                ));
+                if self.store.state.books.iter().any(|b| b.id == book_id) {
+                    self.shelf_filter = ShelfFilter::All;
+                }
+            }
+            Action::ExportObsidianVault => {
+                self.hide(cx);
+                if let Some(dir) = rfd::FileDialog::new()
+                    .set_parent(window)
+                    .set_title("选择 Obsidian 笔记库导出目录")
+                    .pick_folder()
+                {
+                    let report = exporter::export_obsidian_vault(&self.store.state, &dir)?;
+                    self.notice = Some(format!(
+                        "已导出至 Obsidian 笔记库：{} 本书、{} 篇月度手账、{} 条划线（共写入 {} 个 Markdown 文件）。",
+                        report.books_exported,
+                        report.journal_months_exported,
+                        report.total_highlights,
+                        report.files_written
+                    ));
+                }
+            }
+            Action::ExportNotionCsv => {
+                let csv = exporter::render_notion_csv(&self.store.state.books)?;
+                self.hide(cx);
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_parent(window)
+                    .set_title("导出 Notion 书单数据库 CSV")
+                    .set_file_name("微光书单-Notion.csv")
+                    .add_filter("CSV 文件", &["csv"])
+                    .save_file()
+                {
+                    glow_core::store::atomic_write(&path, csv.as_bytes())?;
+                    self.notice =
+                        Some("已导出 Notion 兼容书单 CSV（UTF-8 BOM，可直接导入数据库）。".into());
+                }
+            }
+            Action::ExportBookMarkdown(book_id) => {
+                let book = self
+                    .store
+                    .state
+                    .books
+                    .iter()
+                    .find(|b| b.id == book_id)
+                    .context("未找到这本书")?;
+                let md = exporter::render_book_markdown(book, &self.store.state.journal);
+                let filename = format!("{}-微光笔记.md", book.title);
+                self.hide(cx);
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_parent(window)
+                    .set_title("导出本书精排笔记 (Obsidian / Notion Markdown)")
+                    .set_file_name(&filename)
+                    .add_filter("Markdown", &["md"])
+                    .save_file()
+                {
+                    glow_core::store::atomic_write(&path, md.as_bytes())?;
+                    self.notice = Some(format!(
+                        "已导出《{}》的划线与完读笔记 Markdown。",
+                        book.title
+                    ));
+                }
+            }
+            Action::ReplaceBookCover(book_id) => {
+                self.hide(cx);
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_parent(window)
+                    .set_title("选择新的书籍封面图片")
+                    .add_filter("图片", &["png", "jpg", "jpeg", "webp"])
+                    .pick_file()
+                {
+                    self.store.set_book_cover(&book_id, &path)?;
+                    self.notice = Some("已更新这本书的本地封面图片。".into());
+                }
+            }
+            Action::SetLocale(code) => {
+                let locale = self.store.set_locale(&code)?;
+                self.notice = Some(match locale {
+                    i18n::Locale::ZhCn => "界面语言已切换为简体中文。".into(),
+                    i18n::Locale::EnUs => "Interface language switched to English.".into(),
+                });
             }
             _ => {}
         }

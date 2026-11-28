@@ -144,9 +144,24 @@ impl ReadingApp {
                 ),
         );
         for (label, selector, page, icon) in [
-            ("书房", "我的书架", Page::Shelf, IconName::LibraryBig),
-            ("书页", "回到阅读", Page::Reader, IconName::BookOpen),
-            ("手账", "私人日记", Page::Journal, IconName::NotebookPen),
+            (
+                self.tr("书房", "Study"),
+                "我的书架",
+                Page::Shelf,
+                IconName::LibraryBig,
+            ),
+            (
+                self.tr("书页", "Pages"),
+                "回到阅读",
+                Page::Reader,
+                IconName::BookOpen,
+            ),
+            (
+                self.tr("手账", "Journal"),
+                "私人日记",
+                Page::Journal,
+                IconName::NotebookPen,
+            ),
         ] {
             let active = self.page == page;
             sidebar = sidebar.child(self.nav_button_with_selector(
@@ -161,9 +176,24 @@ impl ReadingApp {
         // Compact ambient & studio quick row (keeps sidebar focused on the 3 main axes)
         let mut studio_row = h_flex().gap_1().pt_1p5().items_center().justify_between();
         for (label, selector, page, icon) in [
-            ("电台", "深夜电台", Page::Radio, IconName::AudioLines),
-            ("心绪", "此刻心情", Page::Mood, IconName::MessageCircleHeart),
-            ("空间", "主题与设置", Page::Themes, IconName::Settings2),
+            (
+                self.tr("电台", "FM"),
+                "深夜电台",
+                Page::Radio,
+                IconName::AudioLines,
+            ),
+            (
+                self.tr("心绪", "Mood"),
+                "此刻心情",
+                Page::Mood,
+                IconName::MessageCircleHeart,
+            ),
+            (
+                self.tr("空间", "Space"),
+                "主题与设置",
+                Page::Themes,
+                IconName::Settings2,
+            ),
         ] {
             let active = self.page == page;
             studio_row = studio_row.child(

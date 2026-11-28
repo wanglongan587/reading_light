@@ -97,7 +97,7 @@ impl ReadingApp {
             }
             cx.notify();
         }
-        self.tick_features(cx);
+        self.tick_features(window, cx);
         self.tick_radio(cx);
         let messages = self
             .rx
@@ -479,8 +479,13 @@ impl ReadingApp {
                 self.busy = true;
                 let dialog = rfd::AsyncFileDialog::new()
                     .set_parent(window)
-                    .set_title("选择要带回家的书")
-                    .add_filter("电子书", &["epub", "txt"]);
+                    .set_title("选择要带回家的书或文档")
+                    .add_filter(
+                        "支持格式 (EPUB / PDF / MD / DOCX / HTML / TXT)",
+                        &[
+                            "epub", "pdf", "md", "markdown", "docx", "html", "htm", "txt",
+                        ],
+                    );
                 cx.spawn_in(window, async move |this, cx| {
                     let files = dialog.pick_files().await;
                     let _ = this.update(cx, |this, cx| {

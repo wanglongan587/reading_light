@@ -28,9 +28,9 @@ use glow_core::{
     AiSettings, BookCompanionCache, Bookmark, EchoResult, JournalEntry, LocalSecrets, Location,
     MemoryHit, SoundscapeMix, Store, Theme as ReadingTheme,
     bridge::{ReaderEvent, SearchHit, TocEntry},
-    catalog, dictionary, echo,
+    catalog, clipper, dictionary, echo, exporter, i18n,
     model::themes,
-    opds,
+    opds, rss,
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::base::Disableable;
@@ -73,6 +73,7 @@ enum ShelfFilter {
 enum ShelfTab {
     Library,
     Catalog,
+    SlowRead,
     Opds,
 }
 
@@ -277,6 +278,18 @@ enum Action {
     SaveTtsSettings,
     TtsClearCache,
     CatalogCategory(String),
+    // Phase 2 V1.5 Ecosystem: Web Clipper, RSS Slow-Read & Digest, Obsidian/Notion Export, Cover & Locale
+    ClipWebUrl(bool),
+    RssAddFeed,
+    RssRemoveFeed(String),
+    RssFetchFeed(String),
+    RssImportItem(usize, bool),
+    CompileWeekendDigest,
+    ExportObsidianVault,
+    ExportNotionCsv,
+    ExportBookMarkdown(String),
+    ReplaceBookCover(String),
+    SetLocale(String),
 }
 
 struct PassageGenerated {
@@ -343,6 +356,13 @@ pub struct ReadingApp {
     opds_entries: Vec<opds::OpdsEntry>,
     opds_fetch_rx: Option<mpsc::Receiver<anyhow::Result<(String, opds::OpdsFeed)>>>,
     opds_import_rx: Option<mpsc::Receiver<anyhow::Result<Vec<u8>>>>,
+    clip_url_input: Entity<InputState>,
+    clip_rx: Option<mpsc::Receiver<anyhow::Result<(Vec<u8>, bool)>>>,
+    rss_name_input: Entity<InputState>,
+    rss_url_input: Entity<InputState>,
+    rss_active_title: String,
+    rss_items: Vec<rss::RssItem>,
+    rss_fetch_rx: Option<mpsc::Receiver<anyhow::Result<rss::RssFeed>>>,
     onboarding_step: u8,
     reunion_dismissed: bool,
     footnote_term: String,
@@ -614,6 +634,29 @@ impl ReadingApp {
             cx.new(|cx| InputState::new(window, cx).placeholder("书源名称（如：Calibre 书房）"));
         let opds_url_input = cx
             .new(|cx| InputState::new(window, cx).placeholder("OPDS 1.2 地址（https://.../opds）"));
+        let clip_url_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("粘贴长文网页 URL（https://...），自动去噪提纯为微光书页")
+        });
+        cx.subscribe_in(
+            &clip_url_input,
+            window,
+            |this, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. })
+                    && this.page == Page::Shelf
+                    && this.shelf_tab == ShelfTab::SlowRead
+                {
+                    this.act(Action::ClipWebUrl(false), window, cx);
+                }
+            },
+        )
+        .detach();
+        let rss_name_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("订阅名称（如：林间周刊 / 个人博客）")
+        });
+        let rss_url_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("RSS / Atom 订阅地址（https://.../rss.xml）")
+        });
         cx.subscribe_in(
             &radio_custom_url_input,
             window,
@@ -686,6 +729,13 @@ impl ReadingApp {
             opds_entries: vec![],
             opds_fetch_rx: None,
             opds_import_rx: None,
+            clip_url_input,
+            clip_rx: None,
+            rss_name_input,
+            rss_url_input,
+            rss_active_title: String::new(),
+            rss_items: vec![],
+            rss_fetch_rx: None,
             onboarding_step: 0,
             reunion_dismissed: false,
             footnote_term: String::new(),
@@ -800,6 +850,12 @@ impl ReadingApp {
     }
     fn theme(&self) -> &ReadingTheme {
         self.preview.as_ref().unwrap_or(&self.store.state.theme)
+    }
+    fn locale(&self) -> i18n::Locale {
+        i18n::Locale::from_code(&self.store.state.locale)
+    }
+    fn tr<'a>(&self, zh: &'a str, en: &'a str) -> &'a str {
+        i18n::pick(self.locale(), zh, en)
     }
     fn display_font(&self) -> SharedString {
         if self.theme().font_asset.is_some() {

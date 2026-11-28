@@ -463,11 +463,30 @@ impl ReadingApp {
                                 .outline(),
                             )
                             .child(
+                                h_flex()
+                                    .gap_1()
+                                    .items_center()
+                                    .child(self.pill_button(
+                                        "简体中文",
+                                        None,
+                                        !self.locale().is_english(),
+                                        Action::SetLocale("zh-CN".into()),
+                                        cx,
+                                    ))
+                                    .child(self.pill_button(
+                                        "English",
+                                        None,
+                                        self.locale().is_english(),
+                                        Action::SetLocale("en-US".into()),
+                                        cx,
+                                    )),
+                            )
+                            .child(
                                 div()
                                     .text_size(px(12.))
                                     .font_family(self.ui_font())
                                     .text_color(rgb(hex(&active_theme.muted)))
-                                    .child("支持鼠标流光、棱镜边缘折射与自定义素材"),
+                                    .child("支持鼠标流光、棱镜折射、自定义素材与中英双语界面"),
                             ),
                     )
                     .child(

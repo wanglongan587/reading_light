@@ -438,7 +438,7 @@ impl ReadingApp {
                                 .text_size(px(11.5))
                                 .font_family(self.ui_font())
                                 .text_color(rgb(hex(&t.muted)))
-                                .child("拖入 EPUB / TXT，或从电脑选择"),
+                                .child("拖入 EPUB / PDF / MD / DOCX / HTML / TXT"),
                         ),
                 )
                 .child(self.waveform_bars(false, &[6., 11., 16., 9., 14., 8., 12., 7.]))
@@ -767,9 +767,26 @@ impl ReadingApp {
         }
         let mut study_tabs = h_flex().gap_1p5().items_center().flex_wrap();
         for (label, tab, icon) in [
-            ("我的书架", ShelfTab::Library, IconName::LibraryBig),
-            ("微光公版馆", ShelfTab::Catalog, IconName::BookOpen),
-            ("OPDS 书源", ShelfTab::Opds, IconName::Download),
+            (
+                self.tr("我的书架", "Library"),
+                ShelfTab::Library,
+                IconName::LibraryBig,
+            ),
+            (
+                self.tr("微光公版馆", "Public Library"),
+                ShelfTab::Catalog,
+                IconName::BookOpen,
+            ),
+            (
+                self.tr("慢读箱", "Slow Read"),
+                ShelfTab::SlowRead,
+                IconName::ScrollText,
+            ),
+            (
+                self.tr("OPDS 书源", "OPDS"),
+                ShelfTab::Opds,
+                IconName::Download,
+            ),
         ] {
             study_tabs = study_tabs.child(self.pill_button(
                 label,
@@ -981,7 +998,9 @@ impl ReadingApp {
             );
 
         // Optional inline metadata editor card
-        if self.shelf_tab == ShelfTab::Library && self.editing_book_id.is_some() {
+        if self.shelf_tab == ShelfTab::Library
+            && let Some(edit_id) = self.editing_book_id.clone()
+        {
             root = root.child(
                 v_flex()
                     .p_4()
@@ -994,7 +1013,7 @@ impl ReadingApp {
                         div()
                             .text_size(px(13.))
                             .font_family(self.display_font())
-                            .child("编辑书目信息与书单标签"),
+                            .child("编辑书目信息、自定义封面与笔记导出"),
                     )
                     .child(
                         h_flex()
@@ -1022,7 +1041,20 @@ impl ReadingApp {
                     .child(
                         h_flex()
                             .gap_2()
+                            .flex_wrap()
                             .child(self.button("保存修改", Action::SaveBookMeta, cx).primary())
+                            .child(self.button_with_icon(
+                                "更换封面",
+                                IconName::Image,
+                                Action::ReplaceBookCover(edit_id.clone()),
+                                cx,
+                            ))
+                            .child(self.button_with_icon(
+                                "导出本书笔记",
+                                IconName::Download,
+                                Action::ExportBookMarkdown(edit_id),
+                                cx,
+                            ))
                             .child(self.button("取消", Action::CancelBookMeta, cx)),
                     ),
             );
@@ -1035,11 +1067,270 @@ impl ReadingApp {
             ShelfTab::Catalog => {
                 root = root.child(self.shelf_catalog_view(cx));
             }
+            ShelfTab::SlowRead => {
+                root = root.child(self.shelf_slow_read_view(cx));
+            }
             ShelfTab::Opds => {
                 root = root.child(self.shelf_opds_view(cx));
             }
         }
         root.into_any_element()
+    }
+
+    fn shelf_slow_read_view(&self, cx: &Context<Self>) -> AnyElement {
+        let t = self.theme();
+        let is_dark = self.is_dark();
+
+        // Card 1: Web Article Readability Clipper
+        let clipper_card = v_flex()
+            .id("slow-read-clipper-card")
+            .p_5()
+            .gap_3p5()
+            .rounded_2xl()
+            .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.90 } else { 0.95 }))
+            .border_1()
+            .border_color(self.border_subtle())
+            .shadow_sm()
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(self.studio_badge("WEB CLIPPER", "网页长文提纯剪藏", true))
+                    .child(
+                        div()
+                            .text_size(px(18.))
+                            .font_family(self.display_font())
+                            .child("把网页好文，收进安静书房"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .font_family(self.ui_font())
+                            .text_color(rgb(hex(&t.muted)))
+                            .child("自动剥离广告、侧边栏与弹窗，转为离线精排书页，支持划线、纸边词典、听书与跨书记忆。"),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap_2p5()
+                    .flex_wrap()
+                    .items_center()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(280.))
+                            .child(Input::new(&self.clip_url_input).w_full()),
+                    )
+                    .child(
+                        self.button_with_icon(
+                            if self.clip_rx.is_some() {
+                                "正在提纯正文…"
+                            } else {
+                                "剪藏并翻开"
+                            },
+                            IconName::BookOpen,
+                            Action::ClipWebUrl(true),
+                            cx,
+                        )
+                        .primary()
+                        .disabled(self.clip_rx.is_some()),
+                    )
+                    .child(
+                        self.button_with_icon(
+                            "仅收入书架",
+                            IconName::Plus,
+                            Action::ClipWebUrl(false),
+                            cx,
+                        )
+                        .disabled(self.clip_rx.is_some()),
+                    ),
+            );
+
+        // Card 2: RSS / Atom Slow-Read Subscriptions + Weekend Digest Compiler
+        let mut feed_pills = h_flex().gap_2().flex_wrap().items_center();
+        for feed in &self.store.state.rss_feeds {
+            let url = feed.url.clone();
+            let fid = feed.id.clone();
+            feed_pills = feed_pills.child(
+                h_flex()
+                    .gap_1()
+                    .items_center()
+                    .px_2p5()
+                    .py_1()
+                    .rounded_full()
+                    .bg(rgb(hex(&t.background)).opacity(if is_dark { 0.68 } else { 0.80 }))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .child(self.button_with_icon(
+                        &feed.name,
+                        IconName::RefreshCw,
+                        Action::RssFetchFeed(url),
+                        cx,
+                    ))
+                    .child(self.button("×", Action::RssRemoveFeed(fid), cx)),
+            );
+        }
+
+        let mut rss_list = v_flex().gap_2p5();
+        for (idx, item) in self.rss_items.iter().enumerate() {
+            rss_list = rss_list.child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_3()
+                    .p_3p5()
+                    .rounded_xl()
+                    .bg(rgb(hex(&t.background)).opacity(if is_dark { 0.60 } else { 0.72 }))
+                    .border_1()
+                    .border_color(self.border_subtle())
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w(px(260.))
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_size(px(14.5))
+                                    .font_family(self.display_font())
+                                    .child(item.title.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .font_family(self.ui_font())
+                                    .text_color(rgb(hex(&t.muted)))
+                                    .child(match &item.published_at {
+                                        Some(dt) => format!("{} · {}", item.author, dt),
+                                        None => item.author.clone(),
+                                    }),
+                            )
+                            .when(!item.summary.trim().is_empty(), |col| {
+                                col.child(
+                                    div()
+                                        .text_size(px(11.5))
+                                        .font_family(self.ui_font())
+                                        .line_height(relative(1.5))
+                                        .text_color(rgb(hex(&t.text)).opacity(0.82))
+                                        .child(item.summary.clone()),
+                                )
+                            }),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                self.button_with_icon(
+                                    "收入并翻开",
+                                    IconName::BookOpen,
+                                    Action::RssImportItem(idx, true),
+                                    cx,
+                                )
+                                .primary(),
+                            )
+                            .child(self.button("仅收书架", Action::RssImportItem(idx, false), cx)),
+                    ),
+            );
+        }
+
+        let rss_card = v_flex()
+            .id("slow-read-rss-card")
+            .p_5()
+            .gap_4()
+            .rounded_2xl()
+            .bg(rgb(hex(&t.paper)).opacity(if is_dark { 0.90 } else { 0.95 }))
+            .border_1()
+            .border_color(self.border_subtle())
+            .shadow_sm()
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_start()
+                    .flex_wrap()
+                    .gap_3()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(self.studio_badge("SLOW-READ RSS", "RSS / ATOM 慢读订阅与周末小报", true))
+                            .child(
+                                div()
+                                    .text_size(px(18.))
+                                    .font_family(self.display_font())
+                                    .child("订阅慢写作者，每周合订一期「周末慢读小报」"),
+                            ),
+                    )
+                    .when(!self.rss_items.is_empty(), |row| {
+                        row.child(
+                            self.button_with_icon(
+                                "合订本周慢读小报",
+                                IconName::Sparkles,
+                                Action::CompileWeekendDigest,
+                                cx,
+                            )
+                            .primary(),
+                        )
+                    }),
+            )
+            .child(
+                h_flex()
+                    .gap_2p5()
+                    .flex_wrap()
+                    .items_center()
+                    .child(
+                        div()
+                            .w(px(210.))
+                            .child(Input::new(&self.rss_name_input).w_full()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(260.))
+                            .child(Input::new(&self.rss_url_input).w_full()),
+                    )
+                    .child(
+                        self.button_with_icon("添加订阅源", IconName::Plus, Action::RssAddFeed, cx)
+                            .primary(),
+                    ),
+            )
+            .when(!self.store.state.rss_feeds.is_empty(), |card| {
+                card.child(feed_pills)
+            })
+            .when(self.store.state.rss_feeds.is_empty(), |card| {
+                card.child(
+                    div()
+                        .text_size(px(11.5))
+                        .font_family(self.ui_font())
+                        .text_color(rgb(hex(&t.muted)))
+                        .child("支持任意标准 RSS 2.0 与 Atom 1.0 订阅链接（如独立博客、Newsletter、技术专栏）。添加后点击订阅名拉取最新篇目。"),
+                )
+            })
+            .when(!self.rss_items.is_empty(), |card| {
+                card.child(
+                    v_flex()
+                        .gap_2()
+                        .pt_2()
+                        .border_t_1()
+                        .border_color(self.border_subtle())
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .font_family(self.ui_font())
+                                .text_color(rgb(hex(&t.accent)))
+                                .child(format!(
+                                    "当前订阅：{}（共 {} 篇）",
+                                    self.rss_active_title,
+                                    self.rss_items.len()
+                                )),
+                        )
+                        .child(rss_list),
+                )
+            });
+
+        v_flex()
+            .gap_4()
+            .child(clipper_card)
+            .child(rss_card)
+            .into_any_element()
     }
 
     fn shelf_catalog_view(&self, cx: &Context<Self>) -> AnyElement {
