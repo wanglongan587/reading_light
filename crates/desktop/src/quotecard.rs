@@ -63,6 +63,18 @@ pub struct QuoteCardDraft {
     pub style: QuoteCardStyle,
 }
 
+#[derive(Clone, Debug)]
+pub struct CompletionTicketDraft {
+    pub ticket_no: u32,
+    pub title: String,
+    pub author: String,
+    pub finished_date: String,
+    pub reading_minutes: u32,
+    pub highlight: Option<String>,
+    pub letter: String,
+    pub style: QuoteCardStyle,
+}
+
 #[derive(Clone, Copy)]
 struct BoxRect {
     x: i32,
@@ -784,6 +796,252 @@ pub fn save_png(draft: &QuoteCardDraft, path: &Path) -> Result<()> {
     glow_core::store::atomic_write(path, &bytes).context("无法保存微光书摘卡 PNG")
 }
 
+/// Renders a collectible vintage completion ticket stub PNG ("完读纪念票根").
+pub fn render_ticket_png(draft: &CompletionTicketDraft) -> Result<Vec<u8>> {
+    let mut canvas = Canvas::new(WIDTH, HEIGHT);
+    let (bg_top, bg_mid, bg_bot, ink, muted, accent, card_bg, card_border, seal_bg) =
+        match draft.style {
+            QuoteCardStyle::Lantern | QuoteCardStyle::Prism => (
+                [16, 15, 28],
+                [26, 22, 42],
+                [14, 14, 24],
+                [245, 235, 218],
+                [186, 170, 152],
+                [230, 159, 82],
+                [32, 28, 42],
+                [230, 159, 82],
+                [186, 68, 56],
+            ),
+            QuoteCardStyle::Totoro => (
+                [152, 200, 160],
+                [214, 234, 212],
+                [244, 250, 238],
+                [31, 54, 38],
+                [78, 107, 86],
+                [61, 122, 82],
+                [250, 253, 247],
+                [166, 202, 172],
+                [178, 66, 56],
+            ),
+            QuoteCardStyle::Spirited => (
+                [168, 180, 218],
+                [238, 198, 188],
+                [248, 232, 222],
+                [59, 36, 39],
+                [116, 84, 88],
+                [184, 75, 66],
+                [255, 250, 246],
+                [224, 184, 176],
+                [184, 75, 66],
+            ),
+            QuoteCardStyle::Paper | QuoteCardStyle::Kiki => (
+                [240, 232, 216],
+                [248, 242, 230],
+                [234, 224, 206],
+                [46, 38, 30],
+                [112, 96, 80],
+                [154, 92, 48],
+                [255, 253, 246],
+                [206, 186, 160],
+                [176, 58, 48],
+            ),
+            _ => (
+                [84, 164, 226],
+                [176, 218, 248],
+                [242, 249, 255],
+                [26, 50, 76],
+                [79, 110, 142],
+                [37, 115, 184],
+                [250, 253, 255],
+                [162, 202, 235],
+                [184, 68, 56],
+            ),
+        };
+    canvas.fill_vertical_gradient(&[(0.0, bg_top), (0.52, bg_mid), (1.0, bg_bot)]);
+    canvas.fill_radial_glow(220.0, 210.0, 280.0, [255, 248, 225], 0.32);
+    canvas.fill_radial_glow(770.0, 1020.0, 290.0, accent, 0.16);
+
+    // Ticket body with soft shadow
+    let (cx, cy, cw, ch) = (86, 92, WIDTH as i32 - 172, HEIGHT as i32 - 184);
+    for layer in 0..5 {
+        let spread = (layer + 1) * 5;
+        canvas.fill_rounded_rect(
+            BoxRect::new(cx - spread / 2, cy + spread, cw + spread, ch + spread / 2),
+            28.0,
+            [14, 20, 32],
+            (0.055 - layer as f32 * 0.009).max(0.006),
+        );
+    }
+    canvas.fill_rounded_rect(BoxRect::new(cx, cy, cw, ch), 26.0, card_bg, 0.96);
+    canvas.stroke_rounded_rect(BoxRect::new(cx, cy, cw, ch), 26.0, 2.2, card_border, 0.65);
+    canvas.stroke_rounded_rect(
+        BoxRect::new(cx + 16, cy + 16, cw - 32, ch - 32),
+        18.0,
+        1.2,
+        accent,
+        0.28,
+    );
+
+    // Vintage ticket perforation tear line & semicircular side notches
+    let tear_y = cy + ch - 300;
+    for notch_x in [cx as f32, (cx + cw) as f32] {
+        canvas.fill_radial_glow(notch_x, tear_y as f32, 24.0, bg_mid, 1.0);
+    }
+    let mut dash_x = cx + 38;
+    while dash_x < cx + cw - 48 {
+        canvas.fill_rounded_rect(BoxRect::new(dash_x, tear_y, 16, 3), 1.5, card_border, 0.65);
+        dash_x += 28;
+    }
+
+    let pad_x = cx + 62;
+    let content_w = cw - 124;
+
+    // Header badge + ticket serial number
+    canvas.fill_rounded_rect(BoxRect::new(pad_x, cy + 52, 236, 36), 18.0, accent, 0.14);
+    draw_text(
+        &mut canvas,
+        "GLOW · 完读纪念票根",
+        BoxRect::new(pad_x + 20, cy + 58, 200, 26),
+        TextStyle::fixed("Microsoft YaHei UI", 18, 600, accent),
+    );
+    let serial = format!("NO. {:04}", draft.ticket_no.max(1));
+    draw_text(
+        &mut canvas,
+        &serial,
+        BoxRect::new(cx + cw - 208, cy + 56, 150, 30),
+        TextStyle::fixed("Consolas", 24, 700, accent),
+    );
+
+    // Book title & author
+    let title_clean = normalize_card_text(&format!("《{}》", draft.title.trim()), 46);
+    draw_text_fitted(
+        &mut canvas,
+        &title_clean,
+        BoxRect::new(pad_x, cy + 124, content_w, 108),
+        TextStyle {
+            font_family: "KaiTi",
+            max_font_px: 48,
+            min_font_px: 28,
+            weight: 700,
+            color: ink,
+            single_line: false,
+        },
+    );
+    let meta = if draft.reading_minutes > 0 {
+        format!(
+            "{}  ·  完读于 {}  ·  共静读 {} 分钟",
+            draft.author.trim(),
+            draft.finished_date.trim(),
+            draft.reading_minutes
+        )
+    } else {
+        format!(
+            "{}  ·  完读于 {}",
+            draft.author.trim(),
+            draft.finished_date.trim()
+        )
+    };
+    draw_text_fitted(
+        &mut canvas,
+        &meta,
+        BoxRect::new(pad_x, cy + 236, content_w, 34),
+        TextStyle {
+            font_family: "Microsoft YaHei UI",
+            max_font_px: 21,
+            min_font_px: 17,
+            weight: 500,
+            color: muted,
+            single_line: true,
+        },
+    );
+
+    // Optional highlight block
+    let mut letter_y = cy + 298;
+    if let Some(hl) = draft
+        .highlight
+        .as_deref()
+        .map(str::trim)
+        .filter(|h| !h.is_empty())
+    {
+        let hl_box = BoxRect::new(pad_x, letter_y, content_w, 128);
+        canvas.fill_rounded_rect(hl_box, 16.0, accent, 0.08);
+        canvas.fill_rounded_rect(
+            BoxRect::new(pad_x, letter_y + 14, 5, 100),
+            2.5,
+            accent,
+            0.85,
+        );
+        draw_text_fitted(
+            &mut canvas,
+            &format!("「{}」", normalize_card_text(hl, 96)),
+            BoxRect::new(pad_x + 22, letter_y + 20, content_w - 36, 92),
+            TextStyle {
+                font_family: "KaiTi",
+                max_font_px: 24,
+                min_font_px: 18,
+                weight: 400,
+                color: ink,
+                single_line: false,
+            },
+        );
+        letter_y += 152;
+    }
+
+    // Completion letter
+    let max_letter_h = (tear_y - letter_y - 26).max(160);
+    draw_text_fitted(
+        &mut canvas,
+        &normalize_card_text(&draft.letter, 240),
+        BoxRect::new(pad_x, letter_y, content_w, max_letter_h),
+        TextStyle {
+            font_family: "Microsoft YaHei UI",
+            max_font_px: 23,
+            min_font_px: 18,
+            weight: 400,
+            color: ink,
+            single_line: false,
+        },
+    );
+
+    // Stub footer + cinnabar red "完读" collector seal
+    let stub_y = tear_y + 42;
+    draw_text(
+        &mut canvas,
+        "微光阅读 · GLOW READING",
+        BoxRect::new(pad_x, stub_y + 12, 420, 30),
+        TextStyle::fixed("Microsoft YaHei UI", 22, 700, ink),
+    );
+    draw_text(
+        &mut canvas,
+        "合上书页，让余温慢下来 · 离线私密珍藏",
+        BoxRect::new(pad_x, stub_y + 52, 480, 28),
+        TextStyle::fixed("Microsoft YaHei UI", 18, 400, muted),
+    );
+    let seal_x = cx + cw - 166;
+    let seal_y = stub_y + 6;
+    canvas.fill_rounded_rect(BoxRect::new(seal_x, seal_y, 102, 102), 18.0, seal_bg, 0.92);
+    canvas.stroke_rounded_rect(
+        BoxRect::new(seal_x + 7, seal_y + 7, 88, 88),
+        12.0,
+        2.0,
+        [255, 244, 236],
+        0.75,
+    );
+    draw_text(
+        &mut canvas,
+        "完读",
+        BoxRect::new(seal_x + 17, seal_y + 30, 72, 42),
+        TextStyle::fixed("KaiTi", 34, 700, [255, 248, 242]),
+    );
+
+    Ok(encode_png_rgb(WIDTH as u32, HEIGHT as u32, &canvas.rgb))
+}
+
+pub fn save_ticket_png(draft: &CompletionTicketDraft, path: &Path) -> Result<()> {
+    let bytes = render_ticket_png(draft)?;
+    glow_core::store::atomic_write(path, &bytes).context("无法保存完读纪念票根 PNG")
+}
+
 fn draw_text(canvas: &mut Canvas, text: &str, rect: BoxRect, style: TextStyle<'_>) -> i32 {
     draw_text_fitted(canvas, text, rect, style)
 }
@@ -1371,5 +1629,29 @@ mod tests {
                 .unwrap()
                 .starts_with(b"\x89PNG\r\n\x1a\n")
         );
+    }
+
+    #[test]
+    fn renders_completion_ticket_png_cleanly() {
+        for style in [
+            QuoteCardStyle::Sky,
+            QuoteCardStyle::Paper,
+            QuoteCardStyle::Lantern,
+        ] {
+            let draft = CompletionTicketDraft {
+                ticket_no: 7,
+                title: "赤壁夜游集".into(),
+                author: "苏轼".into(),
+                finished_date: "2026-11-28".into(),
+                reading_minutes: 65,
+                highlight: Some("惟江上之清风，与山间之明月，耳得之而为声，目遇之而成色。".into()),
+                letter: "恭喜你安静地走完了这本书的最后一页。".into(),
+                style,
+            };
+            let bytes = render_ticket_png(&draft).unwrap();
+            assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+            assert!(bytes.len() > 10_000);
+            assert_eq!(&bytes[bytes.len() - 8..bytes.len() - 4], b"IEND");
+        }
     }
 }

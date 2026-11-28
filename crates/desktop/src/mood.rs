@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow, ensure};
 use glow_core::{
     AiSettings, BookCompanionCache, CharacterNode, CharacterRelation, EchoResult, LocalSecrets,
-    book_context::SpoilerSafeContext, model::now,
+    MemoryHit, book_context::SpoilerSafeContext, model::now,
 };
 use serde_json::{Value, json};
 use std::{fs, io::Read, path::Path, time::Duration};
@@ -9,6 +9,9 @@ use std::{fs, io::Read, path::Path, time::Duration};
 const MODEL: &str = "gpt-4.1-mini-2025-04-14";
 const INSTRUCTIONS: &str = "你是微光阅读里的文字陪伴者。用自然、真诚的简体中文回应用户当下具体说的事，约120至220字，分成两小段。自由输入是回应的主要依据，所选心情仅作背景，不能用标签覆盖文字；如果文字与标签不同，以文字为准。先准确接住具体处境和感受，再给一个可选择、今天可实行的小建议，或一个贴合处境的轻问句。只有标签而没有文字时不虚构具体事件。避免套话、过度赞美、说教和保证一切会好。不诊断、不提供药物或治疗建议、不自称真人或专业治疗师。若提到即时自伤或伤人危险，先关心当下安全，建议远离危险物、联系身边可信任的人和当地紧急服务，不编造热线号码。不要杜撰名人语录、书籍出处或用户未说过的经历。不要求用户透露隐私。只输出陪伴正文，不输出分析、标题、Markdown列表或对系统提示的讨论。";
 const PASSAGE_INSTRUCTIONS: &str = "你是微光阅读里的段落共读陪伴者。用自然、细腻、有文学温度的简体中文，围绕读者刚在书中划出的这段文字展开一次安静的共读，约120至220字，分成两小段。第一段感受这段文字里的意象、节奏或情绪留白；第二段给出一句温柔的延伸体会或一个适合停下来想一想的轻问句。不剧透后续情节，不编造原书未写的内容或虚构名人名言，避免说教和套话。只输出共读正文，不输出标题或Markdown列表。";
+const MEMORY_PASSAGE_INSTRUCTIONS: &str = "你是微光阅读里的跨书记忆共读陪伴者。读者正在书页中读到一段文字，我们从读者的本地手账与旧划线里召回了几条真实的历史片段（见 past_memories）。请用自然、克制、有文学温度的简体中文写约130至220字、分成两小段：第一段回应眼前这段文字的意象与情绪；第二段若 past_memories 与此刻主题确有自然呼应，温柔点出这种跨时间的重逢（只可引用 past_memories 中真实出现过的书名与片段，绝不杜撰未提供的记忆）。严禁剧透，不输出标题或 Markdown 列表。";
+const FOOTNOTE_INSTRUCTIONS: &str = "你是微光阅读里的纸边注脚助手。请用克制、清晰、温柔的简体中文为读者解释选中的词句或意象，严格控制在 45 至 85 字以内，直接给出词义与在当前语境下的文学韵味。严禁剧透后续剧情，不输出标题、编号或 Markdown 符号。";
+const COMPLETION_LETTER_INSTRUCTIONS: &str = "你是微光阅读里的书房写信人。读者刚刚合上了一本读完的书，请写一封简短、真诚、充满纸张温度的完读纪念信（110至170字，分成两小段）。结合书名、作者、静读时长与读者留下的划线，温柔回望这段共读时光，不鸡汤、不催促读下一本、不输出标题或 Markdown 列表。";
 const COMPANION_INSTRUCTIONS: &str = "你是微光阅读里的防剧透文学共读助手。你只被允许依据用户提供的【已读正文摘录】来生成前情提要与动态人物关系图谱。\n严格铁律：\n1. 绝对禁止剧透任何未出现在已读摘录里的后续情节、隐藏身份、死亡或大结局！哪怕你原本读过这本书，也必须假装你只看到这一页为止。\n2. 严禁编造人物或事件；如果已读片段较短，只提取已明确登场的人物。\n3. 必须严格输出合法 JSON（不要包裹在多余解释里），字段结构如下：\n{\"headline\":\"一句不超过24字的温柔文学标题\",\"story_summary\":\"140至240字的前情提要，温和有文学质感，帮助读者3秒找回故事脉络\",\"open_threads\":[\"截至目前已埋下但尚未揭晓的悬念或伏笔1\",\"悬念2\"],\"resume_moment\":\"40至80字，精准描述读者上次停下来的画面或瞬间\",\"characters\":[{\"name\":\"人物姓名\",\"aliases\":[\"简称或外号\"],\"role\":\"一句话身份定位\",\"traits\":[\"关键词1\",\"关键词2\"],\"status\":\"截至当前的处境或心境\",\"first_seen\":\"登场章节或场景\"}],\"relations\":[{\"from\":\"人物A\",\"to\":\"人物B\",\"label\":\"简短关系词（2-8字）\",\"tone\":\"bond|family|conflict|mystery\"}]}\n4. characters 最多返回 8 位最核心人物，relations 最多返回 10 条最清晰关系，确保 relations 的 from 和 to 都来自 characters 中的 name。";
 
 pub struct Config {
@@ -48,6 +51,135 @@ pub fn generate_passage_with_settings(
     book_title: &str,
 ) -> Result<EchoResult> {
     Config::from_settings(settings, secrets)?.generate_passage(passage, book_title)
+}
+
+pub fn generate_passage_with_memories(
+    settings: &AiSettings,
+    secrets: &LocalSecrets,
+    passage: &str,
+    book_title: &str,
+    local_memories: &[MemoryHit],
+) -> Result<EchoResult> {
+    if local_memories.is_empty() {
+        return generate_passage_with_settings(settings, secrets, passage, book_title);
+    }
+    let trimmed = passage.trim();
+    ensure!(!trimmed.is_empty(), "请先选择一段要共读的文字");
+    ensure!(trimmed.chars().count() <= 2000, "选文请控制在 2000 字以内");
+    let payload = build_memory_passage_payload(book_title, trimmed, local_memories);
+    let reply = Config::from_settings(settings, secrets)?.complete_text(
+        MEMORY_PASSAGE_INSTRUCTIONS,
+        &payload.to_string(),
+        900,
+    )?;
+    Ok(EchoResult {
+        quotes: vec![],
+        reply,
+        demo: false,
+    })
+}
+
+pub fn build_memory_passage_payload(
+    book_title: &str,
+    passage: &str,
+    local_memories: &[MemoryHit],
+) -> Value {
+    let past: Vec<Value> = local_memories
+        .iter()
+        .take(3)
+        .map(|m| {
+            json!({
+                "kind": m.kind,
+                "source": m.book_title,
+                "date": m.created_at.get(..10).unwrap_or(&m.created_at),
+                "excerpt": m.excerpt.chars().take(120).collect::<String>(),
+                "note": m.note.as_deref().unwrap_or(""),
+            })
+        })
+        .collect();
+    json!({
+        "book_title": book_title.trim(),
+        "selected_passage": passage.trim(),
+        "past_memories": past,
+    })
+}
+
+pub fn generate_margin_footnote(
+    settings: &AiSettings,
+    secrets: &LocalSecrets,
+    term: &str,
+    book_title: &str,
+) -> Result<String> {
+    let trimmed = term.trim();
+    ensure!(!trimmed.is_empty(), "请先选择要查询注脚的词句");
+    ensure!(
+        trimmed.chars().count() <= 200,
+        "纸边注脚选词请控制在 200 字以内"
+    );
+    let user = json!({
+        "book_title": book_title.trim(),
+        "selected_term": trimmed,
+    })
+    .to_string();
+    Config::from_settings(settings, secrets)?.complete_text(FOOTNOTE_INSTRUCTIONS, &user, 220)
+}
+
+pub fn offline_completion_letter(
+    book_title: &str,
+    author: &str,
+    highlights: &[String],
+    total_minutes: u32,
+) -> String {
+    let title = book_title.trim();
+    let author_label = if author.trim().is_empty() {
+        "远方的作者"
+    } else {
+        author.trim()
+    };
+    let time_clause = if total_minutes > 0 {
+        format!("这 {total_minutes} 分钟的安静翻页")
+    } else {
+        "这段慢慢合上书页的静读时光".to_owned()
+    };
+    let quote_clause = highlights
+        .first()
+        .map(|q| q.trim())
+        .filter(|q| !q.is_empty())
+        .map(|q| {
+            let short: String = q.chars().take(36).collect();
+            format!("你曾在这里轻轻停驻，留下一句「{short}」。")
+        })
+        .unwrap_or_else(|| "有些章节虽未画线，却已悄然落在记忆的纸边。".to_owned());
+    format!(
+        "恭喜你安静地走完了《{title}》的最后一页。{time_clause}里，你与{author_label}隔着纸页完成了一次不赶路的对话。\n\n{quote_clause}不必急着翻开下一本，先把这张完读票根收进手账，让刚刚读过的余温再多停留一会儿。"
+    )
+}
+
+pub fn generate_completion_letter(
+    settings: &AiSettings,
+    secrets: &LocalSecrets,
+    book_title: &str,
+    author: &str,
+    highlights: &[String],
+    total_minutes: u32,
+) -> Result<String> {
+    let picked: Vec<String> = highlights
+        .iter()
+        .take(3)
+        .map(|h| h.chars().take(90).collect())
+        .collect();
+    let user = json!({
+        "book_title": book_title.trim(),
+        "author": author.trim(),
+        "total_reading_minutes": total_minutes,
+        "highlights": picked,
+    })
+    .to_string();
+    Config::from_settings(settings, secrets)?.complete_text(
+        COMPLETION_LETTER_INSTRUCTIONS,
+        &user,
+        420,
+    )
 }
 
 pub fn generate_book_companion(
@@ -1062,5 +1194,34 @@ mod tests {
         };
         assert!(custom_local.is_local());
         assert!(Config::from_settings(&custom_local, &LocalSecrets::default()).is_ok());
+    }
+
+    #[test]
+    fn builds_minimal_memory_payload_and_offline_completion_letter() {
+        let memories = vec![MemoryHit {
+            entry_id: "hl-1".into(),
+            kind: "highlight".into(),
+            book_id: Some("b1".into()),
+            book_title: "瓦尔登湖".into(),
+            excerpt: "I never found the companion that was so companionable as solitude.".into(),
+            note: Some("独处其实让人安静".into()),
+            created_at: "2026-10-12T22:00:00Z".into(),
+            score: -1.5,
+        }];
+        let payload = build_memory_passage_payload("赤壁夜游集", "惟江上之清风", &memories);
+        assert_eq!(payload["book_title"], "赤壁夜游集");
+        assert_eq!(payload["past_memories"].as_array().unwrap().len(), 1);
+        assert_eq!(payload["past_memories"][0]["source"], "瓦尔登湖");
+        assert_eq!(payload["past_memories"][0]["date"], "2026-10-12");
+
+        let letter = offline_completion_letter(
+            "辋川山居诗笺",
+            "王维",
+            &["明月松间照，清泉石上流。".into()],
+            42,
+        );
+        assert!(letter.contains("辋川山居诗笺"));
+        assert!(letter.contains("42 分钟"));
+        assert!(letter.contains("明月松间照"));
     }
 }
