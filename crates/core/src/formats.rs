@@ -914,27 +914,127 @@ fn extract_text_from_content_stream(stream: &[u8], cmap: &HashMap<Vec<u8>, Strin
     out
 }
 
-fn reflow_pdf_lines_into_paragraphs(raw: &str) -> Vec<String> {
+fn is_pdf_heading(line: &str) -> bool {
+    let t = line.trim();
+    let len = t.chars().count();
+    if !(2..=64).contains(&len) {
+        return false;
+    }
+    if t.ends_with(['。', '，', ',', ';', '；', '!', '！', '?']) {
+        return false;
+    }
+    let lower = t.to_ascii_lowercase();
+    if lower.starts_with("chapter ")
+        || lower.starts_with("part ")
+        || lower.starts_with("section ")
+        || lower == "preface"
+        || lower == "introduction"
+        || lower == "epilogue"
+        || lower == "conclusion"
+    {
+        return true;
+    }
+    if t.starts_with('第')
+        && (t.contains('章') || t.contains('节') || t.contains('卷') || t.contains('回'))
+    {
+        return true;
+    }
+    if let Some((num, rest)) = t.split_once(". ")
+        && !num.is_empty()
+        && num.len() <= 3
+        && num.chars().all(|c| c.is_ascii_digit())
+        && !rest.trim().is_empty()
+    {
+        return true;
+    }
+    false
+}
+
+fn header_footer_fingerprint(line: &str) -> String {
+    line.trim()
+        .chars()
+        .filter(|c| !c.is_ascii_digit() && !matches!(c, '-' | '—' | '·' | '|'))
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+fn strip_running_headers_footers(pages: &mut [Vec<String>]) {
+    if pages.len() < 3 {
+        return;
+    }
+    let threshold = pages.len().div_ceil(2);
+    let mut first_counts: HashMap<String, usize> = HashMap::new();
+    let mut last_counts: HashMap<String, usize> = HashMap::new();
+    for page in pages.iter() {
+        if let Some(first) = page.first()
+            && first.chars().count() <= 90
+        {
+            let fp = header_footer_fingerprint(first);
+            if fp.chars().count() >= 3 {
+                *first_counts.entry(fp).or_insert(0) += 1;
+            }
+        }
+        if page.len() >= 2
+            && let Some(last) = page.last()
+            && last.chars().count() <= 90
+        {
+            let fp = header_footer_fingerprint(last);
+            if fp.chars().count() >= 3 {
+                *last_counts.entry(fp).or_insert(0) += 1;
+            }
+        }
+    }
+    for page in pages.iter_mut() {
+        if let Some(first) = page.first() {
+            let fp = header_footer_fingerprint(first);
+            if first_counts.get(&fp).copied().unwrap_or(0) >= threshold {
+                page.remove(0);
+            }
+        }
+        if let Some(last) = page.last() {
+            let fp = header_footer_fingerprint(last);
+            if last_counts.get(&fp).copied().unwrap_or(0) >= threshold {
+                page.pop();
+            }
+        }
+    }
+}
+
+fn clean_pdf_page_lines(raw: &str) -> Vec<String> {
+    raw.lines()
+        .map(|raw_line| {
+            raw_line
+                .chars()
+                .filter(|c| !c.is_control() || *c == '\t')
+                .collect::<String>()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .filter(|trimmed| {
+            if trimmed.is_empty() {
+                return false;
+            }
+            let stripped_num = trimmed.trim_matches(['-', '—', '·', ' ']);
+            !(stripped_num.len() <= 4
+                && !stripped_num.is_empty()
+                && stripped_num.chars().all(|c| c.is_ascii_digit()))
+        })
+        .collect()
+}
+
+fn reflow_pdf_lines_into_paragraphs(lines: &[String]) -> Vec<String> {
     let mut paragraphs = Vec::new();
     let mut current = String::new();
-    for raw_line in raw.lines() {
-        let line = raw_line
-            .chars()
-            .filter(|c| !c.is_control() || *c == '\t')
-            .collect::<String>();
-        let trimmed = line.split_whitespace().collect::<Vec<_>>().join(" ");
-        if trimmed.is_empty() {
+    for trimmed in lines {
+        if is_pdf_heading(trimmed) {
             if !current.is_empty() {
                 paragraphs.push(std::mem::take(&mut current));
             }
-            continue;
-        }
-        // Filter standalone page numbers like "12" or "- 12 -"
-        let stripped_num = trimmed.trim_matches(['-', '—', '·', ' ']);
-        if !stripped_num.is_empty()
-            && stripped_num.len() <= 4
-            && stripped_num.chars().all(|c| c.is_ascii_digit())
-        {
+            paragraphs.push(trimmed.clone());
             continue;
         }
         if !current.is_empty() {
@@ -963,7 +1063,7 @@ fn reflow_pdf_lines_into_paragraphs(raw: &str) -> Vec<String> {
                 }
             }
         }
-        current.push_str(&trimmed);
+        current.push_str(trimmed);
     }
     if !current.is_empty() {
         paragraphs.push(current);
@@ -1046,48 +1146,99 @@ pub fn pdf_to_epub(bytes: &[u8], fallback_title: &str) -> Result<NormalizedEpub>
         parse_cmap_unicode(s, &mut cmap);
     }
 
-    // Pass 2: extract readable text chunks from content streams containing BT...ET
-    let mut page_blocks: Vec<Vec<String>> = Vec::new();
+    // Pass 2: extract cleaned raw lines per PDF page stream
+    let mut raw_pages: Vec<Vec<String>> = Vec::new();
     for s in &streams {
         if find_bytes(s, b"BT").is_none() {
             continue;
         }
         let extracted = extract_text_from_content_stream(s, &cmap);
-        let paras = reflow_pdf_lines_into_paragraphs(&extracted);
-        let total_chars: usize = paras.iter().map(|p| p.chars().count()).sum();
+        let lines = clean_pdf_page_lines(&extracted);
+        let total_chars: usize = lines.iter().map(|l| l.chars().count()).sum();
         if total_chars >= 4 {
-            page_blocks.push(paras);
+            raw_pages.push(lines);
         }
     }
+
+    strip_running_headers_footers(&mut raw_pages);
+
+    let page_blocks: Vec<Vec<String>> = raw_pages
+        .iter()
+        .map(|lines| reflow_pdf_lines_into_paragraphs(lines))
+        .filter(|paras| !paras.is_empty())
+        .collect();
 
     ensure!(
         !page_blocks.is_empty(),
         "该 PDF 暂未检测到可提取的文本层（可能为纯图片扫描版或加密文档），暂无法重排阅读"
     );
 
-    // Group extracted blocks cleanly into chapters (~5 PDF pages per section when long)
+    let total_pages = page_blocks.len();
+    let reflow_preface = format!(
+        "<p><em>PDF 护眼重排 · 原稿共 {total_pages} 页（已自动去除多余白边与重复页眉页脚，适配暖光纸面、划线与听书）</em></p><hr/>"
+    );
+
+    let detected_headings = page_blocks
+        .iter()
+        .flat_map(|p| p.iter())
+        .filter(|line| is_pdf_heading(line))
+        .count();
+
     let mut chapters: Vec<(String, String)> = Vec::new();
-    let chunk_size = if page_blocks.len() <= 6 { 1 } else { 5 };
-    for (idx, group) in page_blocks.chunks(chunk_size).enumerate() {
-        let start_page = idx * chunk_size + 1;
-        let end_page = start_page + group.len() - 1;
-        let heading = if page_blocks.len() == 1 {
-            title.clone()
-        } else if start_page == end_page {
-            format!("第 {start_page} 页")
-        } else {
-            format!("第 {start_page}–{end_page} 页")
-        };
-        let mut html = String::new();
-        for (p_idx, paras) in group.iter().enumerate() {
-            if group.len() > 1 {
-                html.push_str(&format!("<h3>— 第 {} 页 —</h3>", start_page + p_idx));
-            }
+    if detected_headings >= 2 {
+        // Structure chapters around real detected PDF headings for a clean navigable TOC
+        let mut cur_heading = title.clone();
+        let mut cur_html = reflow_preface;
+        let mut has_body = false;
+        for paras in &page_blocks {
             for para in paras {
-                html.push_str(&format!("<p>{}</p>", xml_escape(para)));
+                if is_pdf_heading(para) {
+                    if has_body {
+                        chapters.push((cur_heading.clone(), std::mem::take(&mut cur_html)));
+                        has_body = false;
+                    }
+                    cur_heading = para.clone();
+                } else {
+                    cur_html.push_str(&format!("<p>{}</p>", xml_escape(para)));
+                    has_body = true;
+                }
             }
         }
-        chapters.push((heading, html));
+        if has_body || chapters.is_empty() {
+            chapters.push((cur_heading, cur_html));
+        }
+    } else {
+        // Group extracted blocks cleanly into chapters (~5 PDF pages per section when long)
+        let chunk_size = if page_blocks.len() <= 6 { 1 } else { 5 };
+        for (idx, group) in page_blocks.chunks(chunk_size).enumerate() {
+            let start_page = idx * chunk_size + 1;
+            let end_page = start_page + group.len() - 1;
+            let heading = if page_blocks.len() == 1 {
+                title.clone()
+            } else if start_page == end_page {
+                format!("第 {start_page} 页")
+            } else {
+                format!("第 {start_page}–{end_page} 页")
+            };
+            let mut html = if idx == 0 {
+                reflow_preface.clone()
+            } else {
+                String::new()
+            };
+            for (p_idx, paras) in group.iter().enumerate() {
+                if group.len() > 1 {
+                    html.push_str(&format!("<h3>— 第 {} 页 —</h3>", start_page + p_idx));
+                }
+                for para in paras {
+                    if is_pdf_heading(para) {
+                        html.push_str(&format!("<h2>{}</h2>", xml_escape(para)));
+                    } else {
+                        html.push_str(&format!("<p>{}</p>", xml_escape(para)));
+                    }
+                }
+            }
+            chapters.push((heading, html));
+        }
     }
 
     build_chapters_epub(&title, &author, &chapters, bytes)
@@ -1208,5 +1359,41 @@ fn breathe() {}
         // Scanned PDF without text stream should fail gracefully with a friendly message
         let scanned = b"%PDF-1.4\n1 0 obj\n<< /Subtype /Image >>\nstream\n\xFF\xD8\xFF\nendstream\nendobj\n%%EOF";
         assert!(pdf_to_epub(scanned, "scan").is_err());
+    }
+
+    #[test]
+    fn strips_pdf_running_headers_and_splits_chapters_on_headings() {
+        let p1 = b"BT\n(Glow Journal - Running Header) Tj\n0 -20 Td\n(Chapter 1 Morning Tea) Tj\n0 -20 Td\n(First chapter prose rests quietly on warm paper.) Tj\n0 -20 Td\n(Footer - Page 1) Tj\nET";
+        let p2 = b"BT\n(Glow Journal - Running Header) Tj\n0 -20 Td\n(More thoughts from the first chapter.) Tj\n0 -20 Td\n(Footer - Page 2) Tj\nET";
+        let p3 = b"BT\n(Glow Journal - Running Header) Tj\n0 -20 Td\n(Chapter 2 Evening Rain) Tj\n0 -20 Td\n(Second chapter unfolds slowly beside the rain window.) Tj\n0 -20 Td\n(Footer - Page 3) Tj\nET";
+
+        let mut pdf = Vec::new();
+        pdf.extend_from_slice(b"%PDF-1.4\n1 0 obj\n<< /Title (Study Book) >>\nendobj\n");
+        for (idx, page) in [p1.as_slice(), p2.as_slice(), p3.as_slice()]
+            .into_iter()
+            .enumerate()
+        {
+            pdf.extend_from_slice(
+                format!("{} 0 obj\n<< /Length {} >>\nstream\n", idx + 2, page.len()).as_bytes(),
+            );
+            pdf.extend_from_slice(page);
+            pdf.extend_from_slice(b"\nendstream\nendobj\n");
+        }
+        pdf.extend_from_slice(b"%%EOF\n");
+
+        let epub = pdf_to_epub(&pdf, "fallback").unwrap();
+        let files = unpack(&epub.bytes).unwrap();
+        let nav = std::str::from_utf8(&files["nav.xhtml"]).unwrap();
+        assert!(nav.contains("Chapter 1 Morning Tea"));
+        assert!(nav.contains("Chapter 2 Evening Rain"));
+
+        let c0 = std::str::from_utf8(&files["c0.xhtml"]).unwrap();
+        assert!(!c0.contains("Running Header"));
+        assert!(!c0.contains("Footer - Page 1"));
+        assert!(c0.contains("First chapter prose rests quietly"));
+        assert!(c0.contains("原稿共 3 页"));
+
+        let c1 = std::str::from_utf8(&files["c1.xhtml"]).unwrap();
+        assert!(c1.contains("Second chapter unfolds slowly"));
     }
 }

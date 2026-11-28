@@ -326,6 +326,45 @@ pub fn compile_weekend_digest(
     pack(&files)
 }
 
+/// Built-in 100% original curated offline Slow-Read demo feed so readers can test
+/// RSS reading & Weekend Digest compilation instantly even without an internet connection.
+pub fn demo_slow_read_feed() -> RssFeed {
+    RssFeed {
+        title: "微光慢读示范通讯 · Glow Slow-Read".into(),
+        subtitle: Some("三篇适合泡杯热茶慢读的原创短文，可单篇收进书房或合订为周末慢读小报。".into()),
+        site_url: None,
+        items: vec![
+            RssItem {
+                id: "glow-demo-slow-1".into(),
+                title: "为什么我们越来越难读完一篇长文".into(),
+                author: "微光编辑部".into(),
+                link: None,
+                published_at: Some("本周精选 · 约 4 分钟".into()),
+                summary: "信息流教会我们不断向下滑动，却悄悄拿走了读完一页后的停顿感。把文章收进安静书房，是夺回注意力的第一步。".into(),
+                content_html: "<p>打开浏览器时，我们原本只是想查一个词，却常常被侧边栏、红点提醒和无限瀑布流牵走半小时。</p><p>长文之所以迷人，在于作者用一整段呼吸的节奏铺开思绪。当我们把喜欢的文章剪藏进没有弹窗与红点的书页里，阅读便重新变回一件轻松而完整的享受。</p><blockquote>不必今天就把所有收藏都读完，今晚只安静读完这一篇就很好。</blockquote>".into(),
+            },
+            RssItem {
+                id: "glow-demo-slow-2".into(),
+                title: "把周五晚上留给一份不追赶的小报".into(),
+                author: "微光编辑部".into(),
+                link: None,
+                published_at: Some("本周精选 · 约 3 分钟".into()),
+                summary: "与其每天被几十条未读推送催促，不如在周末清晨把心仪作者的文章合订成一册小报，配着咖啡慢慢翻完。".into(),
+                content_html: "<p>过去人们期待周末早报，是因为报纸有明确的边界——读完最后一版，心就会自然而然安顿下来。</p><p>微光慢读箱借用了这份纸媒的节制：把订阅的博客与通讯合订成一期「周末慢读小报」，有卷首语、有目录，也有合上封底时的满足感。</p>".into(),
+            },
+            RssItem {
+                id: "glow-demo-slow-3".into(),
+                title: "Slow Reading in an Always-On World".into(),
+                author: "Glow Reading Notes".into(),
+                link: None,
+                published_at: Some("Bilingual Pick · 3 min".into()),
+                summary: "A quiet reflection on trading algorithmic feeds for an unhurried reading desk lit by a single warm lamp.".into(),
+                content_html: "<p>Modern feeds are engineered for velocity, not serenity. Every headline begs for a split-second reaction before vanishing downstream.</p><p>When you collect thoughtful writing into a calm offline shelf, the urgency dissolves. You can pause on a single sentence, leave a warm highlight, and let an idea settle overnight.</p><blockquote>Good writing deserves a quiet room.</blockquote>".into(),
+            },
+        ],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,5 +422,20 @@ mod tests {
         .unwrap();
         let norm_digest = crate::library::normalize_epub(&digest).unwrap();
         assert_eq!(norm_digest.title, "微光周末慢读小报 · 2026-11-27");
+
+        // Demo offline feed compiles cleanly
+        let demo = demo_slow_read_feed();
+        assert_eq!(demo.items.len(), 3);
+        let demo_entries: Vec<(String, RssItem)> = demo
+            .items
+            .into_iter()
+            .map(|it| (demo.title.clone(), it))
+            .collect();
+        let demo_digest =
+            compile_weekend_digest("示范慢读小报", "2026-11-28", &demo_entries).unwrap();
+        assert_eq!(
+            crate::library::normalize_epub(&demo_digest).unwrap().title,
+            "示范慢读小报"
+        );
     }
 }

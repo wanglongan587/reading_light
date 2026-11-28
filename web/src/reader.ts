@@ -1,6 +1,6 @@
 import ePub from 'epubjs';
 
-type Theme = { id?:string;paper:string;text:string;accent:string;font:string;font_size:number;line_height:number;width:number;font_url?:string;reduced_motion:boolean;warm_filter?:boolean };
+type Theme = { id?:string;paper:string;text:string;accent:string;font:string;font_size:number;line_height:number;width:number;font_url?:string;reduced_motion:boolean;warm_filter?:boolean;locale?:string };
 type Highlight = { id:string;cfi:string;text?:string;color?:string };
 type Command = { version:number;session:string;request_id:number;kind:string;url?:string;cfi?:string;href?:string;mode?:string;theme?:Theme;query?:string;text?:string;chapter?:string;highlight?:Highlight;highlights?:Highlight[] };
 declare global { interface Window { ipc?:{postMessage:(s:string)=>void}; glowReceive:(cmd:Command)=>void; __events?:unknown[] } }
@@ -224,8 +224,24 @@ document.addEventListener('mousemove',e=>updateCursorGlow(e.clientX,e.clientY),{
 document.addEventListener('mouseleave',()=>{
  document.documentElement.style.setProperty('--glow-op','0');
 });
+function isEnglish(){
+ return (theme?.locale||'').toLowerCase().startsWith('en');
+}
+function applyLocale(){
+ const en=isEnglish();
+ document.documentElement.lang=en?'en-US':'zh-CN';
+ const setLabel=(btn:HTMLButtonElement,zh:string,enText:string)=>{
+  const span=btn.querySelector('span');
+  if(span)span.textContent=en?enText:zh;
+ };
+ setLabel(noteBtn,'批注','Note');
+ setLabel(footnoteBtn,'注脚','Footnote');
+ setLabel(echo,'回响','Echo');
+ setLabel(copyBtn,'复制','Copy');
+}
 async function applyTheme(){
  if(!theme)return;
+ applyLocale();
  document.documentElement.dataset.theme=theme.id||'forest';
  document.documentElement.dataset.reducedMotion=theme.reduced_motion?'yes':'no';
  document.documentElement.dataset.warmFilter=theme.warm_filter?'yes':'no';
