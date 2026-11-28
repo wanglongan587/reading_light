@@ -429,6 +429,39 @@ impl Database {
         Ok(hits)
     }
 
+    /// Recalls top related past highlights & journal memories for a full reading passage
+    /// using CJK 2-character phrase bigrams and significant Latin words ranked by BM25.
+    pub fn recall_related_memories(&self, passage: &str, limit: usize) -> Result<Vec<MemoryHit>> {
+        let Some(fts_query) = build_related_fts_query(passage) else {
+            return Ok(vec![]);
+        };
+        let cap = limit.clamp(1, 50) as i64;
+        let mut stmt = self.conn.prepare(
+            "SELECT entry_id, kind, book_id, book_title, excerpt, note, created_at, bm25(memory_fts) AS rank
+             FROM memory_fts
+             WHERE memory_fts MATCH ?1
+             ORDER BY rank ASC, created_at DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![fts_query, cap], |row| {
+            Ok(MemoryHit {
+                entry_id: row.get(0)?,
+                kind: row.get(1)?,
+                book_id: row.get(2)?,
+                book_title: row.get(3)?,
+                excerpt: row.get(4)?,
+                note: row.get(5)?,
+                created_at: row.get(6)?,
+                score: row.get(7)?,
+            })
+        })?;
+        let mut hits = Vec::new();
+        for row in rows {
+            hits.push(row?);
+        }
+        Ok(hits)
+    }
+
     /// Aggregates reading sessions for a given `YYYY-MM` month for the anti-anxiety glow calendar.
     pub fn monthly_reading_summary(&self, year_month: &str) -> Result<MonthlyReadingSummary> {
         let prefix = format!("{year_month}-%");
@@ -525,5 +558,64 @@ fn build_fts_query(raw: &str) -> Option<String> {
         None
     } else {
         Some(clauses.join(" AND "))
+    }
+}
+
+fn build_related_fts_query(passage: &str) -> Option<String> {
+    const EN_STOP: &[&str] = &[
+        "the", "and", "for", "with", "that", "this", "from", "have", "were", "been", "they",
+        "their", "into", "when", "what", "will", "would", "there", "about", "which",
+    ];
+    let mut clauses: Vec<String> = Vec::new();
+    let mut cjk_run: Vec<char> = Vec::new();
+    let mut word_run = String::new();
+
+    let flush_cjk = |run: &mut Vec<char>, out: &mut Vec<String>| {
+        if run.len() >= 2 {
+            for pair in run.windows(2) {
+                let clause = format!("\"{} {}\"", pair[0], pair[1]);
+                if !out.contains(&clause) {
+                    out.push(clause);
+                }
+                if out.len() >= 18 {
+                    break;
+                }
+            }
+        }
+        run.clear();
+    };
+    let flush_word = |run: &mut String, out: &mut Vec<String>| {
+        if run.len() >= 4 && !EN_STOP.contains(&run.as_str()) {
+            let clean = run.replace('"', "");
+            let clause = format!("\"{clean}\"");
+            if !out.contains(&clause) {
+                out.push(clause);
+            }
+        }
+        run.clear();
+    };
+
+    for ch in passage.chars() {
+        if clauses.len() >= 18 {
+            break;
+        }
+        if is_cjk(ch) {
+            flush_word(&mut word_run, &mut clauses);
+            cjk_run.push(ch);
+        } else if ch.is_ascii_alphanumeric() {
+            flush_cjk(&mut cjk_run, &mut clauses);
+            word_run.push(ch.to_ascii_lowercase());
+        } else {
+            flush_cjk(&mut cjk_run, &mut clauses);
+            flush_word(&mut word_run, &mut clauses);
+        }
+    }
+    flush_cjk(&mut cjk_run, &mut clauses);
+    flush_word(&mut word_run, &mut clauses);
+
+    if clauses.is_empty() {
+        build_fts_query(passage)
+    } else {
+        Some(clauses.join(" OR "))
     }
 }

@@ -223,6 +223,15 @@ impl Store {
         db.search_memories(query, limit)
     }
 
+    /// Recalls related past highlights and journal entries for a full selected passage via CJK bigrams + BM25.
+    pub fn recall_related_memories(&self, passage: &str, limit: usize) -> Result<Vec<MemoryHit>> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("本地数据库锁已损坏"))?;
+        db.recall_related_memories(passage, limit)
+    }
+
     /// Returns monthly reading totals and daily breakdown from `reading_sessions`.
     pub fn monthly_reading_summary(&self, year_month: &str) -> Result<MonthlyReadingSummary> {
         let db = self
